@@ -1,0 +1,142 @@
+# ApeMail an email client.
+
+## IMPORTANT
+
+I am going to be testing this on live mailboxes! Under no circumstance should you preform a destructive operation without a confirmation!!!!!!!!!
+
+How the code keeps to this (keep it that way):
+
+* There is no read-only mode: changes to mailboxes are always allowed (the user tests on a mailbox kept for the purpose). The confirmations and expunge safeguards below still apply.
+* Synchronising never changes anything: folders are opened with `EXAMINE`, never `SELECT`, and the sync and idle connections are never writable. Only the connection that does what the user asks can change a mailbox.
+* Messages are downloaded with `BODY.PEEK[]`, so downloading does not mark them read. A message is marked `\Seen` when it is shown.
+* Deleted mail always goes to the trash folder on the server, without a confirmation, as nothing is lost (the trash is made if the mailbox has none). **The only confirmation is for a permanent delete**: do not add confirmations for anything else that deletes or moves mail.
+* Deleting from the trash asks for confirmation and, if accepted, deletes for good. That is the only permanent delete: `engine.Delete` refuses any folder but the trash.
+* Expunging is only ever by UID (`UID EXPUNGE`, UIDPLUS). A server without UIDPLUS is never asked to expunge, and one with neither MOVE nor UIDPLUS is not asked to move, because a plain `EXPUNGE` would also remove messages another client marked `\Deleted`. go-imap's `Move` falls back to a plain `EXPUNGE` on such servers, so `remote.Conn.Move` checks before calling it.
+* `\Deleted` can only be set by `remote.Conn.Delete`, which then expunges just those UIDs.
+* Every operation on UIDs checks that the folder's UIDVALIDITY still matches the index, so stale UIDs never hit other messages.
+* Old drafts that a compose window replaced are moved to the trash, without asking, when the window closes, as other clients do.
+* Removing an account deletes only the local files, after asking. The server is not touched.
+* The local copy is a cache: wiping it, for example when UIDVALIDITY changes, is fine and is not a destructive operation.
+* Tests in `internal/remote` and `internal/engine` run against go-imap's in-memory server (`internal/remote/remotetest`), record the commands sent, and check that synchronising sends nothing that changes a mailbox. Keep them passing. `remotetest.Server.Hold` stops one client part way through (at a line it sends), so that a test can do something while, say, a sync is running. go-imap's in-memory server has no CONDSTORE, so `internal/remote/condstoretest` is a small IMAP server of our own that has (one folder, the inbox): tests add mail, set flags, expunge, renumber the folder, turn the counting of changes off (`NoModSeq`) or start it again lower (`ForgetChanges`), and see the commands sent.
+
+## Testing
+
+This app handles people's email, which is incredibly important and must be handled in a safe and professional way. Test coverage should be as high as possible.
+
+* Every change comes with tests, and every bug fix comes with a test that fails without the fix.
+* Anything that touches a mailbox (moving, deleting, flagging, appending, sending, synchronising) is tested against the in-memory server (`internal/remote/remotetest`), and sending against the SMTP server for tests (`internal/send/sendtest`). The test checks both what the client does and what is on the server afterwards, including that other messages are left alone.
+* Destructive paths are tested both ways: that they happen when confirmed, and that nothing happens when the user declines or the precondition fails (wrong folder, stale UIDVALIDITY, missing UIDPLUS, no trash folder).
+* Encryption is tested so that nothing is written to disk in plain text: accounts, passwords, indexes, messages, the outbox.
+* The UI is tested offscreen (`internal/ui`, `QT_QPA_PLATFORM=offscreen`), with confirmations answered by replacing `confirm`.
+* Every test run has a timeout, so that a hang fails with the stacks of what was waiting rather than waiting for ever: `make test` runs `go test -race -timeout 5m ./...`, and a test that waits on the engine or the UI waits with a deadline (`recv`, `result` and `wait` in the tests). Never run the tests without `-timeout`.
+* Run `make test` before considering work done, and check coverage with `go test -cover -timeout 5m ./...`.
+
+## Code quality
+
+The code base must stay clean, maintainable and readable. Whenever something is changed, deal with the technical debt and cruft around it as part of the change, rather than leaving it for later:
+
+* Remove code that is no longer used (`go run golang.org/x/tools/cmd/deadcode@latest ./...` finds it; only test helpers should be reported), wrappers that add nothing, parameters that are not used, and comments or error messages that no longer say what the code does.
+* Keep one thing in one place: a helper rather than a pattern repeated, and a file for each part (as `accountdialog.go`, `settingsdialog.go`, `dialog.go`).
+* Match the style around it: comments in full sentences saying why, names that say what things are, `gofmt`, and `go vet` clean.
+
+## Premise
+
+* This is to be a simple email client that is imap based at the start.
+* It will be written in Go.
+* The UI will be simple and use miqt library (Qt 6).
+* Settings, accounts and email storage are encrypted using ssh keys and the age library: https://github.com/FiloSottile/age, similar to how triggerapi was done (`internal/crypt` is adapted from it, but writes binary age rather than armoured, as armour makes mail a third bigger).
+    * The client settings are a separate JSON file, **not encrypted**, as it names the keys (`~/.config/apemail/settings.json`).
+    * Each account is a separate encrypted JSON file, **including its passwords** (`~/.local/share/apemail/accounts/<id>.json`).
+    * The folder the accounts and their mail are kept in is a setting (File > Settings, `dataDir`). Changing it moves everything there, after asking; the new folder must be empty or not exist. The settings file itself stays in `~/.config/apemail/`, as it is read before anything else.
+    * The window's size (and whether it is maximised), the sidebar width, the message list height, the widths of the From (or To) and Date columns of the message list (one pair for every folder, not one for each), and which accounts and folders of the side bar are open or closed are kept in the settings when the window closes, and restored when it opens. The open folders are kept by a hash of their names (`settings.FolderKey`), as the settings are not encrypted and must not name folders. The tree keeps them as they were when the folders are listed again.
+    * The size of the compose window is kept in the settings (`composeWidth`, `composeHeight`) when one closes, unless it is maximised, and the next one opens at that size.
+    * The mail of an account is kept in a folder of its own beside that (`accounts/<id>/`):
+        * `folders.json`: the list of mail folders.
+        * One folder per mail folder, named by a hash of the folder's name so names are not visible without the keys (`f-<hash>/`).
+            * `index.json`: an index of the headers (summaries) of the folder's messages, which is all the message list needs, and the server's count of changes to the folder (`highestModSeq`, CONDSTORE). It is compact JSON compressed with gzip and then encrypted (`jsonfile.SaveCompressed`; `jsonfile.LoadWith` reads it, and the older uncompressed ones), as that of a folder of 100,000 messages is 44 MB uncompressed. This replaced "one JSON file per message", which would mean decrypting thousands of files to list a folder.
+            * `<uid>.eml`: each message that has been downloaded, as the raw RFC 822 the server sent (not JSON, which would base64 the attachments again).
+        * `outbox/`: mail to send and drafts to save that could not be, for want of a connection.
+    * Nothing is loaded or saved without keys.
+* Performance: all network work, encryption and decryption happen off the UI thread. Each account has an engine (`internal/engine`) with three goroutines, each with its own IMAP connection: one synchronises, one does what the user asks (open, move, flag, append), so it is not held up by a long sync, and one idles in the inbox. Synchronise All Folders and Update Unread Counts each run on a connection of their own while they last, so that Get Mail is not held up behind them. A folder is never synchronised on two connections at once (`folderSyncs`): a sync that finds its folder being synchronised already leaves it to that one. What each part of the engine is doing is shown together in the status bar (`say`, by `statusPart`). Results are posted to the UI thread with `mainthread.Start`. The message list is a virtual model (`QAbstractTableModel`), so a big folder is shown at once.
+    * A mailbox can hold many years of mail, with folders of 100,000 messages; `internal/store` and `internal/ui` have tests and benchmarks at that size (`make bench`). Keep them in mind:
+        * A change to an index is shown at once but saved a little later (`saveDelay`, two seconds) by the engine's saver goroutine, from a copy and outside the lock, several folders at once, and whatever is left when the engine is closed. `saveMu` (taken before `mu`) is held while indexes are saved and while a folder's local copy is thrown away, so that no index is saved into a folder after it was. Close an engine before deleting or moving its files.
+        * A sync that finds nothing new saves and shows nothing. With CONDSTORE (RFC 7162) a sync asks only for what has changed since the count of changes the index was made at (`FETCH ... (CHANGEDSINCE n)`), and nothing at all if the count and the number of messages are as they were; messages that have gone, which need not change the count, are looked for (`UID SEARCH`) only when the number of messages says some have. A server without it, a folder it does not count (NOMODSEQ), one numbered anew, or a count lower than the index's, is synchronised whole.
+        * The index of a folder is read from disk outside the engine's lock the first time it is opened (`preload`).
+        * The message list works out what each row is sorted by once (on every processor for a large folder), and when only flags have changed, which is most changes, updates those rows in place rather than sorting again (`messageList.update`). It keeps the row of each UID.
+* miqt hands lists of Qt values (`[]qt.QModelIndex` from `SelectedRows`, `Indexes`, the `mimeData` callback, and the like) with each value's C++ object freed by a finalizer of a copy that is thrown away, so the garbage collector frees them while they are in use, and it cannot make a list of more than 65,535. Both crash. Never use them: the list asks `IsRowSelected` of each row (and keeps the answer until the selection changes), and starts drags itself (`OnStartDrag`) rather than through the model's `mimeData`. A Qt value returned as a pointer (`Index`, `CurrentIndex`) is safe; never copy one out of its pointer.
+* Local folders: not supported. We are IMAP only and are a terminal for remote mailboxes. We only download mail and store it locally as a cache; really we are interacting with a remote mailbox. The two exceptions are internal and not shown as folders: the **outbox** (mail sent while the SMTP server cannot be reached, sent on the next Get Mail) and **drafts saved while offline** (appended on the next Get Mail).
+
+## Not wanted
+
+* No polling every N minutes (a POP3 throwback). New mail comes from IMAP IDLE on the inbox while running, plus checking the inbox on start and Get Mail.
+* No synchronising of folders that are not looked at, and no downloading of messages in the background: a mailbox can hold many years of mail. Get Mail (and "Get Mail" on a folder's menu) checks the folder that is selected, or the account's inbox if the account is, lists the folders again (one LIST, which looks inside none) and sends the outbox (`engine.Refresh`). Opening a folder synchronises it. A message is downloaded when it is opened.
+* Two things the user asks for in the Accounts menu (and an account's menu in the side bar) look at every folder, and only when asked:
+    * Update Unread Counts asks the server how many messages of each folder are unread (STATUS, every folder asked before any answer is waited for), which opens none and fetches nothing. The folder tree keeps the counts it is given (`folderTree.unread`), so that they stay when the folders are listed again and the tree is made again.
+    * Synchronise All Folders (`engine.SyncAll`) fetches the headers of every folder, but no message: the inbox first, then the drafts and sent mail, the rest, and the trash last. While it runs the item says Stop Synchronising All Folders, which drops its connection at once (`StopSyncAll`, `ErrStopped`).
+* No search, threaded conversations, unified inbox, templates or spam handling. These are what is wrong with other clients.
+* OAuth2 is left out for now and can be added later (Gmail and Microsoft 365 need it).
+* Kerberos and NTLM are left out for now.
+
+## UI
+
+* The UI is very familiar and simple: the desktop email clients of years ago.
+* Menu bar: File, Message, Accounts, Help.
+* Button bar: large buttons with text underneath (Get Mail, Write, Reply, Reply All, Forward, Archive, Delete).
+* A letter, number or other character key is never a shortcut on its own, as it is too easily pressed by mistake; it needs a modifier (Ctrl, Alt...). Function keys and special keys (F5, Delete, Escape...) are fine on their own: Delete deletes (and removes an attachment in the compose window), F5 refreshes (Get Mail), and Escape closes the compose window (asking about a message not sent, as its close button does). Standard shortcuts such as Ctrl+A for Select All are never taken over. Get Mail F5, Write Ctrl+N, Reply Ctrl+R, Reply All Ctrl+Shift+R, Forward Ctrl+L, Archive Ctrl+Shift+A, Delete Del, View Source Ctrl+U (Message menu). A test checks this.
+* File > Settings is Ctrl+, (the usual shortcut for preferences).
+* Help > About lists the licences of Qt (LGPLv3, with the notice it asks for) and of every library the program is built with, as triggerapi does. Keep it up to date when dependencies change.
+* Side bar: each account, with its folders below it as a tree (Inbox, Drafts, Sent, Archive, Trash first, then the rest, nested by the server's delimiter). Unread counts are shown.
+* Messages pane: subject, from (or recipient in Sent/Drafts) and date (the full date and time). Click a header to sort. Unread is bold.
+    * The columns fill the list as those of other clients do: dragging the border between two columns trades width between them (the right edge of Date trades with Subject), and Subject takes what the window gains or loses. So Date is widened by the border on its left; a plain `QHeaderView` only resizes a column by its right edge, which for the last one is the side of the list. Columns cannot be moved. The From and Date widths are kept in the settings.
+* Messages are moved between folders by dragging them from the list onto a folder in the side bar. They can only be dropped on a folder of the same account that can hold messages; the move is done on the server (MOVE, as in Move).
+* Message pane: headers, attachments (click to save), and the body.
+    * Message > View Source (Ctrl+U) shows the message as the server has it, in a read-only `QPlainTextEdit` window of its own (`internal/ui/source.go`), so nothing in it is rendered or fetched. It is taken from the local copy (or fetched as opening does) and changes nothing. The window belongs to the main window, so it closes with it; Escape closes it.
+    * HTML is rendered with `QTextBrowser` (the simplest option, not WebEngine). It fetches nothing from the internet, so tracking pixels and remote images never load. Only images inside the message (`cid:`, `data:`) are shown. Links open in the browser; `mailto:` opens a new message.
+* Compose window: From (account), To/Cc/Bcc, Subject, attachments, plain text or HTML (bold/italic/underline, bulleted and numbered lists, images). Send, Save Draft, Attach. Double-click a message in Drafts to continue it.
+    * Menus: Edit (Undo, Redo, Cut, Copy, Paste, Paste Without Formatting in HTML, Delete, Select All), Format (in HTML: the formatting buttons' own actions, so both show the same state) and Options (Return Receipt, Delivery Status Notification). Edit acts on the field or body last in focus. Its items only show the standard keys (after a tab in their text), as the fields and body take those keys themselves; as real shortcuts they would also fire while the attachment list has the focus.
+    * Return Receipt sets `Disposition-Notification-To` to the sender (RFC 8098), and is read back from a draft. Delivery Status Notification asks the SMTP server for DSN (RFC 3461: `RET=HDRS`, `NOTIFY=SUCCESS,FAILURE`); go-smtp leaves it out for a server without DSN, which sends as usual. Mail waiting in the outbox keeps the request.
+* Return receipts asked for (`internal/ui/receipt.go`): showing a message with `Disposition-Notification-To` asks, through `confirm`, whether to send the receipt, unless the message has `$MDNSent` (RFC 3503) or is in the sent or drafts folder. The answer, yes or no, sets `$MDNSent` on the server, so the user is asked once, here or in another client; a receipt that could not be sent (but not one put in the outbox) leaves it unset, to be asked again. The receipt is an RFC 8098 report (`message.Receipt`: `multipart/report`, `Disposition: manual-action/MDN-sent-manually; displayed`), sent with `engine.SendReceipt`, which keeps no copy in Sent. It is sent from the account's address rather than the null sender RFC 8098 suggests, as submission servers often refuse one. Its errors go to the status bar.
+    * An image put in an HTML message goes inline, as other clients do: a part of a `multipart/related` with the HTML, which shows it as `cid:ID`, no wider than 600 pixels. Images taken out of the text again are not sent. A draft continued, a reply or a forward keeps the images the message shows.
+
+## Accounts
+
+* Autoconfig (Look Up Settings), as other clients do, in `internal/autoconfig`: `autoconfig.<domain>`, `<domain>/.well-known/autoconfig`, the ISPDB (the public database of mail providers, whose address in the code is the one place its host is named), the ISPDB for the domain of the MX host, and RFC 6186 SRV records. All are asked at once; the most trusted answer wins.
+* Name, email address, reply-to address, signature: text written in the dialog, or a file of text or HTML (`.html`, `.htm`) chosen instead (`signatureFile`), read each time a message is written so that changes to it are seen (`message.LoadSignature`). Of an HTML file only what is within the body is taken; in a message written as text it is turned into text; the images it shows from files on this computer are read and go with the message (`cid:`), as images put in it do, rather than as `file:` links no one else can see. A file that cannot be read is said so in the compose window, which is written without a signature, and refused by the dialog. A new message, or a reply above or below the quote, starts on an empty line with more below it before the signature (`writingLines`, three), as text or HTML; in HTML they are put in as plain blocks, as empty paragraphs come to nothing, so that they take nothing of a quote, list or signature beside them.
+* Server type: IMAP.
+* Server name, port, username, password.
+* Security settings
+    * Connection: None, STARTTLS, SSL/TLS.
+    * Auth: Normal password (SASL PLAIN, or LOGIN), Encrypted password (CRAM-MD5), TLS certificate (client cert + SASL EXTERNAL).
+* Settings
+    * Check for new messages on start (the inbox).
+    * Folders for operations (Sent, Drafts, Trash, Archive), chosen from the server's folders ("Read Folders from Server" lists them), or Automatic. Stick to the standards: Automatic uses the folder the server marks with the RFC 6154 special-use attribute (`\Sent`, `\Drafts`, `\Trash`, `\Archive`) first, then a usual name (Archive or Archives, Sent Items, Deleted Items, ...), at any level (as INBOX.Archive). If there is none, it is made on the server the first time it is needed, as Sent, Drafts, Trash or Archive, in the personal namespace (NAMESPACE, as INBOX. on some servers), and marked with its use where the server supports CREATE-SPECIAL-USE. Creating a folder is not destructive and needs no confirmation.
+    * Archive divides archived mail as other clients do, by when each message was sent: by default into a folder for each year within the archive (`Archive/2026`), or one for each month (`Archive/2026/2026-03`), or not at all, as the account says ("Archive into" on the Folders tab). The folders within are made as they are needed, with the server's delimiter; a server without folders within folders keeps everything in the archive itself. Mail already in the archive, or a folder within it, is not archived again.
+    * Compose as text or HTML, and quote position (reply above or below the quote).
+    * Outgoing server (SMTP): description, server, port, username, password, connection and auth settings, and a Test Connection button (the incoming server has one too).
+
+## Code layout
+
+* `main.go`: finds the settings and data folders, starts Qt.
+* `internal/appicon`: the program's icon (`appicon.png`), embedded.
+* `internal/settings`: the settings file and the data folder.
+* `internal/crypt`, `internal/jsonfile`, `internal/homedir`: encryption with SSH keys via age, encrypted files written atomically with 0600 permissions, and `~` paths.
+* `internal/account`: accounts and their encrypted files.
+* `internal/store`: the encrypted local cache (folders, indexes, messages, outbox).
+* `internal/remote`: IMAP (go-imap v2), with the safety rules above. `remotetest` is the in-memory server for tests, and `condstoretest` an IMAP server for tests that has CONDSTORE.
+* `internal/send`: SMTP (go-smtp). `sendtest` is an SMTP server for tests, which records what it is given (envelope, DSN options, data).
+* `internal/message`: parsing for display (go-message, any charset), building outgoing mail, reply and forward helpers.
+* `internal/autoconfig`: looking up server settings.
+* `internal/engine`: the per-account workers that keep the cache in step and run operations: `engine.go` (the engine, its workers and status), `index.go` (indexes and saving them), `sync.go` (synchronising and IDLE), `syncall.go` (Synchronise All Folders, unread counts), `messages.go` (opening, flagging, moving, archiving, deleting), `outgoing.go` (sending, drafts, the outbox), `special.go` (the Sent, Drafts, Trash and Archive folders).
+* `internal/desktop`: the Linux desktop entry and icon, written to `~/.local/share/applications` and `~/.local/share/icons` at every start (`desktop.Install`, from `main.go`), as triggerapi does, so the program can be started from the desktop's menus. It needs no Qt.
+* `internal/ui`: the Qt interface. Tests run offscreen (`QT_QPA_PLATFORM=offscreen`). The compose window is `compose.go` (the window, sending, drafts, attachments, opening one to write, reply or forward), `composemenus.go` (the Edit menu), `composeformat.go` (lists and images) and `composebody.go` (the signature, the quote and the room to write above them).
+
+## Building
+
+* `make build`, `make run`, `make test`, `make bench`, `make vet`. Every target that runs tests gives them a timeout (`TEST_TIMEOUT`); so does every test run by hand, benchmarks and single tests included (`go test -timeout 5m ...`).
+* `make screenshot` draws the window into `docs/screenshot.png` (`TestScreenshot` in `internal/ui/screenshot_test.go`): a sample mailbox on the in-memory server, at 1280×800, with the Breeze icon theme as offscreen has none of the desktop's. Run it again whenever what the window looks like changes.
+* The icon (a gorilla's face) is `internal/appicon/appicon.png`, a 256×256 PNG embedded by the `appicon` package, so the program needs nothing beside its binary. Replace the file to change it. The desktop entry names the icon by a path that does not change, so a desktop that has the old one cached (KDE keeps `~/.cache/icon-cache.kcache`) shows it until that cache is cleared or the session restarts; the window's own icon is the new one at once.
+
+## Documentation
+
+* `README.md` is for people who use or build ApeMail, in the style of triggerapi's: the splash (`docs/splash.png`), what it is, the screenshot, why, features, performance (every optimisation, and the numbers `make bench` gives: keep them true), keyboard shortcuts, requirements, building, running (where the files are), encryption, safety and testing.
+* Keep it true: when a feature, a shortcut, a file or a rule of safety changes, change the README in the same change, and the screenshot if the window looks different. This file (CLAUDE.md) is for working on the code; the README is not.
