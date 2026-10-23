@@ -417,7 +417,7 @@ func newAccountDialog(parent *qt.QWidget, a account.Account, isNew bool, folders
 		if signatureFromFile.IsChecked() {
 			changed.SignatureFile = strings.TrimSpace(signatureFile.Text())
 			if err := checkSignatureFile(changed.SignatureFile); err != nil {
-				qt.QMessageBox_Warning(d.QWidget, "Account", err.Error())
+				warning(d.QWidget, "Account", err.Error())
 				return
 			}
 		}
@@ -435,7 +435,7 @@ func newAccountDialog(parent *qt.QWidget, a account.Account, isNew bool, folders
 		changed.ArchiveBy = account.ArchiveBy(archiveBy.CurrentData().ToString())
 		changed.CheckOnStart = checkOnStart.IsChecked()
 		if err := changed.Check(); err != nil {
-			qt.QMessageBox_Warning(d.QWidget, "Account", err.Error())
+			warning(d.QWidget, "Account", err.Error())
 			return
 		}
 		d.Accept()

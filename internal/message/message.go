@@ -10,6 +10,7 @@ import (
 	"io"
 	"mime"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -120,14 +121,14 @@ func Parse(raw []byte) (*Message, error) {
 			}
 			switch {
 			case t == "text/plain" && m.Text == "":
-				m.Text = flowed(string(data), params)
+				m.Text = flowed(unixLines(string(data)), params)
 			case t == "text/html" && m.HTML == "":
 				m.HTML = string(data)
 			case t == "text/plain" || t == "text/html":
 				// A second body is kept, as some mailers split one
 				// into several parts.
 				if t == "text/plain" {
-					m.Text += "\n" + string(data)
+					m.Text += "\n" + unixLines(string(data))
 				} else {
 					m.HTML += string(data)
 				}
@@ -154,7 +155,21 @@ func Parse(raw []byte) (*Message, error) {
 			})
 		}
 	}
+	m.HTML = withoutQtMarker(m.HTML)
 	return m, nil
+}
+
+// qtMarker is the tag with which Qt marks HTML written by its own editor,
+// as ApeMail's: <meta name="qrichtext" content="1">.
+var qtMarker = regexp.MustCompile(`(?i)<meta\s[^>]*name\s*=\s*["']?qrichtext\b[^>]*>`)
+
+// withoutQtMarker returns the HTML without Qt's marker. Wherever it is,
+// as in a message another client quotes, Qt keeps every space and line
+// break of the HTML, so the indenting of the HTML around it shows as empty
+// lines, at the top of the message and between its paragraphs. It is for
+// Qt alone, so it is left out of what is sent as well as what is shown.
+func withoutQtMarker(html string) string {
+	return qtMarker.ReplaceAllString(html, "")
 }
 
 // addressList returns the addresses of a header, or, if they cannot be
@@ -193,14 +208,21 @@ func partName(h gomessage.Header, params map[string]string, n int) string {
 	return fmt.Sprintf("part%d%s", n+1, ext)
 }
 
+// unixLines returns text with its lines ended by LF alone. Mail ends them
+// with CRLF, and Qt takes the CR and the LF each for the end of a line, which
+// would show every line break twice.
+func unixLines(text string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
+}
+
 // flowed joins the lines of text that is format=flowed (RFC 3676), which
-// end in a space where the sender's mailer wrapped them.
+// end in a space where the sender's mailer wrapped them. Its lines end in LF.
 func flowed(text string, params map[string]string) string {
 	if !strings.EqualFold(params["format"], "flowed") {
 		return text
 	}
 	delsp := strings.EqualFold(params["delsp"], "yes")
-	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	lines := strings.Split(text, "\n")
 	var out strings.Builder
 	for i, line := range lines {
 		// A space that was added in front of a line is not part of it.
@@ -278,7 +300,9 @@ func FormatAddresses(list []*mail.Address) string {
 }
 
 // FormatAddress returns the address as a person would write it, without the
-// encoding a header gives a name that is not ASCII.
+// encoding a header gives a name that is not ASCII. A name with a comma or
+// another character that would end it is quoted, so that ParseAddresses
+// reads what is typed or completed in a field of addresses back as it was.
 func FormatAddress(a *mail.Address) string {
 	switch {
 	case a.Address == "":
@@ -286,7 +310,11 @@ func FormatAddress(a *mail.Address) string {
 	case a.Name == "":
 		return a.Address
 	}
-	return a.Name + " <" + a.Address + ">"
+	name := a.Name
+	if strings.ContainsAny(name, `,;<>()[]:@"\`) {
+		name = `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(name) + `"`
+	}
+	return name + " <" + a.Address + ">"
 }
 
 // HTMLToText returns roughly the text of HTML, for quoting a message that has
@@ -503,7 +531,7 @@ func (d *Draft) body() part {
 	text := textPart("text/plain", d.Text)
 	body := text
 	if d.HTML != "" {
-		html := textPart("text/html", d.HTML)
+		html := textPart("text/html", withoutQtMarker(d.HTML))
 		if len(d.Images) > 0 {
 			parts := []part{html}
 			for _, img := range d.Images {

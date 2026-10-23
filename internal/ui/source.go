@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	qt "github.com/mappu/miqt/qt6"
+
+	"github.com/nomad-software/apemail/internal/settings"
 )
 
 // sourceWindow is a window that shows the source of a message: the message
@@ -44,7 +46,7 @@ func (w *Window) showSource(subject string, raw []byte) *sourceWindow {
 	s.SetAttribute(qt.WA_DeleteOnClose)
 	s.SetWindowTitle("Source of " + subject)
 	s.SetReadOnly(true)
-	s.SetFont(qt.QFontDatabase_SystemFont(qt.QFontDatabase__FixedFont))
+	s.SetFont(codeFont(w.config))
 	// A message need not be UTF-8: what is not is shown as replacement
 	// characters rather than not at all.
 	s.SetPlainText(strings.ToValidUTF8(strings.ReplaceAll(string(raw), "\r\n", "\n"), "�"))
@@ -58,4 +60,25 @@ func (w *Window) showSource(subject string, raw []byte) *sourceWindow {
 	sources[s] = true
 	s.Show()
 	return s
+}
+
+// codeFont returns the code font the settings choose, or the system's
+// monospaced font, in the family or size they leave empty.
+func codeFont(config settings.Settings) *qt.QFont {
+	font := qt.QFontDatabase_SystemFont(qt.QFontDatabase__FixedFont)
+	if config.CodeFont != "" {
+		font.SetFamily(config.CodeFont)
+	}
+	if config.CodeFontSize > 0 {
+		font.SetPointSize(config.CodeFontSize)
+	}
+	return font
+}
+
+// setSourceFont shows the source windows that are open in the code font of
+// the settings.
+func (w *Window) setSourceFont() {
+	for s := range sources {
+		s.SetFont(codeFont(w.config))
+	}
 }

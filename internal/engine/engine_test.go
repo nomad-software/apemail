@@ -357,16 +357,18 @@ func TestOnlyWhatIsAsked(t *testing.T) {
 	if ix := l.index("Sent"); ix != nil {
 		t.Errorf("sent was synchronised: %+v", ix)
 	}
-	// Each sync lists its folder's messages with a FETCH, which nothing
-	// else sends; watching the inbox opens it too, but fetches nothing.
-	synced := 0
+	// Each sync of a folder with one new message, as these are, sends two
+	// UID FETCHes: one lists its messages, the other the headers of the new
+	// one. Watching the inbox opens it too, but fetches nothing, and no
+	// message is downloaded.
+	fetches := 0
 	for _, c := range s.Commands() {
-		if c == "FETCH" {
-			synced++
+		if c == "UID FETCH" {
+			fetches++
 		}
 	}
-	if synced != 2 {
-		t.Errorf("%d folders were synchronised, not the inbox and the trash", synced)
+	if fetches != 4 {
+		t.Errorf("%d UID FETCHes were sent, not 2 for each of the inbox and the trash", fetches)
 	}
 }
 

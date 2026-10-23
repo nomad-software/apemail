@@ -8,12 +8,14 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/emersion/go-message/mail"
 	qt "github.com/mappu/miqt/qt6"
 	"github.com/mappu/miqt/qt6/mainthread"
 
 	"github.com/nomad-software/apemail/internal/account"
 	"github.com/nomad-software/apemail/internal/crypt"
 	"github.com/nomad-software/apemail/internal/engine"
+	"github.com/nomad-software/apemail/internal/icons"
 	"github.com/nomad-software/apemail/internal/message"
 	"github.com/nomad-software/apemail/internal/settings"
 	"github.com/nomad-software/apemail/internal/store"
@@ -51,6 +53,7 @@ type Window struct {
 	engines map[string]*engine.Engine
 	order   []string
 
+	buttons      *qt.QToolBar
 	split, right *qt.QSplitter
 	folders      *folderTree
 	list         *messageList
@@ -62,9 +65,14 @@ type Window struct {
 	// statuses are what each account is doing.
 	statuses map[string]string
 
+	// contacts is the address book, and bookDialog its window if it is
+	// open.
+	contacts   contacts
+	bookDialog *bookWindow
+
 	// The actions of the menus and the button bar.
 	getMail, write, reply, replyAll, forward, archive, del *qt.QAction
-	markRead, markUnread, viewSource                       *qt.QAction
+	markRead, markUnread, viewSource, addressBook          *qt.QAction
 	editAccount, removeAccount, updateCounts, syncAll      *qt.QAction
 }
 
@@ -82,6 +90,7 @@ func NewWindow(files Files) *Window {
 	// Dialogs and the compose window take their icon from the application.
 	qt.QGuiApplication_SetWindowIcon(appIcon())
 	w.Resize(w.config.Width, w.config.Height)
+	w.contacts.model = qt.NewQStringListModel3(w.QObject)
 
 	w.makeActions()
 	w.makeMenus()
@@ -122,6 +131,8 @@ func NewWindow(files Files) *Window {
 	w.list.opened = w.openMessage
 	w.list.contextMenu = w.messageMenu
 	w.view.compose = w.composeNew
+	w.view.inBook = w.inAddressBook
+	w.view.addContacts = func(addrs []*mail.Address) { w.showError(w.addContacts(addrs)) }
 
 	w.OnCloseEvent(func(super func(event *qt.QCloseEvent), event *qt.QCloseEvent) {
 		if !w.closeComposers() {
@@ -132,6 +143,7 @@ func NewWindow(files Files) *Window {
 		for _, e := range w.engines {
 			e.Close()
 		}
+		w.closeAddressBook()
 		super(event)
 	})
 
@@ -210,16 +222,18 @@ func (w *Window) makeActions() {
 		a.OnTriggered(triggered)
 		return a
 	}
-	w.getMail = action("Get Mail", "F5", icon(qt.QStyle__SP_BrowserReload, "mail-receive"), w.refresh)
-	w.write = action("Write", "Ctrl+N", icon(qt.QStyle__SP_FileIcon, "mail-message-new"), func() { w.composeNew("", "") })
-	w.reply = action("Reply", "Ctrl+R", icon(qt.QStyle__SP_ArrowBack, "mail-reply-sender"), func() { w.replyTo(false) })
-	w.replyAll = action("Reply All", "Ctrl+Shift+R", icon(qt.QStyle__SP_ArrowBack, "mail-reply-all"), func() { w.replyTo(true) })
-	w.forward = action("Forward", "Ctrl+L", icon(qt.QStyle__SP_ArrowForward, "mail-forward"), w.forwardMessage)
-	w.archive = action("Archive", "Ctrl+Shift+A", icon(qt.QStyle__SP_DirIcon, "mail-archive", "archive-insert"), w.archiveMessages)
-	w.del = action("Delete", "Del", icon(qt.QStyle__SP_TrashIcon, "edit-delete"), w.deleteMessages)
+	w.getMail = action("Get Mail", "F5", icon(icons.GetMail), w.refresh)
+	w.write = action("Write", "Ctrl+N", icon(icons.Write), func() { w.composeNew("", "") })
+	w.reply = action("Reply", "Ctrl+R", icon(icons.Reply), func() { w.replyTo(false) })
+	w.replyAll = action("Reply All", "Ctrl+Shift+R", icon(icons.ReplyAll), func() { w.replyTo(true) })
+	w.forward = action("Forward", "Ctrl+L", icon(icons.Forward), w.forwardMessage)
+	w.archive = action("Archive", "Ctrl+Shift+A", icon(icons.Archive), w.archiveMessages)
+	w.del = action("Delete", "Del", icon(icons.Trash), w.deleteMessages)
 	w.markRead = action("Mark as Read", "", nil, func() { w.markSeen(true) })
 	w.markUnread = action("Mark as Unread", "", nil, func() { w.markSeen(false) })
 	w.viewSource = action("View &Source", "Ctrl+U", nil, w.showMessageSource)
+	w.addressBook = action("Address Book", "Ctrl+Shift+B", icon(icons.AddressBook), w.showAddressBook)
+	w.addressBook.SetEnabled(false)
 	w.editAccount = action("Account &Settings…", "", nil, w.editCurrentAccount)
 	w.removeAccount = action("&Remove Account…", "", nil, w.removeCurrentAccount)
 	w.updateCounts = action("&Update Unread Counts", "", nil, func() { w.updateUnreadCounts(w.currentEngine()) })
@@ -233,6 +247,7 @@ func (w *Window) makeMenus() {
 	file := bar.AddMenuWithTitle("&File")
 	file.AddAction(w.write)
 	file.AddAction(w.getMail)
+	file.AddAction(w.addressBook)
 	file.AddSeparator()
 	settingsAction := file.AddActionWithText("&Settings…")
 	settingsAction.SetMenuRole(qt.QAction__PreferencesRole)
@@ -277,10 +292,11 @@ func (w *Window) makeMenus() {
 // makeButtonBar makes the bar of large buttons under the menus.
 func (w *Window) makeButtonBar() {
 	bar := qt.NewQToolBar4("Buttons", w.QWidget)
+	w.buttons = bar
 	bar.SetMovable(false)
 	bar.SetToolButtonStyle(qt.ToolButtonTextUnderIcon)
 	bar.SetIconSize(qt.NewQSize2(32, 32))
-	for _, a := range []*qt.QAction{w.getMail, w.write, nil, w.reply, w.replyAll, w.forward, nil, w.archive, w.del} {
+	for _, a := range []*qt.QAction{w.getMail, w.write, nil, w.reply, w.replyAll, w.forward, nil, w.archive, nil, w.addressBook, nil, w.del} {
 		if a == nil {
 			bar.AddSeparator()
 			continue
@@ -288,18 +304,6 @@ func (w *Window) makeButtonBar() {
 		bar.QWidget.AddAction(a)
 	}
 	w.AddToolBar(qt.TopToolBarArea, bar)
-}
-
-// icon returns the icon of the desktop's theme with the first of the names
-// it has, as themes name some icons differently, or a standard icon of the
-// style if it has none of them.
-func icon(fallback qt.QStyle__StandardPixmap, names ...string) *qt.QIcon {
-	for _, name := range names {
-		if qt.QIcon_HasThemeIcon(name) {
-			return qt.QIcon_FromTheme(name)
-		}
-	}
-	return qt.QApplication_Style().StandardIcon(fallback, nil, nil)
 }
 
 // updateActions enables the actions that can be used on what is selected.
@@ -351,7 +355,14 @@ func (w *Window) showError(err error) {
 
 // warn shows what went wrong in a dialog.
 func (w *Window) warn(title string, err error) {
-	qt.QMessageBox_Warning(w.QWidget, title, err.Error())
+	warning(w.QWidget, title, err.Error())
+}
+
+// warning shows what went wrong in a dialog. Tests replace it, so that what
+// went wrong is told, rather than left in a dialog no one closes while the
+// test waits for what did not happen.
+var warning = func(parent *qt.QWidget, title, text string) {
+	qt.QMessageBox_Warning(parent, title, text)
 }
 
 // confirm asks the user a question, and reports if they said yes. Tests
@@ -608,8 +619,10 @@ func (w *Window) archiveMessages() {
 	if e == nil || len(uids) == 0 || e.InArchive(w.folder) {
 		return
 	}
+	w.list.selectNextLater()
 	e.Archive(w.folder, uids, func(err error) {
 		if err != nil {
+			w.list.next = 0
 			w.warn("Archive", err)
 		}
 	})
@@ -627,10 +640,14 @@ func (w *Window) deleteMessages() {
 	}
 	done := func(err error) {
 		if err != nil {
+			w.list.next = 0
 			w.warn("Delete", err)
 		}
 	}
+	// The message after those deleted is selected once they have gone,
+	// so that it can be deleted too with another press.
 	if w.folder != e.SpecialFolder(engine.Trash) {
+		w.list.selectNextLater()
 		e.Trash(w.folder, uids, done)
 		return
 	}
@@ -640,6 +657,7 @@ func (w *Window) deleteMessages() {
 	}
 	if confirm(w.QWidget, "Delete for Good",
 		fmt.Sprintf("Delete %s from %s for good?\n\nThey will be removed from the server, and this cannot be undone.", what, w.folder)) {
+		w.list.selectNextLater()
 		e.Delete(w.folder, uids, done)
 	}
 }

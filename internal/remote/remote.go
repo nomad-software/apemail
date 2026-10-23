@@ -371,13 +371,25 @@ func (c *Conn) Sync(ix *store.Index, progress func([]store.Summary)) (*Update, e
 	return u, nil
 }
 
+// allUIDs is every message of a folder, by UID: 1:*.
+//
+// Every message is asked for by UID, never by number. While a message
+// another client has expunged has yet to be reported, a FETCH by number can
+// be answered with nothing at all, as the server may not report the expunge
+// during it, which would have every message taken for gone. And the numbers
+// change as messages go, so the answer for one number can be taken for
+// another's; a UID is the message's own.
+func allUIDs() imap.UIDSet {
+	all := imap.UIDSet{}
+	all.AddRange(1, 0)
+	return all
+}
+
 // everything finds what has changed in the folder that is open from the UIDs
 // and flags of every message: the flags of those known, those that have gone
 // and, returned, those that are new.
 func (c *Conn) everything(known map[uint32]bool, u *Update) ([]imap.UID, error) {
-	all := imap.SeqSet{}
-	all.AddRange(1, 0)
-	msgs, err := c.c.Fetch(all, &imap.FetchOptions{UID: true, Flags: true}).Collect()
+	msgs, err := c.c.Fetch(allUIDs(), &imap.FetchOptions{UID: true, Flags: true}).Collect()
 	if err != nil {
 		return nil, err
 	}
@@ -414,9 +426,7 @@ func (c *Conn) changedSince(modSeq uint64, data *imap.SelectData, known map[uint
 		return nil, true, nil
 	}
 
-	all := imap.SeqSet{}
-	all.AddRange(1, 0)
-	msgs, err := c.c.Fetch(all, &imap.FetchOptions{UID: true, Flags: true, ChangedSince: modSeq}).Collect()
+	msgs, err := c.c.Fetch(allUIDs(), &imap.FetchOptions{UID: true, Flags: true, ChangedSince: modSeq}).Collect()
 	if err != nil {
 		return nil, false, err
 	}

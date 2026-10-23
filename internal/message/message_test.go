@@ -260,3 +260,88 @@ func TestFlowed(t *testing.T) {
 		t.Errorf("text = %q", m.Text)
 	}
 }
+
+// TestFormatAddressQuotes checks that a name which would be read as more
+// than one address, or not as a name, is quoted, so that a field it is put
+// in is read back as it was.
+func TestFormatAddressQuotes(t *testing.T) {
+	for _, a := range []*mail.Address{
+		{Name: "Hopper, Grace", Address: "grace@example.com"},
+		{Name: `Grace "Amazing" Hopper`, Address: "grace@example.com"},
+		{Name: `Back\slash <x>`, Address: "grace@example.com"},
+		{Name: "Jörg", Address: "jorg@example.com"},
+	} {
+		text := message.FormatAddress(a)
+		got, err := message.ParseAddresses(text + ", other@example.com")
+		if err != nil {
+			t.Errorf("%q: %v", text, err)
+			continue
+		}
+		if len(got) != 2 || got[0].Name != a.Name || got[0].Address != a.Address {
+			t.Errorf("%q was read as %+v", text, got)
+		}
+	}
+	if got := message.FormatAddress(&mail.Address{Name: "Grace Hopper", Address: "grace@example.com"}); got != "Grace Hopper <grace@example.com>" {
+		t.Errorf("a plain name was quoted: %q", got)
+	}
+}
+
+// TestParseLineEnds checks that the text of a message has its lines ended
+// by LF alone, as Qt shows a CR as another line, whether they end in CRLF,
+// as mail does, or a CR alone, and in a second text part too.
+func TestParseLineEnds(t *testing.T) {
+	raw := "From: a@example.com\r\nSubject: s\r\nMIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=b\r\n\r\n" +
+		"--b\r\nContent-Type: text/plain\r\n\r\n\r\nHello,\r\n\r\nThe body.\r\n" +
+		"--b\r\nContent-Type: text/plain\r\n\r\nMore\rlines\r\n" +
+		"--b--\r\n"
+	m, err := message.Parse([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The CRLF before a boundary is the boundary's, not the part's.
+	if want := "\nHello,\n\nThe body.\nMore\nlines"; m.Text != want {
+		t.Errorf("text = %q, want %q", m.Text, want)
+	}
+}
+
+// TestQtMarker checks that Qt's marker of its own HTML, which has Qt keep
+// every space and line break of the HTML wherever it is, is taken out of
+// what is read, where another client may have quoted it, and is not sent.
+func TestQtMarker(t *testing.T) {
+	for _, marker := range []string{
+		`<meta name="qrichtext" content="1">`,
+		`<META content='1' NAME='qrichtext' />`,
+		`<meta name=qrichtext content=1>`,
+	} {
+		raw := "From: a@example.com\r\nSubject: s\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" +
+			"<html><body>\r\n  <p>foo</p>\r\n  <blockquote>" + marker + "<p>quoted</p></blockquote>\r\n</body></html>\r\n"
+		m, err := message.Parse([]byte(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(strings.ToLower(m.HTML), "qrichtext") || !strings.Contains(m.HTML, "<p>quoted</p>") {
+			t.Errorf("%s: html = %q", marker, m.HTML)
+		}
+	}
+	// Other tags of the head are left as they are.
+	m, err := message.Parse([]byte("From: a@example.com\r\nContent-Type: text/html\r\n\r\n<meta charset=\"utf-8\"><p>x</p>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.HTML != `<meta charset="utf-8"><p>x</p>` {
+		t.Errorf("html = %q", m.HTML)
+	}
+
+	d := &message.Draft{
+		From: &mail.Address{Address: "a@example.com"}, To: "b@example.com", Subject: "s", Text: "foo",
+		HTML: `<html><head><meta name="qrichtext" content="1" /><meta charset="utf-8" /></head><body><p>foo</p></body></html>`,
+	}
+	raw, err := d.Build(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "qrichtext") || !strings.Contains(string(raw), "<p>foo</p>") {
+		t.Errorf("sent\n%s", raw)
+	}
+}

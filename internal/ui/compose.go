@@ -14,6 +14,7 @@ import (
 
 	"github.com/nomad-software/apemail/internal/account"
 	"github.com/nomad-software/apemail/internal/engine"
+	"github.com/nomad-software/apemail/internal/icons"
 	"github.com/nomad-software/apemail/internal/message"
 	"github.com/nomad-software/apemail/internal/send"
 )
@@ -29,9 +30,12 @@ type composer struct {
 
 	from                 *qt.QComboBox
 	to, cc, bcc, subject *qt.QLineEdit
-	body                 *qt.QTextEdit
-	attachList           *qt.QListWidget
-	attachments          []message.Attachment
+	// completers complete the addresses typed in To, Cc and Bcc from the
+	// address book.
+	completers  []*addressCompleter
+	body        *qt.QTextEdit
+	attachList  *qt.QListWidget
+	attachments []message.Attachment
 	// images are the pictures put in the HTML, which shows each as
 	// cid:ID. Those taken out of it again are left out when it is sent.
 	images []message.Attachment
@@ -100,6 +104,7 @@ func (w *Window) newComposer(e *engine.Engine) *composer {
 	c.subject = qt.NewQLineEdit2()
 	for _, f := range []*qt.QLineEdit{c.to, c.cc, c.bcc} {
 		f.SetPlaceholderText("Addresses, separated by commas")
+		c.completers = append(c.completers, newAddressCompleter(f, w.contacts.model))
 	}
 	form.AddRow3("To:", c.to.QWidget)
 	form.AddRow3("Cc:", c.cc.QWidget)
@@ -176,9 +181,9 @@ func (c *composer) makeButtonBar() {
 		bar.QWidget.AddAction(a)
 		return a
 	}
-	add("Send", "Ctrl+Return", icon(qt.QStyle__SP_DialogApplyButton, "mail-send"), c.send)
-	add("Save Draft", "Ctrl+S", icon(qt.QStyle__SP_DialogSaveButton, "document-save"), func() { c.saveDraft(nil) })
-	add("Attach", "", icon(qt.QStyle__SP_FileIcon, "mail-attachment"), c.attach)
+	add("Send", "Ctrl+Return", icon(icons.Sent), c.send)
+	add("Save Draft", "Ctrl+S", icon(icons.Save), func() { c.saveDraft(nil) })
+	add("Attach", "", icon(icons.Attachment), c.attach)
 	remove := qt.NewQAction2("Remove Attachment")
 	remove.SetShortcut(qt.NewQKeySequence2("Del"))
 	remove.SetShortcutContext(qt.WidgetShortcut)
@@ -195,22 +200,22 @@ func (c *composer) makeButtonBar() {
 			a.OnTriggered(func() { set(a.IsChecked()) })
 			return a
 		}
-		c.bold = format("Bold", "Ctrl+B", qt.QIcon_FromTheme("format-text-bold"), func(on bool) {
+		c.bold = format("Bold", "Ctrl+B", icon(icons.Bold), func(on bool) {
 			if on {
 				c.body.SetFontWeight(int(qt.QFont__Bold))
 			} else {
 				c.body.SetFontWeight(int(qt.QFont__Normal))
 			}
 		})
-		italic := format("Italic", "Ctrl+I", qt.QIcon_FromTheme("format-text-italic"), c.body.SetFontItalic)
-		underline := format("Underline", "Ctrl+U", qt.QIcon_FromTheme("format-text-underline"), c.body.SetFontUnderline)
-		c.bullets = format("Bullets", "", qt.QIcon_FromTheme("format-list-unordered"), func(on bool) {
+		italic := format("Italic", "Ctrl+I", icon(icons.Italic), c.body.SetFontItalic)
+		underline := format("Underline", "Ctrl+U", icon(icons.Underline), c.body.SetFontUnderline)
+		c.bullets = format("Bullets", "", icon(icons.Bullets), func(on bool) {
 			c.setList(qt.QTextListFormat__ListDisc, on)
 		})
-		c.numbers = format("Numbers", "", qt.QIcon_FromTheme("format-list-ordered"), func(on bool) {
+		c.numbers = format("Numbers", "", icon(icons.Numbers), func(on bool) {
 			c.setList(qt.QTextListFormat__ListDecimal, on)
 		})
-		add("Image", "", qt.QIcon_FromTheme("insert-image"), c.insertImage)
+		add("Image", "", icon(icons.Image), c.insertImage)
 		// The buttons show the format of the text at the cursor.
 		c.body.OnCurrentCharFormatChanged(func(f *qt.QTextCharFormat) {
 			c.bold.SetChecked(f.FontWeight() >= int(qt.QFont__Bold))
@@ -277,6 +282,8 @@ func (c *composer) send() {
 		c.warn("Send", err)
 		return
 	}
+	// Recipients has read every list of addresses already.
+	to, _ := message.ParseAddresses(d.To)
 	if len(rcpts) == 0 {
 		c.warn("Send", errors.New("the message has no recipients"))
 		return
@@ -306,6 +313,11 @@ func (c *composer) send() {
 		c.sent = true
 		if c.repliedUID != 0 {
 			e.SetFlag(c.repliedFolder, []uint32{c.repliedUID}, `\Answered`, true, c.w.showError)
+		}
+		// Whoever a reply went to is put in the address book, unless
+		// they are there already.
+		if c.inReplyTo != "" {
+			c.w.showError(c.w.addContacts(to))
 		}
 		c.Close()
 	})
@@ -433,7 +445,7 @@ func (c *composer) removeAttachment() {
 }
 
 func (c *composer) warn(title string, err error) {
-	qt.QMessageBox_Warning(c.QWidget, title, err.Error())
+	warning(c.QWidget, title, err.Error())
 }
 
 // composeEngine returns the engine of the account to write from: the one

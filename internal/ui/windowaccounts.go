@@ -59,6 +59,7 @@ func (w *Window) openKeys() {
 		return
 	}
 	w.keys = keys
+	w.loadAddressBook()
 	w.loadAccounts()
 }
 
@@ -172,6 +173,7 @@ func (w *Window) accountsDir() string {
 // editSettings shows the settings, and puts what is changed into effect.
 func (w *Window) editSettings() {
 	newSettingsDialog(w.QWidget, w.config, w.files.Accounts, func(changed settings.Settings) {
+		w.applyFonts(changed)
 		keysChanged := changed.PublicKey != w.config.PublicKey || changed.PrivateKey != w.config.PrivateKey || w.keys == nil
 		from, to := w.accountsDir(), changed.AccountsDir(w.files.Accounts)
 		dirChanged := filepath.Clean(from) != filepath.Clean(to)
@@ -196,6 +198,17 @@ func (w *Window) editSettings() {
 	})
 }
 
+// applyFonts puts the fonts of the settings into effect, in the windows that
+// are open as in those opened later.
+func (w *Window) applyFonts(changed settings.Settings) {
+	if changed.CodeFont == w.config.CodeFont && changed.CodeFontSize == w.config.CodeFontSize {
+		return
+	}
+	w.config.CodeFont, w.config.CodeFontSize = changed.CodeFont, changed.CodeFontSize
+	w.saveConfig()
+	w.setSourceFont()
+}
+
 // applySettings puts new keys and a new folder for the accounts into effect.
 // The accounts are stopped while the files are moved and encrypted with the
 // new keys, which is done away from the UI's thread, and started again
@@ -203,6 +216,7 @@ func (w *Window) editSettings() {
 func (w *Window) applySettings(changed settings.Settings, keys *crypt.Keys, from, to string, move bool) {
 	old := w.keys
 	w.stopAccounts()
+	w.closeAddressBook()
 	w.Status("settings", "Applying the settings…")
 	go func() {
 		var failed []error
@@ -237,6 +251,7 @@ func (w *Window) applySettings(changed settings.Settings, keys *crypt.Keys, from
 				w.warn("Settings", err)
 			}
 			if w.keys != nil {
+				w.loadAddressBook()
 				w.loadAccounts()
 			}
 		})

@@ -24,13 +24,6 @@ import (
 // docs/screenshot.png.
 const screenshotEnv = "APEMAIL_SCREENSHOT"
 
-// screenshotTheme is the icon theme the screenshot is drawn with, as the
-// desktop's own is not there offscreen, and iconDir is where it is.
-const (
-	screenshotTheme = "breeze"
-	iconDir         = "/usr/share/icons"
-)
-
 // sampleMessage is a message of the mailbox the screenshot shows.
 type sampleMessage struct {
 	folder, from, subject string
@@ -148,19 +141,6 @@ func TestScreenshot(t *testing.T) {
 
 	var w *Window
 	mainthread.Wait(func() {
-		// Offscreen, Qt looks for icons only among its own resources, so
-		// it is shown where the system keeps them.
-		if _, err := os.Stat(filepath.Join(iconDir, screenshotTheme)); err == nil {
-			oldTheme, oldPaths := qt.QIcon_ThemeName(), qt.QIcon_ThemeSearchPaths()
-			qt.QIcon_SetThemeSearchPaths(append(oldPaths, iconDir))
-			qt.QIcon_SetThemeName(screenshotTheme)
-			t.Cleanup(func() {
-				mainthread.Wait(func() {
-					qt.QIcon_SetThemeName(oldTheme)
-					qt.QIcon_SetThemeSearchPaths(oldPaths)
-				})
-			})
-		}
 		w = NewWindow(files)
 		w.Start()
 	})

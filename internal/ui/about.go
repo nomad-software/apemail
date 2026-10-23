@@ -23,7 +23,7 @@ func aboutText() string {
 // built with, which carry the notice the LGPL asks of programs that use Qt.
 func licenceText() string {
 	return "<p><b>Third party licences</b></p>" +
-		"<p>This program uses Qt version " + qt.QLibraryInfo_Version().ToString() + ".</p>" +
+		"<p>This program uses Qt version " + qt.QLibraryInfo_Version().ToString() + " (Qt Widgets and Qt SVG).</p>" +
 		"<p>Qt is a C++ toolkit for cross-platform application development, used here under the " +
 		"terms of the <a href=\"https://www.gnu.org/licenses/lgpl-3.0.html\">GNU Lesser General " +
 		"Public License version 3</a> (LGPLv3). Qt is dynamically linked, so it can be replaced " +

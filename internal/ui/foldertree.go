@@ -9,6 +9,7 @@ import (
 
 	"github.com/nomad-software/apemail/internal/account"
 	"github.com/nomad-software/apemail/internal/engine"
+	"github.com/nomad-software/apemail/internal/icons"
 	"github.com/nomad-software/apemail/internal/remote"
 	"github.com/nomad-software/apemail/internal/settings"
 	"github.com/nomad-software/apemail/internal/store"
@@ -141,7 +142,7 @@ func (t *folderTree) setAccount(a account.Account) {
 		item.SetData(0, roleFolder, qt.NewQVariant11(""))
 		item.SetData(0, roleName, qt.NewQVariant11(""))
 		item.SetFlags(qt.ItemIsSelectable | qt.ItemIsEnabled)
-		item.SetIcon(0, icon(qt.QStyle__SP_DriveNetIcon, "mail-message"))
+		item.SetIcon(0, icon(icons.Account))
 		font := item.Font(0)
 		font.SetBold(true)
 		item.SetFont(0, font)
@@ -194,6 +195,11 @@ func (t *folderTree) setFolders(a account.Account, folders []store.Folder) {
 	if cur := t.CurrentItem(); cur != nil && cur.Data(0, roleAccount).ToString() == a.ID {
 		selectedFolder = cur.Data(0, roleFolder).ToString()
 	}
+	// The folder selected stays so, without being opened again, as the
+	// tree selects another while it is made again: that would empty the
+	// list, and lose the message shown, each time the folders are listed.
+	announce := t.selected
+	t.selected = nil
 
 	t.forgetChildren(parent)
 	for _, child := range parent.TakeChildren() {
@@ -260,8 +266,18 @@ func (t *folderTree) setFolders(a account.Account, folders []store.Folder) {
 			delete(t.expanded[a.ID], key)
 		}
 	}
-	if item, ok := items[selectedFolder]; ok {
+	item, kept := items[selectedFolder]
+	if kept {
 		t.SetCurrentItem(item)
+	}
+	t.selected = announce
+	// A folder that has gone is no longer what is listed.
+	if selectedFolder != "" && !kept && t.selected != nil {
+		if cur := t.CurrentItem(); cur != nil {
+			t.selected(cur.Data(0, roleAccount).ToString(), cur.Data(0, roleFolder).ToString())
+		} else {
+			t.selected("", "")
+		}
 	}
 }
 
@@ -297,20 +313,20 @@ func orderFolders(folders []store.Folder, uses map[string]engine.Special) []stor
 // folderIcon returns the icon of a folder, by its use.
 func folderIcon(f store.Folder, uses map[string]engine.Special) *qt.QIcon {
 	if remote.IsInbox(f.Name) {
-		return icon(qt.QStyle__SP_DirHomeIcon, "mail-folder-inbox")
+		return icon(icons.Inbox)
 	}
 	use, ok := uses[f.Name]
 	switch {
 	case !ok:
-		return icon(qt.QStyle__SP_DirIcon, "folder")
+		return icon(icons.Folder)
 	case use == engine.Sent:
-		return icon(qt.QStyle__SP_DirIcon, "mail-folder-sent")
+		return icon(icons.Sent)
 	case use == engine.Drafts:
-		return icon(qt.QStyle__SP_DirIcon, "document-edit")
+		return icon(icons.Drafts)
 	case use == engine.Trash:
-		return icon(qt.QStyle__SP_TrashIcon, "user-trash")
+		return icon(icons.Trash)
 	}
-	return icon(qt.QStyle__SP_DirIcon, "mail-folder-archive", "folder")
+	return icon(icons.Archive)
 }
 
 // setUnread shows how many messages of the folder are unread, and keeps it

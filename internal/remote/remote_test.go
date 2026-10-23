@@ -342,3 +342,50 @@ func TestUnread(t *testing.T) {
 	}
 	unchanged(t, commands)
 }
+
+// TestSyncWhileAnotherExpunges checks that a sync which asks for every
+// message while another client has just expunged one, which the server has
+// yet to report, finds only that one gone. Asked for by number, the server
+// answers with nothing at all, and every message was taken for gone.
+func TestSyncWhileAnotherExpunges(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Trash")
+	for _, subject := range []string{"first", "second", "third"} {
+		s.Append(t, "INBOX", subject)
+	}
+	c := dial(t, s, false)
+	ix := &store.Index{Folder: "INBOX"}
+	u, err := c.Sync(ix, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ix.UIDValidity = u.UIDValidity
+	for _, m := range u.Added {
+		ix.Put(m)
+	}
+	first := ix.Messages[0].UID
+
+	// The sync waits once it has opened the folder, before it asks for
+	// every message, while another client moves the first away.
+	held, release := s.Hold(t, "FETCH 1:*")
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		u, err = c.Sync(ix, nil)
+	}()
+	<-held
+	other := dial(t, s, true)
+	if err := other.Move("INBOX", ix.UIDValidity, []uint32{first}, "Trash"); err != nil {
+		t.Fatal(err)
+	}
+	release()
+	<-done
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(u.Removed, []uint32{first}) || len(u.Added) != 0 {
+		t.Errorf("removed %v, added %+v; only %d went", u.Removed, u.Added, first)
+	}
+	if len(u.Flags) != 2 {
+		t.Errorf("flags of %d messages: %v", len(u.Flags), u.Flags)
+	}
+}

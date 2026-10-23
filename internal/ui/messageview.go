@@ -10,8 +10,10 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/emersion/go-message/mail"
 	qt "github.com/mappu/miqt/qt6"
 
+	"github.com/nomad-software/apemail/internal/icons"
 	"github.com/nomad-software/apemail/internal/message"
 )
 
@@ -24,7 +26,8 @@ import (
 type messageView struct {
 	*qt.QWidget
 
-	headers     *qt.QLabel
+	headers     *qt.QWidget
+	headerGrid  *qt.QGridLayout
 	attachments *qt.QWidget
 	attachBox   *qt.QHBoxLayout
 	browser     *qt.QTextBrowser
@@ -35,9 +38,18 @@ type messageView struct {
 	folder string
 	uid    uint32
 
+	// addSender is the button which puts whoever replies to the message
+	// go to in the address book, if a message is shown: beside Reply to,
+	// if it has one, or beside From.
+	addSender *qt.QToolButton
+
 	// compose is called to write to an address that is clicked, as
 	// mailto:.
 	compose func(to, subject string)
+	// inBook reports if an address is in the address book, and addContacts
+	// puts addresses in it.
+	inBook      func(email string) bool
+	addContacts func(addrs []*mail.Address)
 }
 
 func newMessageView() *messageView {
@@ -46,14 +58,15 @@ func newMessageView() *messageView {
 	layout.SetContentsMargins(0, 0, 0, 0)
 	layout.SetSpacing(0)
 
-	v.headers = qt.NewQLabel2()
-	v.headers.SetTextFormat(qt.RichText)
-	v.headers.SetWordWrap(true)
-	v.headers.SetTextInteractionFlags(qt.TextSelectableByMouse)
-	v.headers.SetContentsMargins(8, 6, 8, 6)
+	v.headers = qt.NewQWidget2()
 	v.headers.SetAutoFillBackground(true)
 	v.headers.SetBackgroundRole(qt.QPalette__AlternateBase)
-	layout.AddWidget(v.headers.QWidget)
+	v.headerGrid = qt.NewQGridLayout(v.headers)
+	v.headerGrid.SetContentsMargins(8, 6, 8, 6)
+	v.headerGrid.SetHorizontalSpacing(8)
+	v.headerGrid.SetVerticalSpacing(2)
+	v.headerGrid.SetColumnStretch(1, 1)
+	layout.AddWidget(v.headers)
 
 	v.attachments = qt.NewQWidget2()
 	v.attachBox = qt.NewQHBoxLayout(v.attachments)
@@ -123,7 +136,8 @@ func (v *messageView) follow(link string) {
 // clear shows nothing.
 func (v *messageView) clear() {
 	v.msg, v.folder, v.uid = nil, "", 0
-	v.headers.SetText("")
+	v.addSender = nil
+	clearLayout(v.headerGrid.QLayout)
 	v.headers.SetVisible(false)
 	v.setAttachments(nil)
 	v.browser.SetHtml("")
@@ -145,29 +159,7 @@ func (v *messageView) failed(err error) {
 func (v *messageView) show(m *message.Message, folder string, uid uint32) {
 	v.msg, v.folder, v.uid = m, folder, uid
 
-	var h strings.Builder
-	subject := m.Subject
-	if subject == "" {
-		subject = "(no subject)"
-	}
-	fmt.Fprintf(&h, "<div style=\"font-size: large; font-weight: bold\">%s</div><table>", html.EscapeString(subject))
-	row := func(name, value string) {
-		if value != "" {
-			fmt.Fprintf(&h, "<tr><td style=\"color: gray; padding-right: 8px\">%s</td><td>%s</td></tr>", name, html.EscapeString(value))
-		}
-	}
-	row("From", message.FormatAddresses(m.From))
-	if len(m.ReplyTo) > 0 && message.FormatAddresses(m.ReplyTo) != message.FormatAddresses(m.From) {
-		row("Reply to", message.FormatAddresses(m.ReplyTo))
-	}
-	row("To", message.FormatAddresses(m.To))
-	row("Cc", message.FormatAddresses(m.Cc))
-	if !m.Date.IsZero() {
-		row("Date", m.Date.Local().Format("Monday 2 January 2006 15:04"))
-	}
-	h.WriteString("</table>")
-	v.headers.SetText(h.String())
-	v.headers.SetVisible(true)
+	v.showHeaders(m)
 
 	v.setAttachments(m.Files())
 
@@ -175,6 +167,123 @@ func (v *messageView) show(m *message.Message, folder string, uid uint32) {
 		v.browser.SetHtml(m.HTML)
 	} else {
 		v.browser.SetHtml(textToHTML(m.Text))
+	}
+}
+
+// showHeaders shows the subject of the message, and who it is from and to
+// and when, with a button beside the sender to put them in the address book.
+func (v *messageView) showHeaders(m *message.Message) {
+	clearLayout(v.headerGrid.QLayout)
+	subject := m.Subject
+	if subject == "" {
+		subject = "(no subject)"
+	}
+	title := qt.NewQLabel3(fmt.Sprintf("<div style=\"font-size: large; font-weight: bold\">%s</div>", html.EscapeString(subject)))
+	title.SetTextFormat(qt.RichText)
+	title.SetWordWrap(true)
+	title.SetTextInteractionFlags(qt.TextSelectableByMouse)
+	v.headerGrid.AddWidget3(title.QWidget, 0, 0, 1, 2)
+
+	// A grid does not forget the rows it had, so they are counted here.
+	n := 0
+	var text *qt.QLabel
+	row := func(name, value string) *qt.QHBoxLayout {
+		if value == "" {
+			return nil
+		}
+		n++
+		label := qt.NewQLabel3(fmt.Sprintf("<span style=\"color: gray\">%s</span>", name))
+		label.SetTextFormat(qt.RichText)
+		v.headerGrid.AddWidget4(label.QWidget, n, 0, qt.AlignLeft|qt.AlignTop)
+		text = qt.NewQLabel3(value)
+		text.SetTextFormat(qt.PlainText)
+		text.SetWordWrap(true)
+		text.SetTextInteractionFlags(qt.TextSelectableByMouse)
+		line := qt.NewQHBoxLayout2()
+		line.SetSpacing(4)
+		line.AddWidget(text.QWidget)
+		v.headerGrid.AddLayout(line.QLayout, n, 1)
+		return line
+	}
+	// The button goes beside the addresses it adds.
+	addButton := func(line *qt.QHBoxLayout) {
+		if line == nil {
+			return
+		}
+		// A label that wraps would be squeezed by the stretch that keeps
+		// the button beside it, and a sender is short.
+		text.SetWordWrap(false)
+		v.addSender = qt.NewQToolButton2()
+		v.addSender.SetIcon(icon(icons.AddContact))
+		v.addSender.SetAutoRaise(true)
+		v.addSender.SetIconSize(qt.NewQSize2(16, 16))
+		v.addSender.OnClicked(func() {
+			if v.msg != nil && v.addContacts != nil {
+				v.addContacts(replier(v.msg))
+			}
+		})
+		line.AddWidget(v.addSender.QWidget)
+		line.AddStretch()
+		v.showAddButton()
+	}
+	from := row("From", message.FormatAddresses(m.From))
+	if len(m.ReplyTo) > 0 && message.FormatAddresses(m.ReplyTo) != message.FormatAddresses(m.From) {
+		addButton(row("Reply to", message.FormatAddresses(m.ReplyTo)))
+	} else {
+		addButton(from)
+	}
+	row("To", message.FormatAddresses(m.To))
+	row("Cc", message.FormatAddresses(m.Cc))
+	if !m.Date.IsZero() {
+		row("Date", m.Date.Local().Format("Monday 2 January 2006 15:04"))
+	}
+	v.headers.SetVisible(true)
+}
+
+// replier returns whom replies to the message go to: whoever it says, or
+// its sender.
+func replier(m *message.Message) []*mail.Address {
+	if len(m.ReplyTo) > 0 {
+		return m.ReplyTo
+	}
+	return m.From
+}
+
+// showAddButton enables the button that adds whoever replies to the message
+// go to if they are not in the address book yet.
+func (v *messageView) showAddButton() {
+	if v.addSender == nil || v.msg == nil {
+		return
+	}
+	missing := false
+	addrs := replier(v.msg)
+	for _, a := range addrs {
+		if a.Address != "" && v.inBook != nil && !v.inBook(a.Address) {
+			missing = true
+		}
+	}
+	v.addSender.SetEnabled(missing)
+	if missing {
+		v.addSender.SetToolTip("Add " + message.FormatAddresses(addrs) + " to the address book")
+	} else {
+		v.addSender.SetToolTip("In the address book")
+	}
+}
+
+// clearLayout takes everything out of the layout, and deletes the widgets
+// and layouts in it.
+func clearLayout(l *qt.QLayout) {
+	for l.Count() > 0 {
+		item := l.TakeAt(0)
+		if w := item.Widget(); w != nil {
+			w.DeleteLater()
+		}
+		if inner := item.Layout(); inner != nil {
+			clearLayout(inner)
+			inner.DeleteLater()
+		} else {
+			item.Delete()
+		}
 	}
 }
 
@@ -204,12 +313,7 @@ func textToHTML(text string) string {
 
 // setAttachments shows a button for each attachment, which saves it.
 func (v *messageView) setAttachments(files []message.Attachment) {
-	for v.attachBox.Count() > 0 {
-		item := v.attachBox.TakeAt(0)
-		if w := item.Widget(); w != nil {
-			w.DeleteLater()
-		}
-	}
+	clearLayout(v.attachBox.QLayout)
 	v.attachments.SetVisible(len(files) > 0)
 	if len(files) == 0 {
 		return
@@ -218,7 +322,7 @@ func (v *messageView) setAttachments(files []message.Attachment) {
 	v.attachBox.AddWidget(label.QWidget)
 	for _, a := range files {
 		b := qt.NewQPushButton3(fmt.Sprintf("%s (%s)", a.Filename, size(len(a.Data))))
-		b.SetIcon(icon(qt.QStyle__SP_FileIcon, "mail-attachment"))
+		b.SetIcon(icon(icons.Attachment))
 		b.SetFlat(true)
 		b.SetToolTip("Save " + a.Filename)
 		b.OnClicked(func() { v.save(a) })
@@ -239,7 +343,7 @@ func (v *messageView) save(a message.Attachment) {
 		return
 	}
 	if err := os.WriteFile(path, a.Data, 0o600); err != nil {
-		qt.QMessageBox_Warning(v.QWidget, "Save Attachment", err.Error())
+		warning(v.QWidget, "Save Attachment", err.Error())
 	}
 }
 

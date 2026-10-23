@@ -94,6 +94,8 @@ it you have.
   to say when the message is delivered or cannot be (Options menu). The
   notifications are asked for only where the outgoing server supports them
   (DSN); otherwise the message is sent as usual.
+- The To, Cc and Bcc fields complete what you type from the address book:
+  any part of a name or address finds a contact.
 - Attach files, and save drafts to the server to finish later. Double-click a
   draft to carry on with it; the drafts it replaces go to the trash.
 - Mail that cannot be sent because the server cannot be reached waits in an
@@ -106,6 +108,8 @@ it you have.
   for each month, or just the archive, as the account says.
 - **Delete** moves messages to the trash. In the trash, it deletes them for
   good, after asking.
+- After deleting or archiving, the next message is selected and shown, so
+  pressing Delete again deletes it too.
 - Drag messages onto a folder to move them there.
 - Mark messages as read or unread.
 - The archive, trash, drafts and sent folders are found by what the server
@@ -113,6 +117,18 @@ it you have.
   Archives, Sent Items, Deleted Items, ...), or can be chosen for each
   account. If one is missing it is made on the server the first time it is
   needed.
+
+**Address book**
+
+- The **Address Book** button (or File > Address Book) lists the names and
+  addresses of your contacts, to add, change, remove (after asking) and write
+  to. Double-click a contact to close it and write to them.
+- The button beside the sender of a message puts them in the address book,
+  or, if the message asks for replies to go elsewhere (Reply-To), whoever
+  they go to, as replying does: the button is then beside Reply to.
+- Whoever a reply is sent to is put in it too.
+- Each address is in it once, whatever its case: one already there is not
+  added again, though it is given the name if it had none.
 
 **Accounts**
 
@@ -236,6 +252,7 @@ Measure it yourself with `make bench`.
 | Delete | Move the selected messages to the trash, or, in the trash, delete them for good after asking. |
 | Ctrl+A | Select every message in the list. |
 | Ctrl+U | Show the source of the message: the message as the server has it, as text. |
+| Ctrl+Shift+B | Open the address book. |
 | Ctrl+, | Open the settings. |
 | Ctrl+I | Show the about box. |
 | Ctrl+Q | Quit. |
@@ -264,22 +281,22 @@ Building needs:
 - Go 1.27 or later
 - A C++ compiler (GCC or Clang)
 - `pkg-config`
-- The Qt 6 base development files (Qt 6 Widgets)
+- The Qt 6 development files of Qt Widgets and Qt SVG (which draws the icons)
 
 Install them with your distribution's package manager:
 
 ```sh
 # Arch, CachyOS, Manjaro
-sudo pacman -S go gcc pkgconf qt6-base
+sudo pacman -S go gcc pkgconf qt6-base qt6-svg
 
 # Debian, Ubuntu
-sudo apt install golang-go build-essential pkg-config qt6-base-dev
+sudo apt install golang-go build-essential pkg-config qt6-base-dev qt6-svg-dev
 
 # Fedora
-sudo dnf install golang gcc-c++ pkgconf-pkg-config qt6-qtbase-devel
+sudo dnf install golang gcc-c++ pkgconf-pkg-config qt6-qtbase-devel qt6-qtsvg-devel
 
 # openSUSE
-sudo zypper install go gcc-c++ pkgconf-pkg-config qt6-base-devel
+sudo zypper install go gcc-c++ pkgconf-pkg-config qt6-base-devel qt6-svg-devel
 ```
 
 If your distribution's Go is older than 1.27, install Go from
@@ -288,14 +305,16 @@ If your distribution's Go is older than 1.27, install Go from
 Check that Qt can be found with:
 
 ```sh
-pkg-config --modversion Qt6Widgets
+pkg-config --modversion Qt6Widgets Qt6SvgWidgets
 ```
 
-This should print a version starting with 6.
+This should print two versions starting with 6.
 
 Running a built binary on another machine only needs the Qt 6 runtime
-libraries (`qt6-base` on Arch, `libqt6widgets6` on Debian and Ubuntu,
-`qt6-qtbase` on Fedora, `libQt6Widgets6` on openSUSE).
+libraries (`qt6-base` and `qt6-svg` on Arch, `libqt6widgets6` and
+`libqt6svgwidgets6` on Debian and Ubuntu, `qt6-qtbase` and `qt6-qtsvg` on
+Fedora, `libQt6Widgets6` and `libQt6SvgWidgets6` on openSUSE). The icons
+are ApeMail's own, built into the binary, so no icon theme is needed.
 
 ## Building
 
@@ -343,7 +362,9 @@ The settings are kept where the system keeps the configuration of programs:
 | Linux | `~/.config/apemail/settings.json` (or under `$XDG_CONFIG_HOME`) |
 | macOS | `~/Library/Application Support/apemail/settings.json` |
 
-They hold the paths of the keys, where the accounts are kept, the size and
+They hold the paths of the keys, where the accounts are kept, the
+code font the source of a message is shown in (the User interface tab
+of File > Settings; the system's unless one is chosen), the size and
 layout of the window (with the widths of the message list's columns, which
 every folder shares), the size of the window messages are written in, and
 which folders of the side bar are open. They are not encrypted, as they say
@@ -365,6 +386,7 @@ system keeps the data of programs:
 | `<id>/f-<hash>/index.json` | The headers of the messages of a folder, which is all the message list needs (compressed, then encrypted) |
 | `<id>/f-<hash>/<uid>.eml` | A message that has been downloaded, as the server sent it |
 | `<id>/outbox/` | Mail to send and drafts to save once there is a connection |
+| `addressbook/contacts.json` | The address book: the name and address of each contact |
 
 Every file is encrypted. The folders are named by a hash of the folder's
 name, so not even the names of your folders can be read without your keys.
@@ -372,11 +394,11 @@ The copy of the mail is only a cache of what is on the server: it can be
 deleted, and is downloaded again.
 
 The accounts folder can be kept elsewhere by choosing its location under
-Accounts in File > Settings. Changing it moves everything there.
+Accounts on the General tab of File > Settings. Changing it moves everything there.
 
 ### Encryption
 
-Your accounts, their passwords and the copy of your mail are encrypted with a
+Your accounts, their passwords, the address book and the copy of your mail are encrypted with a
 pair of SSH keys, using [age](https://github.com/FiloSottile/age). Choose the
 files of the public and the private key (Ed25519 or RSA, such as
 `~/.ssh/id_ed25519.pub` and `~/.ssh/id_ed25519`) under Encryption in File >

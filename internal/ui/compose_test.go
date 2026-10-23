@@ -102,7 +102,7 @@ func TestShortcutsHaveModifiers(t *testing.T) {
 
 	mainthread.Wait(func() {
 		actions := []*qt.QAction{w.getMail, w.write, w.reply, w.replyAll, w.forward, w.archive, w.del,
-			w.markRead, w.markUnread, w.viewSource, w.editAccount, w.removeAccount, w.updateCounts, w.syncAll}
+			w.markRead, w.markUnread, w.viewSource, w.addressBook, w.editAccount, w.removeAccount, w.updateCounts, w.syncAll}
 		actions = append(actions, w.MenuBar().Actions()...)
 		w.composeNew("", "")
 		for c := range composers {

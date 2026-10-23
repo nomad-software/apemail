@@ -63,7 +63,7 @@ func sent(commands []string, text string) bool {
 // fullFetch says if the flags of every message were asked for.
 func fullFetch(commands []string) bool {
 	return slices.ContainsFunc(commands, func(c string) bool {
-		return strings.HasPrefix(c, "FETCH 1:*") && !strings.Contains(c, "CHANGEDSINCE")
+		return strings.HasPrefix(c, "UID FETCH 1:*") && !strings.Contains(c, "CHANGEDSINCE")
 	})
 }
 
@@ -107,7 +107,7 @@ func TestCondStore(t *testing.T) {
 	if len(u.Flags) != 1 || !slices.Equal(u.Flags[two], []string{`\Seen`, `\Flagged`}) || len(u.Added)+len(u.Removed) != 0 {
 		t.Errorf("flag changed: %+v", u)
 	}
-	if fullFetch(commands) || !sent(commands, "FETCH 1:* (UID FLAGS) (CHANGEDSINCE") || sent(commands, "UID SEARCH") {
+	if fullFetch(commands) || !sent(commands, "UID FETCH 1:* (UID FLAGS) (CHANGEDSINCE") || sent(commands, "UID SEARCH") {
 		t.Errorf("flag changed: %v", commands)
 	}
 

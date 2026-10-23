@@ -62,6 +62,13 @@ type Settings struct {
 	// default place is used if it is empty. It can start with ~ for the
 	// home folder.
 	DataDir string `json:"dataDir,omitempty"`
+
+	// CodeFont and CodeFontSize are the family and the size in points of
+	// the font code is shown in, as the source of a message. Any font can
+	// be chosen. The system's monospaced font, and its size, are used
+	// where they are empty.
+	CodeFont     string `json:"codeFont,omitempty"`
+	CodeFontSize int    `json:"codeFontSize,omitempty"`
 }
 
 // FolderKey returns what a folder is known by in Expanded: a hash of its
@@ -140,6 +147,7 @@ func Load(path string) Settings {
 	s.ListHeight = max(s.ListHeight, 0)
 	s.CorrespondentWidth = max(s.CorrespondentWidth, 0)
 	s.DateWidth = max(s.DateWidth, 0)
+	s.CodeFontSize = max(s.CodeFontSize, 0)
 	if s.Expanded == nil {
 		s.Expanded = map[string]map[string]bool{}
 	}

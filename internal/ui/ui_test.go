@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/nomad-software/apemail/internal/account"
 	"github.com/nomad-software/apemail/internal/crypt"
 	"github.com/nomad-software/apemail/internal/crypt/crypttest"
+	"github.com/nomad-software/apemail/internal/message"
 	"github.com/nomad-software/apemail/internal/remote/remotetest"
 	"github.com/nomad-software/apemail/internal/send/sendtest"
 	"github.com/nomad-software/apemail/internal/settings"
@@ -27,6 +29,13 @@ func TestMain(m *testing.M) {
 	qt.NewQApplication(os.Args[:1])
 	// Tests close windows, which must not end the event loop.
 	qt.QGuiApplication_SetQuitOnLastWindowClosed(false)
+	// A warning is kept, to be told if a test then waits in vain, rather
+	// than shown in a dialog no one closes.
+	warning = func(_ *qt.QWidget, title, text string) {
+		warned.Lock()
+		defer warned.Unlock()
+		warned.list = append(warned.list, title+": "+text)
+	}
 
 	code := 0
 	go func() {
@@ -35,6 +44,31 @@ func TestMain(m *testing.M) {
 	}()
 	qt.QApplication_Exec()
 	os.Exit(code)
+}
+
+// warned are the warnings the program has given, which a wait that times out
+// tells, as they are likely why.
+var warned struct {
+	sync.Mutex
+	list []string
+}
+
+// warnings returns what the program has warned of, for a test that fails.
+func warnings() string {
+	warned.Lock()
+	defer warned.Unlock()
+	if len(warned.list) == 0 {
+		return ""
+	}
+	return "; the program warned: " + strings.Join(warned.list, "; ")
+}
+
+// forgetWarnings forgets the warnings given before, as at the start of a
+// test, whose own are told if it fails.
+func forgetWarnings() {
+	warned.Lock()
+	defer warned.Unlock()
+	warned.list = nil
 }
 
 // answer has confirm say yes or no until the test ends, without a dialog
@@ -65,7 +99,7 @@ func eventually(t *testing.T, what string, cond func() bool) {
 	deadline := time.Now().Add(10 * time.Second)
 	for !cond() {
 		if time.Now().After(deadline) {
-			t.Fatalf("waiting for %s", what)
+			t.Fatalf("waiting for %s%s", what, warnings())
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -83,6 +117,7 @@ const htmlMessage = "From: Grace Hopper <grace@example.com>\r\n" +
 // newTestWindow starts a window with an account on the server.
 func newTestWindow(t *testing.T, s *remotetest.Server, change ...func(*account.Account)) *Window {
 	t.Helper()
+	forgetWarnings()
 	dir := t.TempDir()
 	public, private := crypttest.Pair(t, t.TempDir(), "id", "")
 	keys, err := crypt.Open(public, private, nil)
@@ -452,4 +487,75 @@ func TestUpdateCountsFromMenu(t *testing.T) {
 	if got := folderText(w, "Trash"); got != "Trash (1)" {
 		t.Errorf("once the tree was made again the trash shows %q", got)
 	}
+}
+
+// TestTextLines checks that a plain text message is shown with the lines
+// it has, and no more, though mail ends them in CRLF.
+func TestTextLines(t *testing.T) {
+	m, err := message.Parse([]byte("From: a@example.com\r\nSubject: s\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n" +
+		"\r\nHello,\r\n\r\nThe body.\r\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mainthread.Wait(func() {
+		v := newMessageView()
+		defer v.DeleteLater()
+		v.show(m, "INBOX", 1)
+		// As in a browser, a line break just inside <pre> is not shown.
+		if got := v.browser.ToPlainText(); got != "Hello,\n\nThe body." {
+			t.Errorf("shown %q", got)
+		}
+	})
+}
+
+// quotingReply is HTML as Thunderbird writes a reply to a message written in
+// ApeMail: the reply indented, and the quote with the head of ApeMail's
+// HTML, Qt's marker of its own HTML among it.
+const quotingReply = `<!DOCTYPE html>
+<html>
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  </head>
+  <body>
+    <p>foo</p>
+    <div class="moz-signature">Regards,<br>
+      <br>
+      Ada<br>
+    </div>
+    <div class="moz-cite-prefix">On 23/10/2026 19:42, Ada wrote:<br>
+    </div>
+    <blockquote type="cite">
+      <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+      <meta name="qrichtext" content="1">
+      <meta charset="utf-8">
+      <style type="text/css">@scope { p, li { white-space: pre-wrap; } }</style>
+      <p
+style=" margin-top:0px; margin-bottom:0px; -qt-block-indent:0; text-indent:0px;">hello</p>
+    </blockquote>
+  </body>
+</html>
+`
+
+// TestNoGapAtTop checks that a message which quotes HTML written in ApeMail
+// is shown from its first line, without the indenting of its HTML as empty
+// lines above it and spaces within it.
+func TestNoGapAtTop(t *testing.T) {
+	m, err := message.Parse([]byte("From: a@example.com\r\nSubject: Re:\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" + quotingReply))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mainthread.Wait(func() {
+		v := newMessageView()
+		defer v.DeleteLater()
+		v.show(m, "INBOX", 1)
+		doc := v.browser.Document()
+		// The line break after the paragraph is a space at its end, as
+		// in a browser.
+		if first := doc.Begin().Text(); strings.TrimRight(first, " ") != "foo" {
+			t.Errorf("the first line is %q", first)
+		}
+		if got := doc.Begin().Next().Text(); strings.HasPrefix(got, " ") || strings.Contains(got, "  ") {
+			t.Errorf("the signature is indented: %q", got)
+		}
+	})
 }

@@ -62,6 +62,10 @@ type messageList struct {
 	// the selection changes; selectionKnown says if they have been.
 	selection      []uint32
 	selectionKnown bool
+	// next is the message to select once those selected have gone from
+	// the list, as when they are deleted, so that the next can be deleted
+	// with another click; 0 if there is none.
+	next uint32
 
 	// header is the header of the columns, and fitting says the widths of
 	// its columns are being changed to fit, not dragged.
@@ -159,7 +163,11 @@ func newMessageList() *messageList {
 
 	l.SelectionModel().OnSelectionChanged(func(_, _ *qt.QItemSelection) {
 		l.selectionKnown = false
+		// The user chose other messages, so the next of those that were
+		// selected is not wanted. The list's own changes are not
+		// announced.
 		if l.selected != nil {
+			l.next = 0
 			l.selected()
 		}
 	})
@@ -428,10 +436,50 @@ func (l *messageList) resetKeepingSelection(rows []store.Summary) {
 	if reselected > 0 {
 		sm.Select2(selection, qt.QItemSelectionModel__Select|qt.QItemSelectionModel__Rows)
 	}
+	// Once the messages selected have all gone, which can be a few at a
+	// time, as archiving moves them to a folder for each year, the one
+	// after them is selected in their place.
+	if len(selected) > 0 && reselected == 0 {
+		if i, ok := l.row[l.next]; ok {
+			index := l.model.Index(i, 0, noParent)
+			sm.SetCurrentIndex(index, qt.QItemSelectionModel__ClearAndSelect|qt.QItemSelectionModel__Rows)
+			l.ScrollTo(index, qt.QAbstractItemView__EnsureVisible)
+			l.selectionKnown = false
+		}
+		l.next = 0
+	}
 	l.selected = blocked
 	// A message that was selected and is gone changes what is shown.
 	if reselected != len(selected) && l.selected != nil {
 		l.selected()
+	}
+}
+
+// selectNextLater has the list select, once the messages selected have gone
+// from it, the first message after them that is not selected, or, if they
+// are the last, the one before them.
+func (l *messageList) selectNextLater() {
+	l.next = 0
+	uids := l.selectedUIDs()
+	if len(uids) == 0 {
+		return
+	}
+	selected := map[uint32]bool{}
+	for _, uid := range uids {
+		selected[uid] = true
+	}
+	first, last := l.row[uids[0]], l.row[uids[len(uids)-1]]
+	for i := last + 1; i < len(l.rows); i++ {
+		if !selected[l.rows[i].UID] {
+			l.next = l.rows[i].UID
+			return
+		}
+	}
+	for i := first - 1; i >= 0; i-- {
+		if !selected[l.rows[i].UID] {
+			l.next = l.rows[i].UID
+			return
+		}
 	}
 }
 
@@ -451,6 +499,7 @@ func (l *messageList) clear() {
 	l.model.BeginResetModel()
 	l.rows, l.row = nil, nil
 	l.uidValidity = 0
+	l.next = 0
 	l.model.EndResetModel()
 	l.selectionKnown = false
 	l.selected = blocked
