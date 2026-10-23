@@ -22,7 +22,9 @@ func TestIcons(t *testing.T) {
 	runtime.GC()
 	runtime.GC()
 	mainthread.Wait(func() {
-		text := qt.QGuiApplication_Palette().Color(qt.QPalette__Active, qt.QPalette__WindowText).Rgb()
+		palette := qt.QGuiApplication_Palette()
+		text := palette.Color(qt.QPalette__Active, qt.QPalette__WindowText).Rgb()
+		runtime.KeepAlive(palette)
 		for _, name := range icons.Names {
 			ic := icon(name)
 			if ic.IsNull() {
@@ -30,7 +32,9 @@ func TestIcons(t *testing.T) {
 				continue
 			}
 			for _, size := range []int{16, 32} {
-				img := ic.Pixmap2(size, size).ToImage()
+				pixmap := ic.Pixmap2(size, size)
+				img := pixmap.ToImage()
+				runtime.KeepAlive(pixmap)
 				drawn, other := 0, 0
 				for y := range img.Height() {
 					for x := range img.Width() {
@@ -57,4 +61,37 @@ func TestIcons(t *testing.T) {
 			t.Error("an icon that is not there was drawn")
 		}
 	})
+}
+
+// TestIconsWhileCollecting draws icons over and over while the garbage
+// collector runs all the while: the pixmap an icon's engine returns is a Go
+// value, which Qt copies only once the engine has returned it.
+func TestIconsWhileCollecting(t *testing.T) {
+	stop := make(chan struct{})
+	collected := make(chan struct{})
+	go func() {
+		defer close(collected)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				runtime.GC()
+			}
+		}
+	}()
+	mainthread.Wait(func() {
+		ic := icon(icons.Archive)
+		for i := range 3000 {
+			size := 16 + i%48
+			// The pixmap is a Go value too, kept while it is used.
+			pixmap := ic.Pixmap2(size, size)
+			if pixmap.IsNull() {
+				t.Fatalf("no pixmap at %d", size)
+			}
+			runtime.KeepAlive(pixmap)
+		}
+	})
+	close(stop)
+	<-collected
 }

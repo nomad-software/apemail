@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -84,6 +85,10 @@ func NewWindow(files Files) *Window {
 		config:      settings.Load(files.Settings),
 		engines:     map[string]*engine.Engine{},
 		statuses:    map[string]string{},
+	}
+	rememberSystemStyle()
+	if w.config.Theme != "" {
+		applyTheme(w.config.Theme)
 	}
 	w.SetWindowTitle("ApeMail")
 	w.SetWindowIcon(appIcon())
@@ -679,8 +684,7 @@ func (w *Window) folderMenu(id, folder string) {
 	menu.AddActionWithText(syncAllLabel(e)).OnTriggered(func() { w.syncAllFolders(e) })
 	menu.AddSeparator()
 	menu.AddActionWithText("Account Settings…").OnTriggered(func() { w.editAccountDialog(e.Account(), false) })
-	menu.Exec3(qt.QCursor_Pos(), nil)
-	menu.DeleteLater()
+	popUp(menu)
 }
 
 // messageMenu shows the menu of the messages that are selected.
@@ -693,6 +697,13 @@ func (w *Window) messageMenu() {
 			menu.QWidget.AddAction(a)
 		}
 	}
-	menu.Exec3(qt.QCursor_Pos(), nil)
+	popUp(menu)
+}
+
+// popUp shows the menu where the mouse is, and deletes it once it is closed.
+func popUp(menu *qt.QMenu) {
+	at := qt.QCursor_Pos()
+	menu.Exec3(at, nil)
+	runtime.KeepAlive(at)
 	menu.DeleteLater()
 }

@@ -55,7 +55,9 @@ type messageList struct {
 	sortColumn int
 	sortOrder  qt.SortOrder
 
-	bold, normal *qt.QFont
+	// boldValue and flaggedValue are what the list shows unread messages
+	// in, a bold font, and flagged ones in, red, made once.
+	boldValue, flaggedValue *qt.QVariant
 
 	// selection are the UIDs of the messages that are selected, in the
 	// order of their rows, worked out when they are first asked for after
@@ -85,10 +87,20 @@ func newMessageList() *messageList {
 		model:      qt.NewQAbstractTableModel(),
 		sortColumn: colDate,
 		sortOrder:  qt.DescendingOrder,
-		normal:     qt.NewQFont(),
 	}
-	l.bold = qt.NewQFont()
-	l.bold.SetBold(true)
+	bold := qt.NewQFont()
+	bold.SetBold(true)
+	boldValue := bold.ToQVariant()
+	l.boldValue = qt.NewQVariant3(boldValue)
+	runtime.KeepAlive(boldValue)
+	bold.Delete()
+	red := qt.NewQColor6("#d03030")
+	flagged := qt.NewQBrush3(red)
+	flaggedValue := flagged.ToQVariant()
+	l.flaggedValue = qt.NewQVariant3(flaggedValue)
+	runtime.KeepAlive(flaggedValue)
+	flagged.Delete()
+	red.Delete()
 
 	l.model.OnRowCount(func(parent *qt.QModelIndex) int {
 		if parent.IsValid() {
@@ -102,23 +114,24 @@ func newMessageList() *messageList {
 		}
 		return colCount
 	})
-	l.model.OnData(l.data)
+	var data, header returned
+	l.model.OnData(func(index *qt.QModelIndex, role int) *qt.QVariant { return data.give(l.data(index, role)) })
 	l.model.OnHeaderData(func(super func(int, qt.Orientation, int) *qt.QVariant, section int, orientation qt.Orientation, role int) *qt.QVariant {
 		if orientation != qt.Horizontal || role != int(qt.DisplayRole) {
-			return super(section, orientation, role)
+			return header.giveCopy(super(section, orientation, role))
 		}
 		switch section {
 		case colSubject:
-			return qt.NewQVariant11("Subject")
+			return header.give(qt.NewQVariant11("Subject"))
 		case colCorrespondent:
 			if l.sent {
-				return qt.NewQVariant11("Recipient")
+				return header.give(qt.NewQVariant11("Recipient"))
 			}
-			return qt.NewQVariant11("From")
+			return header.give(qt.NewQVariant11("From"))
 		case colDate:
-			return qt.NewQVariant11("Date")
+			return header.give(qt.NewQVariant11("Date"))
 		}
-		return qt.NewQVariant()
+		return header.give(qt.NewQVariant())
 	})
 	l.model.OnSort(func(_ func(int, qt.SortOrder), column int, order qt.SortOrder) {
 		l.sortColumn, l.sortOrder = column, order
@@ -185,7 +198,8 @@ func newMessageList() *messageList {
 	return l
 }
 
-// data returns what the view shows of a cell.
+// data returns what the view shows of a cell, as a value a constructor
+// made, which returned deletes once Qt has copied it.
 func (l *messageList) data(index *qt.QModelIndex, role int) *qt.QVariant {
 	row := index.Row()
 	if !index.IsValid() || row >= len(l.rows) {
@@ -210,7 +224,7 @@ func (l *messageList) data(index *qt.QModelIndex, role int) *qt.QVariant {
 		}
 	case int(qt.FontRole):
 		if !m.Has(`\Seen`) {
-			return l.bold.ToQVariant()
+			return qt.NewQVariant3(l.boldValue)
 		}
 	case int(qt.ToolTipRole):
 		switch index.Column() {
@@ -224,7 +238,7 @@ func (l *messageList) data(index *qt.QModelIndex, role int) *qt.QVariant {
 		}
 	case int(qt.ForegroundRole):
 		if m.Has(`\Flagged`) {
-			return qt.NewQBrush3(qt.NewQColor6("#d03030")).ToQVariant()
+			return qt.NewQVariant3(l.flaggedValue)
 		}
 	}
 	return qt.NewQVariant()
@@ -379,7 +393,10 @@ func (l *messageList) update(ix *store.Index) bool {
 		l.rows[i] = m
 	}
 	if last >= 0 {
-		l.model.DataChanged(l.model.Index(first, 0, noParent), l.model.Index(last, colCount-1, noParent))
+		from, to := l.model.Index(first, 0, noParent), l.model.Index(last, colCount-1, noParent)
+		l.model.DataChanged(from, to)
+		runtime.KeepAlive(from)
+		runtime.KeepAlive(to)
 	}
 	return true
 }
@@ -392,9 +409,11 @@ func (l *messageList) resetKeepingSelection(rows []store.Summary) {
 		selected[uid] = true
 	}
 	var current uint32
-	if cur := l.CurrentIndex(); cur.IsValid() && cur.Row() < len(l.rows) {
+	cur := l.CurrentIndex()
+	if cur.IsValid() && cur.Row() < len(l.rows) {
 		current = l.rows[cur.Row()].UID
 	}
+	runtime.KeepAlive(cur)
 
 	sm := l.SelectionModel()
 	// The selection is put back without each row of it being announced.
@@ -417,7 +436,7 @@ func (l *messageList) resetKeepingSelection(rows []store.Summary) {
 	reselected := 0
 	for i := 0; i < len(l.rows); i++ {
 		if l.rows[i].UID == current {
-			sm.SetCurrentIndex(l.model.Index(i, 0, noParent), qt.QItemSelectionModel__NoUpdate)
+			l.setCurrentRow(i, qt.QItemSelectionModel__NoUpdate)
 		}
 		if !selected[l.rows[i].UID] {
 			continue
@@ -426,10 +445,13 @@ func (l *messageList) resetKeepingSelection(rows []store.Summary) {
 		for j+1 < len(l.rows) && selected[l.rows[j+1].UID] {
 			j++
 			if l.rows[j].UID == current {
-				sm.SetCurrentIndex(l.model.Index(j, 0, noParent), qt.QItemSelectionModel__NoUpdate)
+				l.setCurrentRow(j, qt.QItemSelectionModel__NoUpdate)
 			}
 		}
-		selection.Select(l.model.Index(i, 0, noParent), l.model.Index(j, colCount-1, noParent))
+		from, to := l.model.Index(i, 0, noParent), l.model.Index(j, colCount-1, noParent)
+		selection.Select(from, to)
+		runtime.KeepAlive(from)
+		runtime.KeepAlive(to)
 		reselected += j - i + 1
 		i = j
 	}
@@ -441,9 +463,10 @@ func (l *messageList) resetKeepingSelection(rows []store.Summary) {
 	// after them is selected in their place.
 	if len(selected) > 0 && reselected == 0 {
 		if i, ok := l.row[l.next]; ok {
+			l.setCurrentRow(i, qt.QItemSelectionModel__ClearAndSelect|qt.QItemSelectionModel__Rows)
 			index := l.model.Index(i, 0, noParent)
-			sm.SetCurrentIndex(index, qt.QItemSelectionModel__ClearAndSelect|qt.QItemSelectionModel__Rows)
 			l.ScrollTo(index, qt.QAbstractItemView__EnsureVisible)
+			runtime.KeepAlive(index)
 			l.selectionKnown = false
 		}
 		l.next = 0
@@ -453,6 +476,14 @@ func (l *messageList) resetKeepingSelection(rows []store.Summary) {
 	if reselected != len(selected) && l.selected != nil {
 		l.selected()
 	}
+}
+
+// setCurrentRow makes the row the current one, selecting it as the flags
+// say.
+func (l *messageList) setCurrentRow(row int, flags qt.QItemSelectionModel__SelectionFlag) {
+	index := l.model.Index(row, 0, noParent)
+	l.SelectionModel().SetCurrentIndex(index, flags)
+	runtime.KeepAlive(index)
 }
 
 // selectNextLater has the list select, once the messages selected have gone

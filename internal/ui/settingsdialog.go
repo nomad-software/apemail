@@ -2,6 +2,7 @@ package ui
 
 import (
 	"os"
+	"runtime"
 	"strings"
 
 	qt "github.com/mappu/miqt/qt6"
@@ -92,6 +93,10 @@ func newSettingsDialog(parent *qt.QWidget, current settings.Settings, defaultDir
 		"Any font can be chosen; a monospaced one keeps the source in columns.")
 	code := newFontField(current)
 	fonts.AddRow4("Code font:", code.QHBoxLayout.QLayout)
+	themeGroup := group(look, "Theme", "Follow the system looks as the desktop's theme does, and changes with it. "+
+		"HTML messages are always shown on a white page, as they are written to be seen.")
+	theme := newThemeField(current.Theme)
+	themeGroup.AddRow3("Theme:", theme.QWidget)
 	look.AddStretch()
 
 	buttons := qt.NewQDialogButtonBox5(qt.QDialogButtonBox__Ok|qt.QDialogButtonBox__Cancel, qt.Horizontal)
@@ -103,6 +108,7 @@ func newSettingsDialog(parent *qt.QWidget, current settings.Settings, defaultDir
 		changed.PrivateKey = strings.TrimSpace(privateField.Text())
 		changed.DataDir = strings.TrimSpace(dataField.Text())
 		changed.CodeFont, changed.CodeFontSize = code.chosen()
+		changed.Theme = currentData(theme)
 		if changed.PublicKey == "" || changed.PrivateKey == "" {
 			warning(d.QWidget, "Settings", "Both keys are needed.")
 			return
@@ -144,14 +150,18 @@ func newFontField(config settings.Settings) *fontField {
 	f.sizeBox.SetSuffix(" pt")
 	f.reset = qt.NewQPushButton3("Default")
 	f.reset.SetToolTip("The system's monospaced font")
-	f.show(codeFont(config))
+	shown := codeFont(config)
+	f.show(shown)
+	runtime.KeepAlive(shown)
 	f.family, f.size = config.CodeFont, config.CodeFontSize
 	// Only what the user changes is chosen: these are connected once the
 	// font is shown.
 	f.familyBox.OnCurrentFontChanged(func(font *qt.QFont) { f.family = font.Family() })
 	f.sizeBox.OnValueChanged(func(size int) { f.size = size })
 	f.reset.OnClicked(func() {
-		f.show(codeFont(settings.Settings{}))
+		system := codeFont(settings.Settings{})
+		f.show(system)
+		runtime.KeepAlive(system)
 		f.family, f.size = "", 0
 	})
 	f.AddWidget2(f.familyBox.QWidget, 1)
@@ -166,7 +176,9 @@ func (f *fontField) show(font *qt.QFont) {
 	size := font.PointSize()
 	if size <= 0 {
 		// A font sized in pixels has no size in points.
-		size = qt.QApplication_Font().PointSize()
+		app := qt.QApplication_Font()
+		size = app.PointSize()
+		runtime.KeepAlive(app)
 	}
 	f.sizeBox.SetValue(size)
 }
@@ -174,4 +186,16 @@ func (f *fontField) show(font *qt.QFont) {
 // chosen returns the family and size chosen, each empty for the system's.
 func (f *fontField) chosen() (family string, size int) {
 	return f.family, f.size
+}
+
+// newThemeField chooses the theme, starting with the one named.
+func newThemeField(current string) *qt.QComboBox {
+	box := qt.NewQComboBox2()
+	for _, t := range themes {
+		box.AddItem3(t.label, qt.NewQVariant11(t.name))
+		if t.name == current {
+			box.SetCurrentIndex(box.Count() - 1)
+		}
+	}
+	return box
 }

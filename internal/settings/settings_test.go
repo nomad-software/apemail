@@ -19,6 +19,7 @@ func TestLoadAndSave(t *testing.T) {
 	s.CorrespondentWidth, s.DateWidth = 240, -1
 	s.ComposeWidth, s.ComposeHeight = 700, 500
 	s.CodeFont, s.CodeFontSize = "DejaVu Sans Mono", 11
+	s.Theme = ThemeDark
 	if err := s.Save(path); err != nil {
 		t.Fatal(err)
 	}
@@ -26,16 +27,16 @@ func TestLoadAndSave(t *testing.T) {
 	if read.PublicKey != "~/.ssh/id.pub" || read.DataDir != "~/mail" || read.SidebarWidth != 0 ||
 		read.CorrespondentWidth != 240 || read.DateWidth != 0 ||
 		read.ComposeWidth != 700 || read.ComposeHeight != 500 ||
-		read.CodeFont != "DejaVu Sans Mono" || read.CodeFontSize != 11 {
+		read.CodeFont != "DejaVu Sans Mono" || read.CodeFontSize != 11 || read.Theme != ThemeDark {
 		t.Errorf("read = %+v", read)
 	}
 
 	// A size too small to use gives the default.
-	read.ComposeWidth, read.CodeFontSize = 10, -3
+	read.ComposeWidth, read.CodeFontSize, read.Theme = 10, -3, "purple"
 	if err := read.Save(path); err != nil {
 		t.Fatal(err)
 	}
-	if s := Load(path); s.ComposeWidth != defaultComposeWidth || s.ComposeHeight != defaultComposeHeight || s.CodeFontSize != 0 {
+	if s := Load(path); s.ComposeWidth != defaultComposeWidth || s.ComposeHeight != defaultComposeHeight || s.CodeFontSize != 0 || s.Theme != "" {
 		t.Errorf("too small = %+v", s)
 	}
 

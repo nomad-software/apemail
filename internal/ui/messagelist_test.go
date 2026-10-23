@@ -122,9 +122,8 @@ func TestFlagsUpdatedInPlace(t *testing.T) {
 		resets := 0
 		l.model.OnModelReset(func() { resets++ })
 		before := slices.Clone(l.rows)
-		root := qt.NewQModelIndex()
-		l.SetCurrentIndex(l.model.Index(5, 0, root))
-		l.SelectionModel().Select(l.model.Index(7, 0, root), qt.QItemSelectionModel__Select|qt.QItemSelectionModel__Rows)
+		clickRow(l, 5)
+		addRow(l, 7)
 		selected := l.selectedUIDs()
 
 		changed := *ix
@@ -215,11 +214,11 @@ func TestSelectionFollows(t *testing.T) {
 		if got := l.selectedUIDs(); len(got) != 0 {
 			t.Errorf("selected %v at first", got)
 		}
-		l.SetCurrentIndex(l.model.Index(2, 0, noParent))
+		clickRow(l, 2)
 		if got := l.selectedUIDs(); !slices.Equal(got, []uint32{l.rows[2].UID}) {
 			t.Errorf("selected %v", got)
 		}
-		l.SelectionModel().Select(l.model.Index(4, 0, noParent), qt.QItemSelectionModel__Select|qt.QItemSelectionModel__Rows)
+		addRow(l, 4)
 		want := []uint32{l.rows[2].UID, l.rows[4].UID}
 		if got := l.selectedUIDs(); !slices.Equal(got, want) {
 			t.Errorf("selected %v, want %v", got, want)

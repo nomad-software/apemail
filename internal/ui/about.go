@@ -2,6 +2,7 @@ package ui
 
 import (
 	qt "github.com/mappu/miqt/qt6"
+	"runtime"
 )
 
 // aboutWidth is the narrowest the about box is, so that the notices of the
@@ -23,7 +24,7 @@ func aboutText() string {
 // built with, which carry the notice the LGPL asks of programs that use Qt.
 func licenceText() string {
 	return "<p><b>Third party licences</b></p>" +
-		"<p>This program uses Qt version " + qt.QLibraryInfo_Version().ToString() + " (Qt Widgets and Qt SVG).</p>" +
+		"<p>This program uses Qt version " + qtVersion() + " (Qt Widgets and Qt SVG).</p>" +
 		"<p>Qt is a C++ toolkit for cross-platform application development, used here under the " +
 		"terms of the <a href=\"https://www.gnu.org/licenses/lgpl-3.0.html\">GNU Lesser General " +
 		"Public License version 3</a> (LGPLv3). Qt is dynamically linked, so it can be replaced " +
@@ -62,7 +63,9 @@ func newAboutDialog(parent *qt.QWidget) *aboutDialog {
 	d.SetMinimumWidth(aboutWidth)
 
 	ic := qt.NewQLabel2()
-	ic.SetPixmap(appIcon().PixmapWithExtent(aboutIconSize))
+	pixmap := appIcon().PixmapWithExtent(aboutIconSize)
+	ic.SetPixmap(pixmap)
+	runtime.KeepAlive(pixmap)
 	ic.SetAlignment(qt.AlignTop)
 
 	about := newRichLabel(aboutText())
@@ -116,4 +119,11 @@ func showAbout(parent *qt.QWidget) {
 	// A dialog is not destroyed by being closed.
 	defer d.DeleteLater()
 	d.Exec()
+}
+
+// qtVersion returns the version of Qt the program runs with.
+func qtVersion() string {
+	v := qt.QLibraryInfo_Version()
+	defer runtime.KeepAlive(v)
+	return v.ToString()
 }

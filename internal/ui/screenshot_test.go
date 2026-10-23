@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/emersion/go-imap/v2"
-	qt "github.com/mappu/miqt/qt6"
 	"github.com/mappu/miqt/qt6/mainthread"
 
 	"github.com/nomad-software/apemail/internal/account"
@@ -148,7 +147,7 @@ func TestScreenshot(t *testing.T) {
 	wait(t, "the inbox", func() bool { return w.folder == "INBOX" && len(w.list.rows) == len(sampleMail) })
 
 	mainthread.Wait(func() {
-		w.list.SetCurrentIndex(w.list.model.Index(0, 0, qt.NewQModelIndex()))
+		clickRow(w.list, 0)
 	})
 	wait(t, "the message", func() bool { return w.view.msg != nil && strings.Contains(w.view.msg.Subject, "Difference Engine") })
 	wait(t, "the message to be read", func() bool { return w.list.rows[0].Has(`\Seen`) })

@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/emersion/go-imap/v2"
-	qt "github.com/mappu/miqt/qt6"
 	"github.com/mappu/miqt/qt6/mainthread"
 
 	"github.com/nomad-software/apemail/internal/remote/remotetest"
@@ -27,7 +26,7 @@ func threeMessages(t *testing.T, s *remotetest.Server, folder string) {
 // shown.
 func selectRow(t *testing.T, w *Window, row int) {
 	t.Helper()
-	mainthread.Wait(func() { w.list.SetCurrentIndex(w.list.model.Index(row, 0, qt.NewQModelIndex())) })
+	mainthread.Wait(func() { clickRow(w.list, row) })
 	wait(t, "the message", func() bool { return w.view.msg != nil })
 }
 
@@ -129,7 +128,7 @@ func TestArchiveSelectsNext(t *testing.T) {
 	// Two selected together: the one after the last of them is next.
 	selectRow(t, w, 0)
 	mainthread.Wait(func() {
-		w.list.SelectionModel().Select(w.list.model.Index(1, 0, qt.NewQModelIndex()), qt.QItemSelectionModel__Select|qt.QItemSelectionModel__Rows)
+		addRow(w.list, 1)
 	})
 	wait(t, "two selected", func() bool { return len(w.list.selectedUIDs()) == 2 })
 	mainthread.Wait(w.archiveMessages)
@@ -152,7 +151,7 @@ func TestChosenSelectionIsKept(t *testing.T) {
 		if w.list.next != w.list.rows[1].UID {
 			t.Errorf("next = %d", w.list.next)
 		}
-		w.list.SetCurrentIndex(w.list.model.Index(2, 0, qt.NewQModelIndex()))
+		clickRow(w.list, 2)
 		if w.list.next != 0 {
 			t.Error("the next message is kept after another was chosen")
 		}

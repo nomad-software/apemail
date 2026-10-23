@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"runtime"
 	"strings"
 
 	qt "github.com/mappu/miqt/qt6"
@@ -46,7 +47,9 @@ func (w *Window) showSource(subject string, raw []byte) *sourceWindow {
 	s.SetAttribute(qt.WA_DeleteOnClose)
 	s.SetWindowTitle("Source of " + subject)
 	s.SetReadOnly(true)
-	s.SetFont(codeFont(w.config))
+	font := codeFont(w.config)
+	s.SetFont(font)
+	runtime.KeepAlive(font)
 	// A message need not be UTF-8: what is not is shown as replacement
 	// characters rather than not at all.
 	s.SetPlainText(strings.ToValidUTF8(strings.ReplaceAll(string(raw), "\r\n", "\n"), "�"))
@@ -63,7 +66,8 @@ func (w *Window) showSource(subject string, raw []byte) *sourceWindow {
 }
 
 // codeFont returns the code font the settings choose, or the system's
-// monospaced font, in the family or size they leave empty.
+// monospaced font, in the family or size they leave empty. It is a value
+// miqt frees itself, to be kept while it is used.
 func codeFont(config settings.Settings) *qt.QFont {
 	font := qt.QFontDatabase_SystemFont(qt.QFontDatabase__FixedFont)
 	if config.CodeFont != "" {
@@ -78,7 +82,9 @@ func codeFont(config settings.Settings) *qt.QFont {
 // setSourceFont shows the source windows that are open in the code font of
 // the settings.
 func (w *Window) setSourceFont() {
+	font := codeFont(w.config)
+	defer runtime.KeepAlive(font)
 	for s := range sources {
-		s.SetFont(codeFont(w.config))
+		s.SetFont(font)
 	}
 }

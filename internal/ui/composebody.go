@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"runtime"
 	"strings"
 
 	qt "github.com/mappu/miqt/qt6"
@@ -74,7 +75,10 @@ func (c *composer) setBody(a account.Account, quoteText, quoteHTML string) {
 func (c *composer) insertWritingLines(at int) {
 	doc := c.body.Document()
 	cursor := c.body.TextCursor()
-	switch block := doc.FindBlockByNumber(at); {
+	defer runtime.KeepAlive(cursor)
+	block := doc.FindBlockByNumber(at)
+	defer runtime.KeepAlive(block)
+	switch {
 	case at == 0:
 		// What is there is moved down, a block at a time.
 		cursor.SetPosition(0)
@@ -100,8 +104,11 @@ func (c *composer) insertWritingLines(at int) {
 		line.SetBlockFormat(plain)
 		line.SetBlockCharFormat(chars)
 		line.Delete()
+		runtime.KeepAlive(b)
 	}
-	c.setCursor(doc.FindBlockByNumber(at).Position())
+	first := doc.FindBlockByNumber(at)
+	c.setCursor(first.Position())
+	runtime.KeepAlive(first)
 }
 
 // setCursor puts the cursor at a position of the body.
@@ -109,4 +116,5 @@ func (c *composer) setCursor(position int) {
 	cursor := c.body.TextCursor()
 	cursor.SetPosition(position)
 	c.body.SetTextCursor(cursor)
+	runtime.KeepAlive(cursor)
 }

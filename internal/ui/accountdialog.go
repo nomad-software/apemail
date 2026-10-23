@@ -164,8 +164,8 @@ func (f *serverFields) server() account.Server {
 		Port:       f.port.Value(),
 		Username:   strings.TrimSpace(f.username.Text()),
 		Password:   f.password.Text(),
-		Security:   account.Security(f.security.CurrentData().ToString()),
-		Auth:       account.Auth(f.auth.CurrentData().ToString()),
+		Security:   account.Security(currentData(f.security)),
+		Auth:       account.Auth(currentData(f.auth)),
 		ClientCert: strings.TrimSpace(f.cert.Text()),
 		ClientKey:  strings.TrimSpace(f.key.Text()),
 	}
@@ -432,7 +432,7 @@ func newAccountDialog(parent *qt.QWidget, a account.Account, isNew bool, folders
 		}
 		changed.ComposeHTML = format.CurrentIndex() == 1
 		changed.QuoteBelow = quote.CurrentIndex() == 1
-		changed.ArchiveBy = account.ArchiveBy(archiveBy.CurrentData().ToString())
+		changed.ArchiveBy = account.ArchiveBy(currentData(archiveBy))
 		changed.CheckOnStart = checkOnStart.IsChecked()
 		if err := changed.Check(); err != nil {
 			warning(d.QWidget, "Account", err.Error())

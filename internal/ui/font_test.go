@@ -101,7 +101,7 @@ func TestSourceFont(t *testing.T) {
 		family := someFont(t, newFontField(w.config))
 		changed := w.config
 		changed.CodeFont, changed.CodeFontSize = family, 15
-		w.applyFonts(changed)
+		w.applyInterface(changed)
 		if src.Font().Family() != family || src.Font().PointSize() != 15 {
 			t.Errorf("open window = %q %d", src.Font().Family(), src.Font().PointSize())
 		}
@@ -140,14 +140,15 @@ func TestSettingsTabs(t *testing.T) {
 		if !slices.Equal(titles, []string{"General", "User interface"}) {
 			t.Errorf("tabs = %q", titles)
 		}
-		// The code font is on the second, and nothing else is.
+		// The code font and the theme are on the second, and nothing
+		// else is.
 		var fonts []string
 		for _, child := range tabs.Widget(1).Children() {
 			if child.MetaObject().ClassName() == "QGroupBox" {
 				fonts = append(fonts, qt.UnsafeNewQGroupBox(child.UnsafePointer()).Title())
 			}
 		}
-		if !slices.Equal(fonts, []string{"Fonts"}) {
+		if !slices.Equal(fonts, []string{"Fonts", "Theme"}) {
 			t.Errorf("groups of User interface = %q", fonts)
 		}
 	})

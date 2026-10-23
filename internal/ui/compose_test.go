@@ -29,7 +29,7 @@ func TestReply(t *testing.T) {
 	w := newTestWindow(t, s)
 	wait(t, "the inbox", func() bool { return len(w.list.rows) == 1 && w.folder == "INBOX" })
 	mainthread.Wait(func() {
-		w.list.SetCurrentIndex(w.list.model.Index(0, 0, qt.NewQModelIndex()))
+		clickRow(w.list, 0)
 	})
 	wait(t, "the message", func() bool { return w.view.msg != nil })
 

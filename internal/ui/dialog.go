@@ -2,6 +2,7 @@ package ui
 
 import (
 	qt "github.com/mappu/miqt/qt6"
+	"runtime"
 )
 
 // fitDialog makes the dialog the width, or wider if it needs to be, and as
@@ -10,8 +11,11 @@ import (
 func fitDialog(d *qt.QDialog, width int) {
 	layout := d.Layout()
 	layout.Activate()
-	width = max(width, layout.MinimumSize().Width())
-	height := max(layout.HeightForWidth(width), d.SizeHint().Height(), layout.MinimumSize().Height())
+	least, hint := layout.MinimumSize(), d.SizeHint()
+	width = max(width, least.Width())
+	height := max(layout.HeightForWidth(width), hint.Height(), least.Height())
+	runtime.KeepAlive(least)
+	runtime.KeepAlive(hint)
 	d.Resize(width, height)
 }
 

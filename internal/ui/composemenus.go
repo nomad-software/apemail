@@ -1,6 +1,10 @@
 package ui
 
-import qt "github.com/mappu/miqt/qt6"
+import (
+	"runtime"
+
+	qt "github.com/mappu/miqt/qt6"
+)
 
 // editor is a field of the window, or its body, which the Edit menu acts on.
 type editor interface {
@@ -88,7 +92,9 @@ func (c *composer) updateEditMenu() {
 		undo, redo, selected = e.IsUndoAvailable(), e.IsRedoAvailable(), e.HasSelectedText()
 	case *qt.QTextEdit:
 		doc := e.Document()
-		undo, redo, selected = doc.IsUndoAvailable(), doc.IsRedoAvailable(), e.TextCursor().HasSelection()
+		cursor := e.TextCursor()
+		undo, redo, selected = doc.IsUndoAvailable(), doc.IsRedoAvailable(), cursor.HasSelection()
+		runtime.KeepAlive(cursor)
 	}
 	c.edit.undo.SetEnabled(undo)
 	c.edit.redo.SetEnabled(redo)
@@ -106,7 +112,9 @@ func (c *composer) deleteSelection() {
 			e.Del()
 		}
 	case *qt.QTextEdit:
-		e.TextCursor().RemoveSelectedText()
+		cursor := e.TextCursor()
+		cursor.RemoveSelectedText()
+		runtime.KeepAlive(cursor)
 	}
 }
 

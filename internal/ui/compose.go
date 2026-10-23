@@ -7,6 +7,7 @@ import (
 	"mime"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/emersion/go-message/mail"
@@ -126,8 +127,13 @@ func (w *Window) newComposer(e *engine.Engine) *composer {
 
 	c.body = qt.NewQTextEdit2()
 	c.body.SetAcceptRichText(c.html)
-	if !c.html {
-		c.body.SetFont(qt.QFontDatabase_SystemFont(qt.QFontDatabase__FixedFont))
+	if c.html {
+		// An HTML message is written on the page it is read on.
+		showAsPaper(c.body.QWidget)
+	} else {
+		fixed := qt.QFontDatabase_SystemFont(qt.QFontDatabase__FixedFont)
+		c.body.SetFont(fixed)
+		runtime.KeepAlive(fixed)
 	}
 	layout.AddWidget(c.body.QWidget)
 	c.SetCentralWidget(central)
@@ -230,7 +236,7 @@ func (c *composer) makeButtonBar() {
 
 // engine returns the engine of the account the message is from.
 func (c *composer) engine() *engine.Engine {
-	return c.w.engines[c.from.CurrentData().ToString()]
+	return c.w.engines[currentData(c.from)]
 }
 
 // draft returns the message as it has been written.

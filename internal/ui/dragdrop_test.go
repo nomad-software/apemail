@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/emersion/go-imap/v2"
@@ -25,6 +26,7 @@ func TestDragToFolder(t *testing.T) {
 			t.Error("the message cannot be dragged")
 		}
 		w.list.SetCurrentIndex(index)
+		runtime.KeepAlive(index)
 		var ok bool
 		d, ok = decodeDragged(w.list.draggedSelection().encode())
 		if !ok || d.Account != w.account || d.Folder != "INBOX" || len(d.UIDs) != 1 {

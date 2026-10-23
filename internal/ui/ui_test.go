@@ -3,6 +3,7 @@ package ui
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -44,6 +45,22 @@ func TestMain(m *testing.M) {
 	}()
 	qt.QApplication_Exec()
 	os.Exit(code)
+}
+
+// clickRow makes the row of the list the current one and the only one
+// selected, as clicking it does. The index is a value miqt frees itself, so
+// it is kept while it is used.
+func clickRow(l *messageList, row int) {
+	index := l.model.Index(row, 0, noParent)
+	l.SetCurrentIndex(index)
+	runtime.KeepAlive(index)
+}
+
+// addRow adds the row of the list to those selected, as Ctrl+click does.
+func addRow(l *messageList, row int) {
+	index := l.model.Index(row, 0, noParent)
+	l.SelectionModel().Select(index, qt.QItemSelectionModel__Select|qt.QItemSelectionModel__Rows)
+	runtime.KeepAlive(index)
 }
 
 // warned are the warnings the program has given, which a wait that times out
@@ -168,7 +185,7 @@ func TestWindow(t *testing.T) {
 
 	// The newest message is first.
 	mainthread.Wait(func() {
-		w.list.SetCurrentIndex(w.list.model.Index(0, 0, qt.NewQModelIndex()))
+		clickRow(w.list, 0)
 	})
 	wait(t, "the message", func() bool { return w.view.msg != nil })
 	mainthread.Wait(func() {
@@ -203,7 +220,7 @@ func TestDeleteMovesToTrash(t *testing.T) {
 	w := newTestWindow(t, s)
 	wait(t, "the inbox", func() bool { return len(w.list.rows) == 1 && w.folder == "INBOX" })
 	mainthread.Wait(func() {
-		w.list.SetCurrentIndex(w.list.model.Index(0, 0, qt.NewQModelIndex()))
+		clickRow(w.list, 0)
 	})
 	wait(t, "the message", func() bool { return w.view.msg != nil })
 	// Showing it marked it as read.
@@ -225,7 +242,7 @@ func TestDeleteMovesToTrash(t *testing.T) {
 	mainthread.Wait(func() { w.folders.selectFolder(w.account, "Trash") })
 	wait(t, "the trash", func() bool { return w.folder == "Trash" && len(w.list.rows) == 1 })
 	mainthread.Wait(func() {
-		w.list.SetCurrentIndex(w.list.model.Index(0, 0, qt.NewQModelIndex()))
+		clickRow(w.list, 0)
 	})
 	wait(t, "the selection", func() bool { return len(w.list.selectedUIDs()) == 1 })
 	mainthread.Wait(w.deleteMessages)
@@ -253,7 +270,7 @@ func TestArchiveMakesFolder(t *testing.T) {
 	w := newTestWindow(t, s)
 	wait(t, "the inbox", func() bool { return len(w.list.rows) == 1 && w.folder == "INBOX" })
 	mainthread.Wait(func() {
-		w.list.SetCurrentIndex(w.list.model.Index(0, 0, qt.NewQModelIndex()))
+		clickRow(w.list, 0)
 	})
 	wait(t, "the selection", func() bool { return len(w.list.selectedUIDs()) == 1 })
 
@@ -303,7 +320,7 @@ func showFirst(t *testing.T, w *Window) {
 	t.Helper()
 	wait(t, "the messages", func() bool { return len(w.list.rows) > 0 })
 	mainthread.Wait(func() {
-		w.list.SetCurrentIndex(w.list.model.Index(0, 0, qt.NewQModelIndex()))
+		clickRow(w.list, 0)
 	})
 	wait(t, "the message", func() bool { return w.view.msg != nil })
 }

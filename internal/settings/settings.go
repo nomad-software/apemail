@@ -69,7 +69,17 @@ type Settings struct {
 	// where they are empty.
 	CodeFont     string `json:"codeFont,omitempty"`
 	CodeFontSize int    `json:"codeFontSize,omitempty"`
+
+	// Theme is how the program looks: ThemeLight, ThemeDark, or, where it
+	// is empty, as the desktop's theme says.
+	Theme string `json:"theme,omitempty"`
 }
+
+// The themes that can be chosen, besides the system's, which is "".
+const (
+	ThemeLight = "light"
+	ThemeDark  = "dark"
+)
 
 // FolderKey returns what a folder is known by in Expanded: a hash of its
 // name, as this file is not encrypted and names of folders can say what the
@@ -148,6 +158,9 @@ func Load(path string) Settings {
 	s.CorrespondentWidth = max(s.CorrespondentWidth, 0)
 	s.DateWidth = max(s.DateWidth, 0)
 	s.CodeFontSize = max(s.CodeFontSize, 0)
+	if s.Theme != ThemeLight && s.Theme != ThemeDark {
+		s.Theme = ""
+	}
 	if s.Expanded == nil {
 		s.Expanded = map[string]map[string]bool{}
 	}

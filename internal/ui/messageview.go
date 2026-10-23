@@ -76,8 +76,9 @@ func newMessageView() *messageView {
 	v.browser = qt.NewQTextBrowser2()
 	v.browser.SetOpenLinks(false)
 	v.browser.SetSearchPaths(nil)
+	var resource returned
 	v.browser.OnLoadResource(func(_ func(int, *qt.QUrl) *qt.QVariant, typeVal int, name *qt.QUrl) *qt.QVariant {
-		return v.resource(typeVal, name.ToString())
+		return resource.give(v.resource(typeVal, name.ToString()))
 	})
 	v.browser.OnAnchorClicked(func(link *qt.QUrl) { v.follow(link.ToString()) })
 	layout.AddWidget(v.browser.QWidget)
@@ -87,7 +88,8 @@ func newMessageView() *messageView {
 }
 
 // resource returns what the message carries for a URL in its HTML: a part
-// for cid:, the data of data:, and nothing for anything else.
+// for cid:, the data of data:, and nothing for anything else. It is a value
+// a constructor made, which returned deletes once Qt has copied it.
 func (v *messageView) resource(typeVal int, name string) *qt.QVariant {
 	if v.msg == nil || typeVal != int(qt.QTextDocument__ImageResource) {
 		return qt.NewQVariant()
@@ -137,6 +139,7 @@ func (v *messageView) follow(link string) {
 func (v *messageView) clear() {
 	v.msg, v.folder, v.uid = nil, "", 0
 	v.addSender = nil
+	showInTheme(v.browser.QWidget)
 	clearLayout(v.headerGrid.QLayout)
 	v.headers.SetVisible(false)
 	v.setAttachments(nil)
@@ -163,10 +166,21 @@ func (v *messageView) show(m *message.Message, folder string, uid uint32) {
 
 	v.setAttachments(m.Files())
 
+	v.showPage()
 	if m.HTML != "" {
 		v.browser.SetHtml(m.HTML)
 	} else {
 		v.browser.SetHtml(textToHTML(m.Text))
+	}
+}
+
+// showPage shows an HTML message on a white page, as it was written to be
+// seen, and anything else in the colours of the theme.
+func (v *messageView) showPage() {
+	if v.msg != nil && v.msg.HTML != "" {
+		showAsPaper(v.browser.QWidget)
+	} else {
+		showInTheme(v.browser.QWidget)
 	}
 }
 

@@ -72,6 +72,14 @@ it you have.
   sent and drafts folders, never asks. Receipts are not kept in the sent
   folder.
 
+**Looks**
+
+- A light or dark theme, or one that follows the desktop's and changes with
+  it (the User interface tab of File > Settings). The icons are ApeMail's
+  own, drawn in the colours of the theme. HTML messages are always shown on
+  a white page, as they are written to be seen, so that mail which sets the
+  colour of its text stays readable in a dark theme.
+
 **Writing**
 
 - Write in plain text or HTML (bold, italic, underline, bulleted and
@@ -363,8 +371,8 @@ The settings are kept where the system keeps the configuration of programs:
 | macOS | `~/Library/Application Support/apemail/settings.json` |
 
 They hold the paths of the keys, where the accounts are kept, the
-code font the source of a message is shown in (the User interface tab
-of File > Settings; the system's unless one is chosen), the size and
+code font the source of a message is shown in and the theme (the User
+interface tab of File > Settings; the system's unless one is chosen), the size and
 layout of the window (with the widths of the message list's columns, which
 every folder shares), the size of the window messages are written in, and
 which folders of the side bar are open. They are not encrypted, as they say

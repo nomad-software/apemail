@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -73,7 +74,7 @@ func newFolderTree(expanded map[string]map[string]bool) *folderTree {
 		if current == nil || t.selected == nil {
 			return
 		}
-		t.selected(current.Data(0, roleAccount).ToString(), current.Data(0, roleFolder).ToString())
+		t.selected(itemData(current, roleAccount), itemData(current, roleFolder))
 	})
 	// Messages from the message list are dropped on a folder to move them
 	// there. A drop is always on a folder, never between two.
@@ -86,8 +87,12 @@ func newFolderTree(expanded map[string]map[string]bool) *folderTree {
 		super(event)
 		// A folder the messages cannot go to is shown as refusing them.
 		d, ok := decodeDragged(event.MimeData())
-		item := t.ItemAt(event.Position().ToPoint())
-		if !ok || item == nil || canDrop(d, item.Data(0, roleAccount).ToString(), item.Data(0, roleFolder).ToString()) != nil {
+		at := event.Position()
+		point := at.ToPoint()
+		item := t.ItemAt(point)
+		runtime.KeepAlive(at)
+		runtime.KeepAlive(point)
+		if !ok || item == nil || canDrop(d, itemData(item, roleAccount), itemData(item, roleFolder)) != nil {
 			event.Ignore()
 		}
 	})
@@ -96,7 +101,7 @@ func newFolderTree(expanded map[string]map[string]bool) *folderTree {
 		if !ok || parent == nil || t.dropped == nil {
 			return false
 		}
-		return t.dropped(d, parent.Data(0, roleAccount).ToString(), parent.Data(0, roleFolder).ToString())
+		return t.dropped(d, itemData(parent, roleAccount), itemData(parent, roleFolder))
 	})
 
 	t.OnItemExpanded(func(item *qt.QTreeWidgetItem) { t.remember(item, true) })
@@ -108,24 +113,24 @@ func newFolderTree(expanded map[string]map[string]bool) *folderTree {
 		if item == nil || t.contextMenu == nil {
 			return
 		}
-		t.contextMenu(item.Data(0, roleAccount).ToString(), item.Data(0, roleFolder).ToString())
+		t.contextMenu(itemData(item, roleAccount), itemData(item, roleFolder))
 	})
 	return t
 }
 
 // remember keeps whether the item is open.
 func (t *folderTree) remember(item *qt.QTreeWidgetItem, open bool) {
-	id := item.Data(0, roleAccount).ToString()
+	id := itemData(item, roleAccount)
 	if t.expanded[id] == nil {
 		t.expanded[id] = map[string]bool{}
 	}
-	t.expanded[id][settings.FolderKey(item.Data(0, roleName).ToString())] = open
+	t.expanded[id][settings.FolderKey(itemData(item, roleName))] = open
 }
 
 // restore opens or closes the item as it was left, or as it starts if it
 // never was: an account open, and a folder closed.
 func (t *folderTree) restore(item *qt.QTreeWidgetItem) {
-	id, name := item.Data(0, roleAccount).ToString(), item.Data(0, roleName).ToString()
+	id, name := itemData(item, roleAccount), itemData(item, roleName)
 	open, ok := t.expanded[id][settings.FolderKey(name)]
 	if !ok {
 		open = name == ""
@@ -146,6 +151,7 @@ func (t *folderTree) setAccount(a account.Account) {
 		font := item.Font(0)
 		font.SetBold(true)
 		item.SetFont(0, font)
+		runtime.KeepAlive(font)
 		t.AddTopLevelItem(item)
 		t.restore(item)
 		t.accounts[a.ID] = item
@@ -192,8 +198,8 @@ func (t *folderTree) setFolders(a account.Account, folders []store.Folder) {
 	parent := t.accounts[a.ID]
 
 	selectedFolder := ""
-	if cur := t.CurrentItem(); cur != nil && cur.Data(0, roleAccount).ToString() == a.ID {
-		selectedFolder = cur.Data(0, roleFolder).ToString()
+	if cur := t.CurrentItem(); cur != nil && itemData(cur, roleAccount) == a.ID {
+		selectedFolder = itemData(cur, roleFolder)
 	}
 	// The folder selected stays so, without being opened again, as the
 	// tree selects another while it is made again: that would empty the
@@ -274,7 +280,7 @@ func (t *folderTree) setFolders(a account.Account, folders []store.Folder) {
 	// A folder that has gone is no longer what is listed.
 	if selectedFolder != "" && !kept && t.selected != nil {
 		if cur := t.CurrentItem(); cur != nil {
-			t.selected(cur.Data(0, roleAccount).ToString(), cur.Data(0, roleFolder).ToString())
+			t.selected(itemData(cur, roleAccount), itemData(cur, roleFolder))
 		} else {
 			t.selected("", "")
 		}
@@ -354,6 +360,7 @@ func showUnread(item *qt.QTreeWidgetItem, name string, unread int) {
 	font := item.Font(0)
 	font.SetBold(unread > 0)
 	item.SetFont(0, font)
+	runtime.KeepAlive(font)
 }
 
 // selectFolder selects the folder of the account.

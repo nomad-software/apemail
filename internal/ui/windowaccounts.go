@@ -173,7 +173,7 @@ func (w *Window) accountsDir() string {
 // editSettings shows the settings, and puts what is changed into effect.
 func (w *Window) editSettings() {
 	newSettingsDialog(w.QWidget, w.config, w.files.Accounts, func(changed settings.Settings) {
-		w.applyFonts(changed)
+		w.applyInterface(changed)
 		keysChanged := changed.PublicKey != w.config.PublicKey || changed.PrivateKey != w.config.PrivateKey || w.keys == nil
 		from, to := w.accountsDir(), changed.AccountsDir(w.files.Accounts)
 		dirChanged := filepath.Clean(from) != filepath.Clean(to)
@@ -198,15 +198,35 @@ func (w *Window) editSettings() {
 	})
 }
 
-// applyFonts puts the fonts of the settings into effect, in the windows that
-// are open as in those opened later.
-func (w *Window) applyFonts(changed settings.Settings) {
-	if changed.CodeFont == w.config.CodeFont && changed.CodeFontSize == w.config.CodeFontSize {
+// applyInterface puts the fonts and the theme of the settings into effect,
+// in the windows that are open as in those opened later.
+func (w *Window) applyInterface(changed settings.Settings) {
+	fonts := changed.CodeFont != w.config.CodeFont || changed.CodeFontSize != w.config.CodeFontSize
+	theme := changed.Theme != w.config.Theme
+	if !fonts && !theme {
 		return
 	}
-	w.config.CodeFont, w.config.CodeFontSize = changed.CodeFont, changed.CodeFontSize
+	w.config.CodeFont, w.config.CodeFontSize, w.config.Theme = changed.CodeFont, changed.CodeFontSize, changed.Theme
 	w.saveConfig()
-	w.setSourceFont()
+	if fonts {
+		w.setSourceFont()
+	}
+	if theme {
+		w.setTheme()
+	}
+}
+
+// setTheme puts the theme of the settings into effect. What shows HTML on a
+// white page has the rest of its colours from the theme, so is given them
+// again.
+func (w *Window) setTheme() {
+	applyTheme(w.config.Theme)
+	w.view.showPage()
+	for c := range composers {
+		if c.html {
+			showAsPaper(c.body.QWidget)
+		}
+	}
 }
 
 // applySettings puts new keys and a new folder for the accounts into effect.

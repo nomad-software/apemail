@@ -5,6 +5,7 @@ import (
 	"mime"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	qt "github.com/mappu/miqt/qt6"
 
@@ -23,6 +24,7 @@ const imageFilter = "Images (*.png *.jpg *.jpeg *.gif *.bmp *.webp)"
 // is false, takes them out of the list they are in.
 func (c *composer) setList(style qt.QTextListFormat__Style, on bool) {
 	cursor := c.body.TextCursor()
+	defer runtime.KeepAlive(cursor)
 	list := cursor.CurrentList()
 	switch {
 	case on && list != nil:
@@ -30,11 +32,12 @@ func (c *composer) setList(style qt.QTextListFormat__Style, on bool) {
 		f := list.Format()
 		f.SetStyle(style)
 		list.SetFormat(f)
+		runtime.KeepAlive(f)
 	case on:
 		cursor.CreateListWithStyle(style)
 	case list != nil:
 		doc := c.body.Document()
-		for b := doc.FindBlock(cursor.SelectionStart()); b.IsValid() && b.Position() <= cursor.SelectionEnd(); b = b.Next() {
+		for b := doc.FindBlock(cursor.SelectionStart()); b.IsValid() && b.Position() <= cursor.SelectionEnd(); {
 			if l := b.TextList(); l != nil {
 				l.Remove(b)
 				// The indent the list gave the paragraph goes with it.
@@ -42,7 +45,12 @@ func (c *composer) setList(style qt.QTextListFormat__Style, on bool) {
 				f := pos.BlockFormat()
 				f.SetIndent(0)
 				pos.SetBlockFormat(f)
+				runtime.KeepAlive(f)
+				pos.Delete()
 			}
+			next := b.Next()
+			runtime.KeepAlive(b)
+			b = next
 		}
 	}
 	c.showList()
@@ -51,9 +59,13 @@ func (c *composer) setList(style qt.QTextListFormat__Style, on bool) {
 // showList checks the list button of the style of the list at the cursor.
 func (c *composer) showList() {
 	style := qt.QTextListFormat__Style(0)
-	if list := c.body.TextCursor().CurrentList(); list != nil {
-		style = list.Format().Style()
+	cursor := c.body.TextCursor()
+	if list := cursor.CurrentList(); list != nil {
+		f := list.Format()
+		style = f.Style()
+		runtime.KeepAlive(f)
 	}
+	runtime.KeepAlive(cursor)
 	c.bullets.SetChecked(style == qt.QTextListFormat__ListDisc)
 	c.numbers.SetChecked(style == qt.QTextListFormat__ListDecimal)
 }
@@ -98,7 +110,9 @@ func (c *composer) putImage(name string, data []byte) error {
 	if img.Width() > maxImageWidth {
 		f.SetWidth(maxImageWidth)
 	}
-	c.body.TextCursor().InsertImageWithFormat(f)
+	cursor := c.body.TextCursor()
+	cursor.InsertImageWithFormat(f)
+	runtime.KeepAlive(cursor)
 	return nil
 }
 
