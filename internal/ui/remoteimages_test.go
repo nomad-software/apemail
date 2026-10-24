@@ -204,21 +204,50 @@ func TestNoRemoteImagesButton(t *testing.T) {
 }
 
 // TestLoadRemoteImagesAlways checks that the images of a message are loaded
-// when it is shown if the account says to, and only then.
+// when it is shown if the account says to, and only then, and that the
+// button to load them is not shown while they load, and afterwards only if
+// some could not be, to try them again.
 func TestLoadRemoteImagesAlways(t *testing.T) {
-	for _, always := range []bool{true, false} {
+	for _, c := range []struct {
+		always bool
+		paths  []string
+		button bool
+	}{
+		{true, []string{"/a.png"}, false},
+		{true, []string{"/a.png", "/gone.txt"}, true},
+		{false, []string{"/a.png"}, true},
+	} {
 		images := newImageServer(t)
+		hold := make(chan struct{})
+		images.mu.Lock()
+		images.hold = hold
+		images.mu.Unlock()
 		s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove))
 		s.AppendRaw(t, "INBOX", "From: a@example.com\r\nSubject: Pictures\r\nContent-Type: text/html; charset=utf-8\r\n\r\n"+
-			imageMessage(images, "/a.png").HTML+"\r\n", imap.FlagSeen)
-		w := newTestWindow(t, s, func(a *account.Account) { a.LoadRemoteImages = always })
+			imageMessage(images, c.paths...).HTML+"\r\n", imap.FlagSeen)
+		w := newTestWindow(t, s, func(a *account.Account) { a.LoadRemoteImages = c.always })
 		wait(t, "the inbox", func() bool { return w.folder != "" && w.list.model.RowCount(noParent) == 1 })
 		mainthread.Wait(func() { clickRow(w.list, 0) })
 		wait(t, "the message", func() bool { return w.view.msg != nil })
-		if always {
-			wait(t, "the images", func() bool { return len(w.view.images) == 1 })
+		if c.always {
+			mainthread.Wait(func() {
+				if w.view.stopImages == nil {
+					t.Error("the images are not being loaded")
+				}
+				if w.view.loadImages.IsVisibleTo(w.view.QWidget) {
+					t.Errorf("%v: the button is shown while the images load", c.paths)
+				}
+			})
+			close(hold)
+			wait(t, "the images", func() bool { return w.view.stopImages == nil && len(w.view.images) == 1 })
+			mainthread.Wait(func() {
+				if shown := w.view.loadImages.IsVisibleTo(w.view.QWidget); shown != c.button {
+					t.Errorf("%v: the button is shown %v once they have loaded, want %v", c.paths, shown, c.button)
+				}
+			})
 			continue
 		}
+		close(hold)
 		mainthread.Wait(func() {
 			if w.view.stopImages != nil || !w.view.loadImages.IsEnabled() {
 				t.Error("the images are being loaded")

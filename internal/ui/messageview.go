@@ -203,6 +203,9 @@ func (v *messageView) show(m *message.Message, folder string, uid uint32) {
 	}
 	v.showHTML()
 	if v.loadImages != nil && v.loadAlways != nil && v.loadAlways() {
+		// The button is shown only if some images cannot be loaded, to
+		// try them again, rather than for the moment they take.
+		v.loadImages.SetVisible(false)
 		v.loadRemoteImages()
 	}
 }
@@ -259,6 +262,7 @@ func (v *messageView) loadRemoteImages() {
 			v.showHTML()
 			bar.SetValue(at)
 			if missing := len(srcs) - len(v.images); missing > 0 {
+				button.SetVisible(true)
 				button.SetEnabled(true)
 				button.SetText("Load Remote Images")
 				button.SetToolTip(fmt.Sprintf("%d of %d images could not be loaded. Try again", missing, len(srcs)))

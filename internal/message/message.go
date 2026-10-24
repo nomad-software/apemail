@@ -155,7 +155,7 @@ func Parse(raw []byte) (*Message, error) {
 			})
 		}
 	}
-	m.HTML = flatTables(withoutQtMarker(m.HTML))
+	m.HTML = flatTables(pixelSizes(withoutHidden(withoutQtMarker(m.HTML))))
 	return m, nil
 }
 

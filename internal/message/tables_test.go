@@ -66,3 +66,22 @@ func TestFlattenedTablesNotInComments(t *testing.T) {
 		t.Errorf("the HTML was changed:\n%s", got)
 	}
 }
+
+// TestFlattenedTablesKeepColours checks that the blocks tables deeper
+// than four are made keep the colours of each table, row and cell, so that
+// their backgrounds show, as a newsletter's white text on a black table:
+// background-color or a background that is only a colour, or bgcolor, and
+// color. Nothing else of the style is kept, as alignment, sizes, padding
+// and floats that place a cell would apply in a <div> to all within it.
+func TestFlattenedTablesKeepColours(t *testing.T) {
+	in := `<table bgcolor="#000000" align="center" style="border-top: 0;"><tr align="left"><td bgcolor="#DD2938" align="center" style="background-color: #FF0000; padding: 18px; font-size: 0; float: left" class="x">` +
+		`<a style="color:#FFFFFF">BOOK NOW</a></td><th style="background: #414141; color: #FFFFFF; text-align: center">X</th>` +
+		`<td style="background: url(a.png) #fff">Y</td></tr></table>`
+	got := parseHTML(t, nested(4, in))
+	want := nested(4, `<div style="background-color:#000000"><div><div style="background-color:#ff0000">`+
+		`<a style="color:#FFFFFF">BOOK NOW</a></div><div style="background-color:#414141;color:#ffffff">X</div>`+
+		`<div>Y</div></div></div>`)
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}

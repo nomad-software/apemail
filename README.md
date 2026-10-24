@@ -64,9 +64,17 @@ it you have.
   carry within them, and their attachments, which are saved with a click.
   An image on the internet is not loaded, and is shown as a small icon where
   it would be, until you press **Load Remote Images** at the bottom right
-  of the message's header (or the account is set to load them always). Then
+  of the message's header (or the account is set to load them always, when
+  the button shows only if some could not be loaded). Then
   only the images are fetched: no stylesheets, backgrounds or scripts, no
   cookies, and no more than 100 images of 10 MB each.
+- HTML is shown by Qt, which reads less of HTML than a web browser does, so
+  a message is made fit for it first: what the message hides
+  (`display: none`, as a newsletter's preview text, the rows it shows only
+  on a phone and its tracking pixel) is left out, and sizes Qt cannot read
+  (`width="600px"`, `height="auto"`, or a width in the style) are made
+  pixels, as otherwise an image is drawn no height at all and a table
+  squeezed into a narrow column.
 - New mail in the inbox is seen as it arrives, while ApeMail is running
   (IMAP IDLE). There is no checking every few minutes.
 - Only what you look at is fetched, so a mailbox of many years costs nothing
@@ -271,8 +279,8 @@ Go makes it natural to do many things at once, and ApeMail does:
 - Newsletters place things with tables inside tables, a dozen deep, and Qt
   lays out each table again for every pass over the one it is in, so each
   table deeper doubles the time. Tables more than four deep are shown as
-  plain blocks, one below the other: such a newsletter took a minute to
-  show, and now takes a quarter of a second.
+  blocks, one below the other, keeping their colours: such a
+  newsletter took a minute to show, and now takes a quarter of a second.
 
 ### Measured
 
