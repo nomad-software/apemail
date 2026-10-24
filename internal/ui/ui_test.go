@@ -576,3 +576,64 @@ func TestNoGapAtTop(t *testing.T) {
 		}
 	})
 }
+
+// TestDeepTablesShownQuickly checks that a message which nests tables a
+// dozen deep, as newsletters do to place things, is shown at once: Qt took
+// a minute to lay one out, the program not answering meanwhile.
+func TestDeepTablesShownQuickly(t *testing.T) {
+	cell := `<table width="100%" style="min-width: 100%"><tbody><tr><td align="center" style="padding: 10px">`
+	var b strings.Builder
+	for range 3 {
+		b.WriteString(strings.Repeat(cell, 16))
+		b.WriteString("<p>Your booking details. " + strings.Repeat("Some words to lay out. ", 50) + "</p>")
+		b.WriteString(strings.Repeat("</td></tr></tbody></table>", 16))
+	}
+	m, err := message.Parse([]byte("From: a@example.com\r\nSubject: s\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" + b.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mainthread.Wait(func() {
+		v := newMessageView()
+		defer v.DeleteLater()
+		v.Resize(800, 600)
+		start := time.Now()
+		v.show(m, "INBOX", 1)
+		if !drawn(v.QWidget) {
+			t.Fatal("the message was not drawn")
+		}
+		if took := time.Since(start); took > 5*time.Second {
+			t.Errorf("the message took %v to show", took)
+		}
+		if got := v.browser.ToPlainText(); !strings.Contains(got, "Your booking details.") {
+			t.Errorf("shown %q", got)
+		}
+	})
+}
+
+// TestRemoteImagesSmall checks that images on the internet, which are never
+// loaded, take no more room than the icon shown in their place, rather than
+// that icon drawn as large as the image would have been.
+func TestRemoteImagesSmall(t *testing.T) {
+	m, err := message.Parse([]byte("From: a@example.com\r\nSubject: s\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" +
+		`<p>Above</p><img src="https://example.com/hero.png" width="620" height="400" style="width: 100%"><p>Below</p>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mainthread.Wait(func() {
+		v := newMessageView()
+		defer v.DeleteLater()
+		v.Resize(800, 600)
+		v.show(m, "INBOX", 1)
+		// It is laid out when it is drawn.
+		drawn(v.QWidget)
+		size := v.browser.Document().Size()
+		if h := size.Height(); h > 150 {
+			t.Errorf("the message is %v high", h)
+		}
+		runtime.KeepAlive(size)
+		// What is sent on, in a reply or forward, keeps the size.
+		if !strings.Contains(m.HTML, `width="620"`) {
+			t.Errorf("the message was changed: %s", m.HTML)
+		}
+	})
+}

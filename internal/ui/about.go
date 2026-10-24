@@ -44,7 +44,8 @@ func licenceText() string {
 		"<a href=\"https://age-encryption.org\">age</a> (BSD) for encryption, with " +
 		"<a href=\"https://github.com/FiloSottile/edwards25519\">edwards25519</a> (BSD) and " +
 		"<a href=\"https://github.com/FiloSottile/hpke\">hpke</a> (BSD), " +
-		"<a href=\"https://pkg.go.dev/golang.org/x/crypto\">x/crypto</a> (BSD) and " +
+		"<a href=\"https://pkg.go.dev/golang.org/x/crypto\">x/crypto</a> (BSD), " +
+		"<a href=\"https://pkg.go.dev/golang.org/x/net\">x/net</a> (BSD) for reading HTML and " +
 		"<a href=\"https://pkg.go.dev/golang.org/x/text\">x/text</a> (BSD).</p>"
 }
 

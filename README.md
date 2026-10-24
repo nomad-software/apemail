@@ -59,6 +59,8 @@ it you have.
   it are the name of the folder and how many messages it holds.
 - Plain text and HTML messages are shown, with their links, the images they
   carry within them, and their attachments, which are saved with a click.
+  An image on the internet, which is not loaded, is shown as a small icon
+  where it would be.
 - New mail in the inbox is seen as it arrives, while ApeMail is running
   (IMAP IDLE). There is no checking every few minutes.
 - Only what you look at is fetched, so a mailbox of many years costs nothing
@@ -244,6 +246,14 @@ Go makes it natural to do many things at once, and ApeMail does:
   are updated; nothing is sorted again.
 - A large selection, such as every message of a folder, is kept a run of
   rows at a time rather than a row at a time.
+
+### The message
+
+- Newsletters place things with tables inside tables, a dozen deep, and Qt
+  lays out each table again for every pass over the one it is in, so each
+  table deeper doubles the time. Tables more than four deep are shown as
+  plain blocks, one below the other: such a newsletter took a minute to
+  show, and now takes a quarter of a second.
 
 ### Measured
 

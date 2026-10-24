@@ -166,7 +166,7 @@ func (v *messageView) show(m *message.Message, folder string, uid uint32) {
 	v.setAttachments(m.Files())
 
 	if m.HTML != "" {
-		v.browser.SetHtml(m.HTML)
+		v.browser.SetHtml(message.SmallRemoteImages(m.HTML))
 	} else {
 		v.browser.SetHtml(textToHTML(m.Text))
 	}

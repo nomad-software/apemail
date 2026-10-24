@@ -10,6 +10,7 @@ require (
 	github.com/emersion/go-smtp v0.25.0
 	github.com/mappu/miqt v0.15.0
 	golang.org/x/crypto v0.55.0
+	golang.org/x/net v0.57.0
 )
 
 require (
