@@ -62,10 +62,11 @@ it you have.
   the border between two headings to share the width between them. Above
   it are the folder, with those it is within (as Archive/2026), and how
   many messages it holds.
-- Plain text and HTML messages are shown, with their links, the images they
-  carry within them, and their attachments, counted among the headers and
-  saved with a click
-  (they shade as the mouse passes over them), or all at once with **Save
+- Plain text and HTML messages are shown, with their links (web and mail
+  addresses written out in the text are made links too, and open in your
+  browser or a new message when clicked), the images they carry within
+  them, and their attachments, counted among the headers and saved with a
+  click (they shade as the mouse passes over them), or all at once with **Save
   All…**, into a folder you choose, where a file already there is never
   written over: the attachment is saved beside it as `name (2).pdf`. Many
   attachments wrap onto rows, and scroll beyond three, rather than widening

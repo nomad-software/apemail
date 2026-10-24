@@ -158,7 +158,7 @@ func Parse(raw []byte) (*Message, error) {
 		}
 	}
 	m.SourceHTML = m.HTML
-	m.HTML = flatTables(pixelSizes(withoutHidden(withoutQtMarker(m.HTML))))
+	m.HTML = linkedText(flatTables(pixelSizes(withoutHidden(withoutQtMarker(m.HTML)))))
 	return m, nil
 }
 

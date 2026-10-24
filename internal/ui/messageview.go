@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"html"
 	"net/url"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -477,28 +476,10 @@ func clearLayout(l *qt.QLayout) {
 	}
 }
 
-// links finds web and mail addresses in text.
-var links = regexp.MustCompile(`(?i)\b(https?://[^\s<>"]+[^\s<>".,;:!?)\]'])|\b([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})\b`)
-
 // textToHTML returns plain text as HTML that shows it as it is, in a fixed
 // width font as it was likely written in, with its links made links.
 func textToHTML(text string) string {
-	var b strings.Builder
-	b.WriteString("<pre style=\"white-space: pre-wrap; font-family: monospace\">")
-	last := 0
-	for _, m := range links.FindAllStringIndex(text, -1) {
-		b.WriteString(html.EscapeString(text[last:m[0]]))
-		link := text[m[0]:m[1]]
-		href := link
-		if !strings.Contains(strings.ToLower(link), "://") {
-			href = "mailto:" + link
-		}
-		fmt.Fprintf(&b, "<a href=\"%s\">%s</a>", html.EscapeString(href), html.EscapeString(link))
-		last = m[1]
-	}
-	b.WriteString(html.EscapeString(text[last:]))
-	b.WriteString("</pre>")
-	return b.String()
+	return "<pre style=\"white-space: pre-wrap; font-family: monospace\">" + message.Linked(text) + "</pre>"
 }
 
 func plural(n int) string {
