@@ -273,10 +273,10 @@ func (w *Window) stopAccounts() {
 	}
 	w.engines = map[string]*engine.Engine{}
 	w.order = nil
+	w.account, w.folder = "", ""
 	w.folders.clear()
 	w.list.clear()
 	w.view.clear()
-	w.account, w.folder = "", ""
 	w.updateActions()
 }
 

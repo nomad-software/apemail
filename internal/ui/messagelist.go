@@ -49,7 +49,8 @@ type messageList struct {
 	// sent says the folder holds mail from the user, whose list shows who
 	// it went to rather than who it is from.
 	sent bool
-	// uidValidity is that of the folder that is listed.
+	// uidValidity is that of the folder that is listed, and 0 until one is
+	// (a server's is never 0).
 	uidValidity uint32
 	// sortColumn and sortOrder are how the rows are sorted.
 	sortColumn int
@@ -75,10 +76,12 @@ type messageList struct {
 	fitting bool
 
 	// selected is called when the selection changes, opened when a message
-	// is double clicked, and contextMenu for the menu of the selection.
+	// is double clicked, contextMenu for the menu of the selection, and
+	// changed when what is listed has changed.
 	selected    func()
 	opened      func(uid uint32)
 	contextMenu func()
+	changed     func()
 }
 
 func newMessageList() *messageList {
@@ -360,12 +363,25 @@ func sortKeys(rows []store.Summary, key func(store.Summary) string) []string {
 // setIndex lists the messages of the index, keeping those that are
 // selected.
 func (l *messageList) setIndex(ix *store.Index, sent bool) {
+	defer l.announce()
 	if sent == l.sent && ix.UIDValidity == l.uidValidity && l.update(ix) {
 		return
 	}
 	l.sent = sent
 	l.uidValidity = ix.UIDValidity
 	l.resetKeepingSelection(ix.Messages)
+}
+
+// listed reports whether the messages of a folder are listed, and how many.
+func (l *messageList) listed() (int, bool) {
+	return len(l.rows), l.uidValidity != 0
+}
+
+// announce says that what is listed has changed.
+func (l *messageList) announce() {
+	if l.changed != nil {
+		l.changed()
+	}
 }
 
 // update shows the messages of the index in place of the rows of the same
@@ -534,6 +550,7 @@ func (l *messageList) clear() {
 	l.model.EndResetModel()
 	l.selectionKnown = false
 	l.selected = blocked
+	l.announce()
 }
 
 // selectedUIDs returns the UIDs of the messages that are selected, in the

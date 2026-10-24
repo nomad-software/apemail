@@ -356,6 +356,15 @@ func folderIcon(f store.Folder, uses map[string]engine.Special) *qt.QIcon {
 	return sidebarIcon(icons.Archive)
 }
 
+// folderName returns the name the tree shows the folder by, without its
+// count of unread messages: the last part of its name, or Inbox.
+func (t *folderTree) folderName(id, folder string) string {
+	if item, ok := t.folders[id][folder]; ok {
+		return t.names[item]
+	}
+	return folder
+}
+
 // setUnread shows how many messages of the folder are unread, and keeps it
 // to be shown again when the tree is made again.
 func (t *folderTree) setUnread(id, folder string, unread int) {

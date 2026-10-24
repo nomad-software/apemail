@@ -4,6 +4,7 @@ package ui
 import (
 	"errors"
 	"fmt"
+	"html"
 	"os"
 	"runtime"
 	"slices"
@@ -57,6 +58,7 @@ type Window struct {
 	buttons      *qt.QToolBar
 	split, right *qt.QSplitter
 	folders      *folderTree
+	folderTitle  *qt.QLabel
 	list         *messageList
 	view         *messageView
 	statusText   *qt.QLabel
@@ -106,8 +108,22 @@ func NewWindow(files Files) *Window {
 	w.list.setColumnWidths(w.config.CorrespondentWidth, w.config.DateWidth)
 	w.view = newMessageView()
 
+	// Above the list is the name of the folder and how many messages it
+	// has.
+	listPane := qt.NewQWidget2()
+	listLayout := qt.NewQVBoxLayout(listPane)
+	listLayout.SetContentsMargins(0, 0, 0, 0)
+	listLayout.SetSpacing(0)
+	w.folderTitle = qt.NewQLabel2()
+	w.folderTitle.SetContentsMargins(titlePadding, titlePadding, titlePadding, titlePadding)
+	w.folderTitle.SetTextFormat(qt.RichText)
+	listLayout.AddWidget(w.folderTitle.QWidget)
+	listLayout.AddWidget(w.list.QWidget)
+	w.list.changed = w.showFolderTitle
+	w.showFolderTitle()
+
 	w.right = qt.NewQSplitter3(qt.Vertical)
-	w.right.AddWidget(w.list.QWidget)
+	w.right.AddWidget(listPane)
 	w.right.AddWidget(w.view.QWidget)
 	w.right.SetStretchFactor(1, 1)
 	w.right.SetChildrenCollapsible(false)
@@ -393,6 +409,34 @@ func (w *Window) FoldersChanged(id string, folders []store.Folder) {
 			}
 		}
 	}
+}
+
+// titlePadding is the room around the title of the folder listed, in
+// pixels.
+const titlePadding = 6
+
+// showFolderTitle shows the name of the folder listed, and how many
+// messages it has once they are listed. Nothing is shown where no folder is.
+func (w *Window) showFolderTitle() {
+	if w.folder == "" {
+		w.folderTitle.SetVisible(false)
+		return
+	}
+	text := "<span style=\"font-size: large; font-weight: bold\">" + html.EscapeString(w.folders.folderName(w.account, w.folder)) + "</span>"
+	if n, ok := w.list.listed(); ok {
+		text += "&nbsp;&nbsp;" + messageCount(n)
+	}
+	w.folderTitle.SetText(text)
+	w.folderTitle.SetVisible(true)
+}
+
+// messageCount says how many messages there are, as "1 message" or "3
+// messages".
+func messageCount(n int) string {
+	if n == 1 {
+		return "1 message"
+	}
+	return fmt.Sprintf("%d messages", n)
 }
 
 // FolderChanged lists the messages of the folder, if it is the one shown.

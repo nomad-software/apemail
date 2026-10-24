@@ -55,7 +55,8 @@ it you have.
 - The message list shows the subject, who it is from (or who it went to, in
   the sent and drafts folders) and the full date and time. Unread messages
   are bold and flagged ones red. Click a heading to sort by it, and drag
-  the border between two headings to share the width between them.
+  the border between two headings to share the width between them. Above
+  it are the name of the folder and how many messages it holds.
 - Plain text and HTML messages are shown, with their links, the images they
   carry within them, and their attachments, which are saved with a click.
 - New mail in the inbox is seen as it arrives, while ApeMail is running
