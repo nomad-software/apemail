@@ -255,11 +255,15 @@ func TestColumnBorders(t *testing.T) {
 
 	mainthread.Wait(func() {
 		h := w.list.header
-		widths := func() [colCount]int {
-			return [colCount]int{h.SectionSize(colSubject), h.SectionSize(colCorrespondent), h.SectionSize(colDate)}
+		widths := func() [3]int {
+			return [3]int{h.SectionSize(colSubject), h.SectionSize(colCorrespondent), h.SectionSize(colDate)}
 		}
+		// The paperclips keep their width, and the others fill the rest.
 		fills := func(when string) {
-			if got := widths(); got[0]+got[1]+got[2] != h.Width() {
+			if got := h.SectionSize(colAttachment); got != attachmentWidth {
+				t.Errorf("%s: the paperclips are %d wide", when, got)
+			}
+			if got := widths(); attachmentWidth+got[0]+got[1]+got[2] != h.Width() {
 				t.Errorf("%s: columns %v do not fill %d", when, got, h.Width())
 			}
 		}
@@ -268,7 +272,7 @@ func TestColumnBorders(t *testing.T) {
 
 		// The border between From and Date, dragged left, widens the date.
 		dragBorder(h, colCorrespondent, -60)
-		if got := widths(); got != [colCount]int{start[0], start[1] - 60, start[2] + 60} {
+		if got := widths(); got != [3]int{start[0], start[1] - 60, start[2] + 60} {
 			t.Errorf("from|date: %v, from %v", got, start)
 		}
 		fills("from|date")
@@ -276,7 +280,7 @@ func TestColumnBorders(t *testing.T) {
 		// The border between Subject and From trades between them.
 		before := widths()
 		dragBorder(h, colSubject, 50)
-		if got := widths(); got != [colCount]int{before[0] + 50, before[1] - 50, before[2]} {
+		if got := widths(); got != [3]int{before[0] + 50, before[1] - 50, before[2]} {
 			t.Errorf("subject|from: %v, from %v", got, before)
 		}
 		fills("subject|from")
@@ -290,6 +294,15 @@ func TestColumnBorders(t *testing.T) {
 		}
 		fills("too far")
 		dragBorder(h, colCorrespondent, -150)
+
+		// Nor is a column dragged narrower than that.
+		before = widths()
+		dragBorder(h, colCorrespondent, -(before[1] - 10))
+		if got := widths(); got[1] != minColumnWidth || got[2] != before[1]+before[2]-minColumnWidth {
+			t.Errorf("too narrow: %v, from %v", got, before)
+		}
+		fills("too narrow")
+		dragBorder(h, colCorrespondent, 150)
 	})
 
 	// The subject takes what the window gains or loses.
@@ -305,7 +318,7 @@ func TestColumnBorders(t *testing.T) {
 	var dragged [2]int
 	mainthread.Wait(func() {
 		h := w.list.header
-		if got := h.SectionSize(colSubject) + h.SectionSize(colCorrespondent) + h.SectionSize(colDate); got != h.Width() {
+		if got := attachmentWidth + h.SectionSize(colSubject) + h.SectionSize(colCorrespondent) + h.SectionSize(colDate); got != h.Width() {
 			t.Errorf("after resizing, columns %d do not fill %d", got, h.Width())
 		}
 		dragged[0], dragged[1] = w.list.columnWidths()

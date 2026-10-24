@@ -246,6 +246,22 @@ func (e *Engine) syncFolder(conn *remote.Conn, folder string, say func(format st
 		e.put(ix, s, edits)
 		changed = true
 	}
+	// Every summary now says if its message has attachments: those added
+	// by this sync, and those known, which an index made before they did
+	// has had looked up. Those that could not be are taken to have none,
+	// and not looked up again: what kept them from being found would
+	// again.
+	for uid, has := range u.Attachments {
+		if i, ok := ix.Find(uid); ok && ix.Messages[i].Attachments != has {
+			ix.Messages[i].Attachments = has
+			changed = true
+		}
+	}
+	if !ix.Attachments {
+		ix.Attachments = true
+		changed = true
+	}
+	e.failed(u.AttachmentsErr)
 	// What was set before this sync began, it has read from the server.
 	for uid, n := range e.edited[folder] {
 		if n <= edits {

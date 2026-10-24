@@ -456,3 +456,48 @@ func TestDeleteFolderWhileSynchronising(t *testing.T) {
 		t.Errorf("the server has %q", got)
 	}
 }
+
+// TestChangesWhileFindingAttachments checks that what the user does while a
+// sync is finding which messages have attachments, for an index saved
+// before it said, stands: a flag set is kept, and a message moved away is
+// not put back, while the message left is marked as having them.
+func TestChangesWhileFindingAttachments(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Trash")
+	s.Append(t, "INBOX", "plain")
+	s.AppendRaw(t, "INBOX", "From: a@example.com\r\nSubject: pdf\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n"+
+		"--b\r\nContent-Type: text/plain\r\n\r\nHello.\r\n"+
+		"--b\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=a.pdf\r\n\r\n%PDF\r\n--b--\r\n")
+	st := openStore(t)
+	e, l := startOn(t, st, s.Account())
+	wait(t, "the inbox", func() bool { return subjects(l.index("INBOX")) == "plain,pdf" })
+	e.Close()
+	old := savedIndex(t, st, "INBOX")
+	old.Attachments = false
+	for i := range old.Messages {
+		old.Messages[i].Attachments = false
+	}
+	if err := st.SaveIndex(old); err != nil {
+		t.Fatal(err)
+	}
+	plain, pdf := old.Messages[0].UID, old.Messages[1].UID
+
+	held, release := s.Hold(t, "BODYSTRUCTURE")
+	e, l = startOn(t, st, s.Account())
+	recv(t, held)
+	if err := result(t, func(done func(error)) { e.SetFlag("INBOX", []uint32{pdf}, `\Flagged`, true, done) }); err != nil {
+		t.Fatal(err)
+	}
+	if err := result(t, func(done func(error)) { e.Move("INBOX", []uint32{plain}, "Trash", done) }); err != nil {
+		t.Fatal(err)
+	}
+	release()
+
+	wait(t, "the attachments", func() bool {
+		ix := l.index("INBOX")
+		return ix.Attachments && len(ix.Messages) == 1 && ix.Messages[0].Attachments
+	})
+	ix := l.index("INBOX")
+	if ix.Messages[0].UID != pdf || !ix.Messages[0].Has(`\Flagged`) {
+		t.Errorf("inbox %+v", ix.Messages)
+	}
+}

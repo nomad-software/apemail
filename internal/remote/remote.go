@@ -299,6 +299,13 @@ type Update struct {
 	Flags map[uint32][]string
 	// Removed are the UIDs of messages that are no longer in the folder.
 	Removed []uint32
+	// Attachments says, by UID, which messages have attachments: those
+	// added, and, if the index did not say (store.Index.Attachments), those
+	// already known. A message left out is not known to have any.
+	Attachments map[uint32]bool
+	// AttachmentsErr is why the attachments could not be found, if they
+	// could not. The rest of the update stands.
+	AttachmentsErr error
 	// HighestModSeq is the server's count of the changes to the folder
 	// (CONDSTORE) when it was synchronised, or zero for a server without
 	// it, from which the next sync asks for what has changed.
@@ -368,7 +375,78 @@ func (c *Conn) Sync(ix *store.Index, progress func([]store.Summary)) (*Update, e
 			progress(summaries)
 		}
 	}
+
+	// Which have attachments is asked for once the summaries are in, and
+	// apart from them: a structure the client cannot read ends the
+	// connection, and that must not keep new mail from being seen.
+	look := added
+	if !u.Reset && !ix.Attachments {
+		look = slices.Concat(added, stillThere(known, u.Removed))
+	}
+	if len(look) > 0 {
+		u.Attachments, u.AttachmentsErr = c.attachments(look)
+		if u.AttachmentsErr != nil {
+			u.AttachmentsErr = fmt.Errorf("finding the attachments in %s: %w", ix.Folder, u.AttachmentsErr)
+		}
+	}
 	return u, nil
+}
+
+// stillThere returns the UIDs known, newest first, but those removed.
+func stillThere(known map[uint32]bool, removed []uint32) []imap.UID {
+	gone := make(map[uint32]bool, len(removed))
+	for _, uid := range removed {
+		gone[uid] = true
+	}
+	var uids []imap.UID
+	for uid := range known {
+		if !gone[uid] {
+			uids = append(uids, imap.UID(uid))
+		}
+	}
+	slices.Sort(uids)
+	slices.Reverse(uids)
+	return uids
+}
+
+// attachments finds which of the messages with the UIDs, in the folder that
+// is open, have attachments, from their structure (BODYSTRUCTURE). It
+// returns what it found before an error too.
+func (c *Conn) attachments(uids []imap.UID) (map[uint32]bool, error) {
+	found := map[uint32]bool{}
+	for chunk := range slices.Chunk(uids, fetchChunk) {
+		msgs, err := c.c.Fetch(imap.UIDSetNum(chunk...), &imap.FetchOptions{
+			UID:           true,
+			BodyStructure: &imap.FetchItemBodyStructure{Extended: true},
+		}).Collect()
+		if err != nil {
+			return found, err
+		}
+		for _, m := range msgs {
+			if m.UID != 0 {
+				found[uint32(m.UID)] = hasAttachments(m.BodyStructure, false)
+			}
+		}
+	}
+	return found, nil
+}
+
+// hasAttachments says if the structure of a message has files attached: a
+// part marked as an attachment, or one that is neither text nor within a
+// multipart/related, whose parts an HTML message shows. related says the
+// part is within one.
+func hasAttachments(bs imap.BodyStructure, related bool) bool {
+	switch p := bs.(type) {
+	case *imap.BodyStructureMultiPart:
+		within := related || strings.EqualFold(p.Subtype, "related")
+		return slices.ContainsFunc(p.Children, func(c imap.BodyStructure) bool { return hasAttachments(c, within) })
+	case *imap.BodyStructureSinglePart:
+		if d := p.Disposition(); d != nil && strings.EqualFold(d.Value, "attachment") {
+			return true
+		}
+		return !related && !strings.EqualFold(p.Type, "text")
+	}
+	return false
 }
 
 // allUIDs is every message of a folder, by UID: 1:*.

@@ -54,14 +54,22 @@ it you have.
 - Folders are shown as the server has them, nested, with the inbox, drafts,
   sent mail, archive and trash first, and the number of unread messages
   beside each.
-- The message list shows the subject, who it is from (or who it went to, in
-  the sent and drafts folders) and the full date and time. Unread messages
+- The message list shows a paperclip by each message with attachments
+  (from the message's structure on the server, so nothing is downloaded to
+  know), the subject, who it is from (or who it went to, in the sent and
+  drafts folders) and the full date and time. Unread messages
   are bold and flagged ones red. Click a heading to sort by it, and drag
   the border between two headings to share the width between them. Above
   it are the folder, with those it is within (as Archive/2026), and how
   many messages it holds.
 - Plain text and HTML messages are shown, with their links, the images they
-  carry within them, and their attachments, which are saved with a click.
+  carry within them, and their attachments, counted among the headers and
+  saved with a click
+  (they shade as the mouse passes over them), or all at once with **Save
+  All…**, into a folder you choose, where a file already there is never
+  written over: the attachment is saved beside it as `name (2).pdf`. Many
+  attachments wrap onto rows, and scroll beyond three, rather than widening
+  the window.
   An image on the internet is not loaded, and is shown as a small icon where
   it would be, until you press **Load Remote Images** at the bottom right
   of the message's header (or the account is set to load them always, when

@@ -46,6 +46,7 @@ type Server struct {
 	uidNext     uint32
 	modSeq      uint64
 	noModSeq    bool
+	badBody     bool
 	messages    []*message
 	commands    []string
 }
@@ -172,6 +173,15 @@ func (s *Server) NoModSeq(on bool) {
 	s.noModSeq = on
 }
 
+// BadStructures has the server send the structure of every message
+// (BODYSTRUCTURE) written wrongly, as some servers write some, which the
+// client cannot read; or, given false, rightly again.
+func (s *Server) BadStructures(on bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.badBody = on
+}
+
 // Commands returns the commands clients have sent, without their tags, and
 // then forgets them.
 func (s *Server) Commands() []string {
@@ -296,7 +306,8 @@ func (s *Server) selected(reply func(string, ...any)) {
 }
 
 // fetch answers FETCH or UID FETCH: the set of messages, the items asked for,
-// and CHANGEDSINCE, which leaves out those that have not changed since.
+// and CHANGEDSINCE, which leaves out those that have not changed since. The
+// structure of a message (BODYSTRUCTURE) is that of plain text.
 func (s *Server) fetch(reply func(string, ...any), byUID bool, args string) {
 	set, items, _ := strings.Cut(args, " ")
 	upper := strings.ToUpper(items)
@@ -336,6 +347,14 @@ func (s *Server) fetch(reply func(string, ...any), byUID bool, args string) {
 		if strings.Contains(upper, "ENVELOPE") {
 			parts = append(parts, fmt.Sprintf(`ENVELOPE (%q %q (("Alice" NIL "alice" "example.com")) NIL NIL (("" NIL "user" "example.com")) NIL NIL NIL "<%d@example.com>")`,
 				date.Format(time.RFC1123Z), m.subject, m.uid))
+		}
+		if strings.Contains(upper, "BODYSTRUCTURE") {
+			if s.badBody {
+				// A parameter without a value.
+				parts = append(parts, `BODYSTRUCTURE ("TEXT" "PLAIN" ("CHARSET") NIL NIL "7BIT" 10 1)`)
+			} else {
+				parts = append(parts, fmt.Sprintf(`BODYSTRUCTURE ("TEXT" "PLAIN" ("CHARSET" "us-ascii") NIL NIL "7BIT" %d 1 NIL NIL NIL NIL)`, len(raw(m))))
+			}
 		}
 		if strings.Contains(upper, "BODY.PEEK[]") {
 			body := raw(m)

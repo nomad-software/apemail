@@ -63,6 +63,9 @@ type Summary struct {
 	Date      time.Time `json:"date"`
 	Flags     []string  `json:"flags,omitempty"`
 	Size      int64     `json:"size,omitempty"`
+	// Attachments says the message has files attached, as its structure
+	// on the server says.
+	Attachments bool `json:"attachments,omitempty"`
 }
 
 // Has reports if the message has the flag, which is matched without regard
@@ -82,6 +85,9 @@ type Index struct {
 	// the next sync asks only for what has changed since. It is zero for a
 	// server without it.
 	HighestModSeq uint64 `json:"highestModSeq,omitempty"`
+	// Attachments says the summaries say which messages have attachments.
+	// An index made before they did has them looked up by the next sync.
+	Attachments bool `json:"attachments,omitempty"`
 	// Messages are in the order of their UIDs.
 	Messages []Summary `json:"messages"`
 }

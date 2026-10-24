@@ -357,9 +357,9 @@ func TestOnlyWhatIsAsked(t *testing.T) {
 	if ix := l.index("Sent"); ix != nil {
 		t.Errorf("sent was synchronised: %+v", ix)
 	}
-	// Each sync of a folder with one new message, as these are, sends two
-	// UID FETCHes: one lists its messages, the other the headers of the new
-	// one. Watching the inbox opens it too, but fetches nothing, and no
+	// Each sync of a folder with one new message, as these are, sends three
+	// UID FETCHes: one lists its messages, one the headers of the new one,
+	// and one its structure, which says if it has attachments. Watching the inbox opens it too, but fetches nothing, and no
 	// message is downloaded.
 	fetches := 0
 	for _, c := range s.Commands() {
@@ -367,8 +367,8 @@ func TestOnlyWhatIsAsked(t *testing.T) {
 			fetches++
 		}
 	}
-	if fetches != 4 {
-		t.Errorf("%d UID FETCHes were sent, not 2 for each of the inbox and the trash", fetches)
+	if fetches != 6 {
+		t.Errorf("%d UID FETCHes were sent, not 3 for each of the inbox and the trash", fetches)
 	}
 }
 
@@ -461,6 +461,64 @@ func TestCondStoreKept(t *testing.T) {
 	s.SetFlags(two, `\Seen`)
 	e.Refresh("")
 	wait(t, "the flag taken off elsewhere", func() bool { return !l.index("INBOX").Messages[1].Has(`\Flagged`) })
+}
+
+// TestAttachmentsKnown checks that the index says which messages have files
+// attached, and that an index saved before it did is brought up to date by
+// the next sync, and saved.
+func TestAttachmentsKnown(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus))
+	s.Append(t, "INBOX", "plain")
+	s.AppendRaw(t, "INBOX", "From: a@example.com\r\nSubject: pdf\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n"+
+		"--b\r\nContent-Type: text/plain\r\n\r\nHello.\r\n"+
+		"--b\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=a.pdf\r\n\r\n%PDF\r\n--b--\r\n")
+	attached := func(ix *store.Index) bool {
+		return ix != nil && ix.Attachments && len(ix.Messages) == 2 && !ix.Messages[0].Attachments && ix.Messages[1].Attachments
+	}
+	st := openStore(t)
+	e, l := startOn(t, st, s.Account())
+	wait(t, "the attachments", func() bool { return attached(l.index("INBOX")) })
+	e.Close()
+
+	// An index saved before summaries said.
+	old := savedIndex(t, st, "INBOX")
+	old.Attachments = false
+	for i := range old.Messages {
+		old.Messages[i].Attachments = false
+	}
+	if err := st.SaveIndex(old); err != nil {
+		t.Fatal(err)
+	}
+	e, l = startOn(t, st, s.Account())
+	wait(t, "the attachments looked up", func() bool { return attached(l.index("INBOX")) })
+	e.Close()
+	if !attached(savedIndex(t, st, "INBOX")) {
+		t.Errorf("saved %+v", savedIndex(t, st, "INBOX"))
+	}
+}
+
+// TestUnreadableStructure checks that mail whose structure the client cannot
+// read, which ends the connection, is listed all the same, and the trouble
+// told, and that the next sync, on a new connection, lists new mail too.
+func TestUnreadableStructure(t *testing.T) {
+	s := condstoretest.Start(t)
+	s.Append("one")
+	s.BadStructures(true)
+	e, l := startOn(t, openStore(t), s.Account())
+	wait(t, "the inbox", func() bool { return subjects(l.index("INBOX")) == "one" })
+	failed := func() bool {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		return slices.ContainsFunc(l.errs, func(err error) bool { return strings.Contains(err.Error(), "attachments") })
+	}
+	wait(t, "the trouble told", failed)
+	if !l.index("INBOX").Attachments {
+		t.Error("the index does not say that its attachments are known")
+	}
+
+	s.Append("two")
+	e.Refresh("INBOX")
+	wait(t, "the new message", func() bool { return subjects(l.index("INBOX")) == "one,two" })
 }
 
 // TestGoneFolderForgotten checks that the local copy of a folder that has

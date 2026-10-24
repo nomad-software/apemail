@@ -40,6 +40,12 @@ func apply(ix *store.Index, u *remote.Update) {
 	for _, s := range u.Added {
 		ix.Put(s)
 	}
+	for uid, has := range u.Attachments {
+		if i, ok := ix.Find(uid); ok {
+			ix.Messages[i].Attachments = has
+		}
+	}
+	ix.Attachments = true
 }
 
 // sync synchronises the index, and returns what was found and the commands

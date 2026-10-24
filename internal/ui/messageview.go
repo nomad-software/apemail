@@ -6,10 +6,9 @@ import (
 	"fmt"
 	"html"
 	"net/url"
-	"os"
-	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/emersion/go-message/mail"
@@ -34,11 +33,19 @@ import (
 type messageView struct {
 	*qt.QWidget
 
-	headers     *qt.QWidget
-	headerGrid  *qt.QGridLayout
-	attachments *qt.QWidget
-	attachBox   *qt.QHBoxLayout
-	browser     *qt.QTextBrowser
+	headers    *qt.QWidget
+	headerGrid *qt.QGridLayout
+	// attachments holds a button for each of files, the attachments shown,
+	// laid out by attachBox, in attachScroll, which scrolls them once they
+	// take more than attachRows rows. attachPane holds attachScroll and
+	// saveAll, which saves every one.
+	attachments  *qt.QWidget
+	attachBox    *flowLayout
+	attachScroll *qt.QScrollArea
+	attachPane   *qt.QWidget
+	saveAll      *qt.QPushButton
+	files        []message.Attachment
+	browser      *qt.QTextBrowser
 
 	// msg is the message that is shown, if one is, and folder and uid
 	// where it is.
@@ -98,10 +105,7 @@ func newMessageView() *messageView {
 	v.headerGrid.SetColumnStretch(1, 1)
 	layout.AddWidget(v.headers)
 
-	v.attachments = qt.NewQWidget2()
-	v.attachBox = qt.NewQHBoxLayout(v.attachments)
-	v.attachBox.SetContentsMargins(8, 2, 8, 4)
-	layout.AddWidget(v.attachments)
+	layout.AddWidget(v.makeAttachments())
 
 	v.browser = qt.NewQTextBrowser2()
 	v.browser.SetOpenLinks(false)
@@ -399,6 +403,10 @@ func (v *messageView) showHeaders(m *message.Message) {
 	if !m.Date.IsZero() {
 		row("Date", m.Date.Local().Format("Monday 2 January 2006 15:04"))
 	}
+	// The files themselves are below the headers.
+	if files := len(m.Files()); files > 0 {
+		row("Attachments", strconv.Itoa(files))
+	}
 	// The buttons for HTML go at the bottom right of the headers, in a
 	// column of their own beside them: one that loads the images the
 	// message links to, and one that shows it in the web browser.
@@ -491,42 +499,6 @@ func textToHTML(text string) string {
 	b.WriteString(html.EscapeString(text[last:]))
 	b.WriteString("</pre>")
 	return b.String()
-}
-
-// setAttachments shows a button for each attachment, which saves it.
-func (v *messageView) setAttachments(files []message.Attachment) {
-	clearLayout(v.attachBox.QLayout)
-	v.attachments.SetVisible(len(files) > 0)
-	if len(files) == 0 {
-		return
-	}
-	label := qt.NewQLabel3(fmt.Sprintf("%d attachment%s:", len(files), plural(len(files))))
-	v.attachBox.AddWidget(label.QWidget)
-	for _, a := range files {
-		b := qt.NewQPushButton3(fmt.Sprintf("%s (%s)", a.Filename, size(len(a.Data))))
-		b.SetIcon(icon(icons.Attachment))
-		b.SetFlat(true)
-		b.SetToolTip("Save " + a.Filename)
-		b.OnClicked(func() { v.save(a) })
-		v.attachBox.AddWidget(b.QWidget)
-	}
-	v.attachBox.AddStretch()
-}
-
-// save asks where to save an attachment and saves it there.
-func (v *messageView) save(a message.Attachment) {
-	home, _ := os.UserHomeDir()
-	name := filepath.Base(a.Filename)
-	if name == "." || name == "/" || name == "" {
-		name = "attachment"
-	}
-	path := qt.QFileDialog_GetSaveFileName3(v.QWidget, "Save Attachment", filepath.Join(home, "Downloads", name))
-	if path == "" {
-		return
-	}
-	if err := os.WriteFile(path, a.Data, 0o600); err != nil {
-		warning(v.QWidget, "Save Attachment", err.Error())
-	}
 }
 
 func plural(n int) string {

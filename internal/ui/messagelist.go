@@ -10,12 +10,14 @@ import (
 
 	qt "github.com/mappu/miqt/qt6"
 
+	"github.com/nomad-software/apemail/internal/icons"
 	"github.com/nomad-software/apemail/internal/store"
 )
 
 // The columns of the message list.
 const (
-	colSubject = iota
+	colAttachment = iota
+	colSubject
 	colCorrespondent
 	colDate
 	colCount
@@ -30,6 +32,9 @@ const (
 	// minColumnWidth is the narrowest a column is made by dragging the
 	// border of one beside it.
 	minColumnWidth = 40
+	// attachmentWidth is the width of the column of paperclips, which is
+	// not dragged.
+	attachmentWidth = 28
 )
 
 // messageList lists the messages of a folder. Its model gives the view only
@@ -57,8 +62,9 @@ type messageList struct {
 	sortOrder  qt.SortOrder
 
 	// boldValue and flaggedValue are what the list shows unread messages
-	// in, a bold font, and flagged ones in, red, made once.
-	boldValue, flaggedValue *qt.QVariant
+	// in, a bold font, and flagged ones in, red, and attachmentValue the
+	// paperclip of those with attachments, made once.
+	boldValue, flaggedValue, attachmentValue *qt.QVariant
 
 	// selection are the UIDs of the messages that are selected, in the
 	// order of their rows, worked out when they are first asked for after
@@ -104,6 +110,11 @@ func newMessageList() *messageList {
 	runtime.KeepAlive(flaggedValue)
 	flagged.Delete()
 	red.Delete()
+	paperclip := icon(icons.Attachment)
+	attachmentValue := paperclip.ToQVariant()
+	l.attachmentValue = qt.NewQVariant3(attachmentValue)
+	runtime.KeepAlive(attachmentValue)
+	paperclip.Delete()
 
 	l.model.OnRowCount(func(parent *qt.QModelIndex) int {
 		if parent.IsValid() {
@@ -120,6 +131,9 @@ func newMessageList() *messageList {
 	var data, header returned
 	l.model.OnData(func(index *qt.QModelIndex, role int) *qt.QVariant { return data.give(l.data(index, role)) })
 	l.model.OnHeaderData(func(super func(int, qt.Orientation, int) *qt.QVariant, section int, orientation qt.Orientation, role int) *qt.QVariant {
+		if orientation == qt.Horizontal && section == colAttachment && role == int(qt.DecorationRole) {
+			return header.give(qt.NewQVariant3(l.attachmentValue))
+		}
 		if orientation != qt.Horizontal || role != int(qt.DisplayRole) {
 			return header.giveCopy(super(section, orientation, role))
 		}
@@ -225,6 +239,10 @@ func (l *messageList) data(index *qt.QModelIndex, role int) *qt.QVariant {
 		case colDate:
 			return qt.NewQVariant11(formatDate(m.Date))
 		}
+	case int(qt.DecorationRole):
+		if index.Column() == colAttachment && m.Attachments {
+			return qt.NewQVariant3(l.attachmentValue)
+		}
 	case int(qt.FontRole):
 		if !m.Has(`\Seen`) {
 			return qt.NewQVariant3(l.boldValue)
@@ -314,9 +332,16 @@ func (l *messageList) sorted(rows []store.Summary) []store.Summary {
 	}
 	slices.SortFunc(order, func(i, j int) int {
 		var c int
-		if keys != nil {
+		switch {
+		case keys != nil:
 			c = cmp.Compare(keys[i], keys[j])
-		} else {
+		case l.sortColumn == colAttachment:
+			// Those with attachments, and then by date.
+			c = cmp.Compare(attachments(rows[i]), attachments(rows[j]))
+			if c == 0 {
+				c = rows[i].Date.Compare(rows[j].Date)
+			}
+		default:
 			c = rows[i].Date.Compare(rows[j].Date)
 		}
 		if c == 0 {
@@ -332,6 +357,15 @@ func (l *messageList) sorted(rows []store.Summary) []store.Summary {
 		out[k] = rows[i]
 	}
 	return out
+}
+
+// attachments is 1 for a message with attachments and 0 for one without,
+// by which they are sorted.
+func attachments(m store.Summary) int {
+	if m.Attachments {
+		return 1
+	}
+	return 0
 }
 
 // parallelRows is how many rows there must be for their sort keys to be
@@ -387,8 +421,9 @@ func (l *messageList) announce() {
 // update shows the messages of the index in place of the rows of the same
 // UIDs, if they are the same messages as the list shows, and reports if
 // they were. That is so when only their flags have changed, which is most
-// changes, and then nothing moves: a message's subject, sender and date
-// never change. Only the rows that have changed are drawn again.
+// changes, or whether they have attachments, which an index saved before it
+// said learns, and then nothing moves: a message's subject, sender and date
+// never change. A list sorted by attachments is sorted again if they have. Only the rows that have changed are drawn again.
 func (l *messageList) update(ix *store.Index) bool {
 	if len(ix.Messages) != len(l.rows) {
 		return false
@@ -396,14 +431,15 @@ func (l *messageList) update(ix *store.Index) bool {
 	// The UIDs are told apart, so the same number of them all shown is the
 	// same messages.
 	for _, m := range ix.Messages {
-		if _, ok := l.row[m.UID]; !ok {
+		i, ok := l.row[m.UID]
+		if !ok || l.sortColumn == colAttachment && l.rows[i].Attachments != m.Attachments {
 			return false
 		}
 	}
 	first, last := len(l.rows), -1
 	for _, m := range ix.Messages {
 		i := l.row[m.UID]
-		if !slices.Equal(l.rows[i].Flags, m.Flags) {
+		if !slices.Equal(l.rows[i].Flags, m.Flags) || l.rows[i].Attachments != m.Attachments {
 			first, last = min(first, i), max(last, i)
 		}
 		l.rows[i] = m
@@ -584,29 +620,45 @@ func (l *messageList) summary(uid uint32) (store.Summary, bool) {
 
 // makeHeader makes the header of the columns, which fill the width of the
 // list as those of other clients do: dragging the border between two
-// columns trades width between them, the right edge of the date trades it with the
-// subject, and the subject takes what the list gains or loses in width.
-// Every border can be dragged, so the date can be made wider by dragging
-// the border on its left, rather than only by its right edge against the
-// side of the list.
+// columns trades width between them, the right edge of the date trades it
+// with the subject, and the subject takes what the list gains or loses in
+// width. Every border but that of the paperclips, which keep their width,
+// can be dragged, so the date can be made wider by dragging the border on
+// its left, rather than only by its right edge against the side of the
+// list.
 func (l *messageList) makeHeader() {
 	l.header = qt.NewQHeaderView(qt.Horizontal)
 	l.header.SetDefaultAlignment(qt.AlignLeft | qt.AlignVCenter)
 	l.header.SetStretchLastSection(false)
 	// The trade is between columns in their order, so they stay in it.
 	l.header.SetSectionsMovable(false)
-	l.header.SetMinimumSectionSize(minColumnWidth)
+	// Qt holds every column to its minimum, the paperclips too, so the
+	// others are held to theirs here.
+	l.header.SetMinimumSectionSize(attachmentWidth)
 	l.SetHeader(l.header)
 	for col := range colCount {
 		l.header.SetSectionResizeMode2(col, qt.QHeaderView__Interactive)
 	}
+	// The paperclips keep their width, and their border is not dragged.
+	l.header.SetSectionResizeMode2(colAttachment, qt.QHeaderView__Fixed)
+	l.fitting = true
+	l.header.ResizeSection(colAttachment, attachmentWidth)
+	l.fitting = false
 	l.header.OnSectionResized(func(col, oldSize, newSize int) {
 		if l.fitting {
 			return
 		}
 		l.fitting = true
 		defer func() { l.fitting = false }()
-		next := (col + 1) % colCount
+		// The date trades with the subject, not the paperclips.
+		next := col + 1
+		if next == colCount {
+			next = colSubject
+		}
+		if newSize < minColumnWidth {
+			l.header.ResizeSection(col, minColumnWidth)
+			newSize = minColumnWidth
+		}
 		width := l.header.SectionSize(next) - (newSize - oldSize)
 		if width < minColumnWidth {
 			// The column beside it can give no more.
@@ -625,7 +677,7 @@ func (l *messageList) makeHeader() {
 func (l *messageList) fitSubject() {
 	l.fitting = true
 	defer func() { l.fitting = false }()
-	width := l.header.Width() - l.header.SectionSize(colCorrespondent) - l.header.SectionSize(colDate)
+	width := l.header.Width() - attachmentWidth - l.header.SectionSize(colCorrespondent) - l.header.SectionSize(colDate)
 	l.header.ResizeSection(colSubject, max(width, minColumnWidth))
 }
 

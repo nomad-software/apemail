@@ -50,6 +50,8 @@ func TestListWhileCollecting(t *testing.T) {
 	ix := &store.Index{Folder: "INBOX", UIDValidity: 1}
 	for i := range 40 {
 		s := store.Summary{UID: uint32(i + 1), Subject: fmt.Sprintf("Message %d", i), From: "Alice <alice@example.com>", Date: time.Now()}
+		// The paperclips are drawn too.
+		s.Attachments = i%2 == 0
 		switch i % 3 {
 		case 0:
 			s.Flags = []string{`\Seen`}

@@ -25,8 +25,9 @@ func folderOf(n int) *store.Index {
 			From:    fmt.Sprintf(`"Someone %03d" <someone%d@example.com>`, (i*31)%331, i),
 			To:      fmt.Sprintf(`"Recipient %03d" <r%d@example.com>`, (i*17)%257, i),
 			// Out of the order of the UIDs, as mail moved in is.
-			Date:  d.Add(time.Duration((i*104729)%n) * time.Minute),
-			Flags: []string{`\Seen`},
+			Date:        d.Add(time.Duration((i*104729)%n) * time.Minute),
+			Flags:       []string{`\Seen`},
+			Attachments: i%5 == 0,
 		})
 	}
 	return ix
@@ -49,7 +50,7 @@ func TestSorted(t *testing.T) {
 	for _, n := range []int{50, parallelRows + 7} {
 		ix := folderOf(n)
 		for _, sent := range []bool{false, true} {
-			for _, col := range []int{colSubject, colCorrespondent, colDate} {
+			for _, col := range []int{colAttachment, colSubject, colCorrespondent, colDate} {
 				for _, order := range []qt.SortOrder{qt.AscendingOrder, qt.DescendingOrder} {
 					withList(func(l *messageList) {
 						l.sent, l.sortColumn, l.sortOrder = sent, col, order
@@ -77,6 +78,11 @@ func TestSorted(t *testing.T) {
 func compareRows(a, b store.Summary, col int, sent bool) int {
 	var c int
 	switch col {
+	case colAttachment:
+		c = attachments(a) - attachments(b)
+		if c == 0 {
+			c = a.Date.Compare(b.Date)
+		}
 	case colSubject:
 		c = compareStrings(a.Subject, b.Subject)
 	case colCorrespondent:
@@ -110,6 +116,34 @@ func lower(s string) string {
 		}
 	}
 	return string(b)
+}
+
+// TestAttachmentColumn checks that the list shows a paperclip, in a column of
+// its own headed by one, beside each message with attachments, and nothing
+// beside one without.
+func TestAttachmentColumn(t *testing.T) {
+	withList(func(l *messageList) {
+		l.setIndex(folderOf(10), false)
+		decorated := func(v *qt.QVariant) bool {
+			defer runtime.KeepAlive(v)
+			return v.IsValid()
+		}
+		if !decorated(l.model.HeaderData(colAttachment, qt.Horizontal, int(qt.DecorationRole))) {
+			t.Error("the column has no paperclip")
+		}
+		for row, m := range l.rows {
+			index := l.model.Index(row, colAttachment, noParent)
+			if got := decorated(l.model.Data(index, int(qt.DecorationRole))); got != m.Attachments {
+				t.Errorf("message %d, with attachments %v, has a paperclip: %v", m.UID, m.Attachments, got)
+			}
+			runtime.KeepAlive(index)
+			index = l.model.Index(row, colSubject, noParent)
+			if decorated(l.model.Data(index, int(qt.DecorationRole))) {
+				t.Errorf("message %d has a paperclip by its subject", m.UID)
+			}
+			runtime.KeepAlive(index)
+		}
+	})
 }
 
 // TestFlagsUpdatedInPlace checks that when only the flags of the messages
@@ -153,6 +187,47 @@ func TestFlagsUpdatedInPlace(t *testing.T) {
 		l.setIndex(&changed, false)
 		if resets != 1 || len(l.rows) != 101 {
 			t.Errorf("%d resets, %d rows", resets, len(l.rows))
+		}
+	})
+}
+
+// TestAttachmentsUpdatedInPlace checks that a message found to have
+// attachments, as those of an index saved before it said are, has its row
+// drawn again where it is, or the list sorted again if it is sorted by them.
+func TestAttachmentsUpdatedInPlace(t *testing.T) {
+	ix := folderOf(20)
+	for i := range ix.Messages {
+		ix.Messages[i].Attachments = false
+	}
+	withList(func(l *messageList) {
+		l.setIndex(ix, false)
+		resets, drawn := 0, -1
+		l.model.OnModelReset(func() { resets++ })
+		l.model.OnDataChanged(func(from, to *qt.QModelIndex) {
+			if from.Row() == to.Row() {
+				drawn = from.Row()
+			}
+		})
+		changed := *ix
+		changed.Messages = slices.Clone(ix.Messages)
+		uid := l.rows[4].UID
+		i, _ := changed.Find(uid)
+		changed.Messages[i].Attachments = true
+		l.setIndex(&changed, false)
+		if resets != 0 || drawn != 4 || !l.rows[4].Attachments {
+			t.Errorf("%d resets, row %d drawn, row 4 %+v", resets, drawn, l.rows[4])
+		}
+
+		// Sorted by attachments, the message goes to the top.
+		l.SortByColumn(colAttachment, qt.DescendingOrder)
+		again := changed
+		again.Messages = slices.Clone(changed.Messages)
+		j, _ := again.Find(l.rows[10].UID)
+		again.Messages[j].Attachments = true
+		moved := l.rows[10].UID
+		l.setIndex(&again, false)
+		if top := []uint32{l.rows[0].UID, l.rows[1].UID}; !slices.Contains(top, moved) || !slices.Contains(top, uid) {
+			t.Errorf("sorted by attachments, the top is %v, not %d and %d", top, uid, moved)
 		}
 	})
 }
