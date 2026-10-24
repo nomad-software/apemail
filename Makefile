@@ -4,7 +4,7 @@ BINARY := apemail
 # halves the size of the binary.
 LDFLAGS := -s -w
 
-.PHONY: build run test bench vet screenshot clean
+.PHONY: build run test bench vet screenshot icons appimage macos clean
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY) .
@@ -33,5 +33,24 @@ screenshot:
 	mkdir -p docs
 	APEMAIL_SCREENSHOT=$(CURDIR)/docs/screenshot.png go test -count=1 -timeout $(TEST_TIMEOUT) -run '^TestScreenshot$$' ./internal/ui/
 
+# Draws the icon of the macOS app, packaging/macos/apemail.png, from the
+# program's icon, within the margin Apple's grid gives icons. Run it again
+# whenever the icon changes; a test says when it has not been.
+icons:
+	APEMAIL_ICONS=$(CURDIR)/packaging go test -count=1 -timeout $(TEST_TIMEOUT) -run '^TestWriteIcons$$' ./internal/ui/
+
+# Packs the program and the Qt libraries it uses into one file that runs
+# without installing anything. Releases are made by the GitHub workflow, on
+# an old distribution so that they run on more systems.
+appimage:
+	packaging/appimage.sh
+
+# Builds the macOS app for Apple Silicon, with Qt inside it, in a disk image.
+# It runs on a Mac with Homebrew's Qt; releases are made by the GitHub
+# workflow.
+macos:
+	packaging/macos.sh
+
 clean:
 	rm -f $(BINARY)
+	rm -rf build

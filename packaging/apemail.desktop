@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=ApeMail
+Comment=Read and write mail on IMAP servers
+Exec=apemail
+Icon=apemail
+Categories=Network;Email;
+Terminal=false
+StartupWMClass=apemail

@@ -1,0 +1,61 @@
+# Builds the AppImage for Linux.
+#
+# It runs when a tag starting with v is pushed (git tag v1.0.0 && git push
+# origin v1.0.0), and attaches the AppImage to a release of that name. It can
+# also be run by hand from the Actions tab of the repository, in which case
+# the AppImage is only kept as an artifact of the run to download.
+name: AppImage
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  # To make the release.
+  contents: write
+
+jobs:
+  appimage:
+    # An AppImage runs on systems as new as the one it was built on, or
+    # newer: this one has glibc 2.39, which rolling distributions, as
+    # CachyOS, are always newer than. Its Qt (6.4) is the oldest the
+    # bindings build with, and has all ApeMail uses.
+    runs-on: ubuntu-24.04
+    steps:
+      # Qt and the parts of it that are loaded while running, which go into
+      # the AppImage: Wayland, X11's platform plugins, and the GTK theme, by
+      # which a dark GNOME desktop is seen to be dark.
+      - name: Install what building needs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config file \
+            qt6-base-dev qt6-svg-dev qmake6 qt6-wayland qt6-qpa-plugins qt6-gtk-platformtheme libgl-dev
+          pkg-config --modversion Qt6Widgets Qt6SvgWidgets
+
+      - uses: actions/checkout@v4
+
+      # It keeps what is compiled from one run to the next, which matters
+      # as the Qt bindings take minutes to compile.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build the AppImage
+        env:
+          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
+        run: packaging/appimage.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ApeMail-AppImage
+          path: build/*.AppImage
+          if-no-files-found: error
+
+      - name: Attach it to the release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/*.AppImage
+          generate_release_notes: true

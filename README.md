@@ -295,8 +295,9 @@ happens to your mail from a key pressed by mistake.
 
 ## Requirements
 
-ApeMail is developed and tested on Linux. It should build on macOS, but has
-not been tried there.
+ApeMail is developed and tested on Linux. There is a release for macOS on
+Apple Silicon (see [macOS app](#macos-app)), but it has not been tested on
+macOS by hand yet.
 
 Building needs:
 
@@ -356,6 +357,82 @@ roughly halves the size of the binary, to about 35 MB.
 The first build compiles the whole Qt binding and takes several minutes,
 printing a lot of compiler warnings from the Qt headers which can be ignored.
 Later builds use the Go build cache and take a few seconds.
+
+## AppImage
+
+Releases for Linux are an [AppImage](https://appimage.org): one file with
+ApeMail and the Qt libraries it needs inside it, which runs without
+installing anything.
+
+```sh
+chmod +x ApeMail-*-x86_64.AppImage
+./ApeMail-*-x86_64.AppImage
+```
+
+It is built by a GitHub workflow (`.github/workflows/appimage.yml`), which runs
+`packaging/appimage.sh` on Ubuntu 24.04 with Ubuntu's Qt 6.4:
+
+- Pushing a tag that starts with `v` builds it and attaches it to a release of
+  that name: `git tag v1.0.0 && git push origin v1.0.0`.
+- It can also be run by hand from the Actions tab of the repository (AppImage >
+  Run workflow), which leaves the AppImage as an artifact of the run to
+  download.
+
+It runs under both X11 and Wayland, using Wayland where the session is one.
+To use the other, set `QT_QPA_PLATFORM` to `xcb` or `wayland` when starting
+it. Started from an AppImage, ApeMail's entry in the desktop's applications
+starts the AppImage.
+
+On GNOME it takes its colours, light or dark, from the desktop, through Qt's
+GTK theme plugin, which is in the AppImage. GTK itself is not, and is the
+desktop's own.
+
+The C library of the system (glibc) is not put in the AppImage, as it cannot
+be reliably: it has to match the system's graphics drivers. It runs on any
+system with glibc 2.39 or later: rolling distributions such as CachyOS and
+Arch, Ubuntu 24.04, Debian 13, Fedora 40 and anything newer.
+
+`make appimage` runs the same script locally, but an AppImage built on a newer
+system only runs on systems at least as new.
+
+## macOS app
+
+Releases for macOS are a disk image, `ApeMail-*-arm64.dmg`, for Macs with
+Apple Silicon. Open it and drag ApeMail into Applications. Macs with Intel
+processors are not supported.
+
+The app is not signed with an Apple Developer ID or notarised by Apple, so
+the first time it is opened macOS says that it cannot check it for malicious
+software and will not open it. Either:
+
+- Open System Settings > Privacy & Security, where ApeMail is named
+  beneath Security, and choose Open Anyway, or
+- take away the mark macOS gives what is downloaded, in Terminal:
+
+  ```sh
+  xattr -dr com.apple.quarantine /Applications/ApeMail.app
+  ```
+
+Either is only needed once. It is signed ad hoc, which a Mac with Apple
+Silicon needs to run it at all.
+
+It is built by a GitHub workflow (`.github/workflows/macos.yml`), which runs
+`packaging/macos.sh` on a Mac with Apple Silicon and Homebrew's Qt, when a
+`v` tag is pushed, as the AppImage is, or by hand from the Actions tab (macOS
+> Run workflow). The script builds the program, makes `ApeMail.app` with its
+icon (from `packaging/macos/apemail.png`) and `Info.plist` (from
+`packaging/macos/Info.plist`), copies Qt into it with Qt's `macdeployqt`,
+checks that nothing in it still uses a library from outside it, signs it,
+checks that it starts, and makes the disk image. It needs the macOS the
+workflow builds on (macOS 14) or later, which the script works out from what
+is in the app and writes into its `Info.plist`.
+
+`make macos` runs the same script on a Mac with Apple Silicon and
+`brew install go pkgconf qtbase qtsvg`: the base of Qt and Qt SVG alone,
+which is all ApeMail uses, as with the whole of Homebrew's `qt` the plugins
+of its other modules go into the app too, with what they use. The icon of the
+app is drawn from the program's own, within the margin macOS gives the icons
+of the Dock, by `make icons`.
 
 ## Running
 
