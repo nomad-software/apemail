@@ -335,13 +335,13 @@ func TestAddressBookWindow(t *testing.T) {
 	answerContact(b.newContact, "Grace Hopper", "grace@example.com")
 	answerContact(b.newContact, "", "alan@example.com")
 	mainthread.Wait(func() {
-		if b.table.RowCount() != 2 || b.table.Item(0, 1).Text() != "alan@example.com" || b.table.Item(1, 0).Text() != "Grace Hopper" {
+		if b.list.TopLevelItemCount() != 2 || b.list.TopLevelItem(0).Text(1) != "alan@example.com" || b.list.TopLevelItem(1).Text(0) != "Grace Hopper" {
 			t.Errorf("listed %+v", b.contacts)
 		}
 		if b.edit.IsEnabled() || b.remove.IsEnabled() {
 			t.Error("the buttons are enabled with nothing selected")
 		}
-		b.table.SelectRow(0)
+		b.list.SetCurrentItem(b.list.TopLevelItem(0))
 		if !b.edit.IsEnabled() {
 			t.Error("the contact selected cannot be edited")
 		}
@@ -355,7 +355,7 @@ func TestAddressBookWindow(t *testing.T) {
 	// user says no.
 	asked := answer(t, false)
 	mainthread.Wait(func() {
-		b.table.SelectRow(1)
+		b.list.SetCurrentItem(b.list.TopLevelItem(1))
 		b.removeSelected()
 		if *asked != 1 || len(w.contacts.book.Contacts) != 2 {
 			t.Errorf("asked %d, contacts %+v", *asked, w.contacts.book.Contacts)
@@ -373,7 +373,7 @@ func TestAddressBookWindow(t *testing.T) {
 	}
 
 	mainthread.Wait(func() {
-		b.table.SelectRow(0)
+		b.list.SetCurrentItem(b.list.TopLevelItem(0))
 		b.writeSelected()
 		var c *composer
 		for c = range composers {
@@ -459,7 +459,7 @@ func TestDoubleClickContact(t *testing.T) {
 		w.showAddressBook()
 		b := w.bookDialog
 		// The second row, as the view reports a double click on it.
-		b.table.CellDoubleClicked(1, 0)
+		b.list.ItemDoubleClicked(b.list.TopLevelItem(1), 0)
 		var c *composer
 		for c = range composers {
 		}
@@ -475,4 +475,64 @@ func TestDoubleClickContact(t *testing.T) {
 		}
 	})
 	wait(t, "the address book to go", func() bool { return w.bookDialog == nil })
+}
+
+// TestSortContacts checks that clicking a column's header sorts the contacts
+// by it, either way, and that what each row does is the contact it shows.
+func TestSortContacts(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove))
+	w := newTestWindow(t, s)
+	wait(t, "the account", func() bool { return len(w.engines) == 1 })
+	waitForBook(t, w)
+	addContact(t, w, "Grace Hopper", "hopper@example.com")
+	addContact(t, w, "Alan Turing", "turing@example.com")
+	addContact(t, w, "Ada Lovelace", "Zed@example.com")
+
+	mainthread.Wait(func() {
+		w.showAddressBook()
+		b := w.bookDialog
+		defer b.Close()
+		listed := func() []string {
+			var got []string
+			for i := range b.list.TopLevelItemCount() {
+				got = append(got, b.list.TopLevelItem(i).Text(1))
+			}
+			return got
+		}
+		header := b.list.Header()
+		if got := listed(); !slices.Equal(got, []string{"Zed@example.com", "turing@example.com", "hopper@example.com"}) {
+			t.Errorf("by name: %q", got)
+		}
+		if !header.IsSortIndicatorShown() || header.SortIndicatorSection() != 0 || header.SortIndicatorOrder() != qt.AscendingOrder {
+			t.Error("the header does not show the list sorted by name")
+		}
+
+		// The contact selected stays selected as the order changes.
+		b.list.SetCurrentItem(b.list.TopLevelItem(1))
+		header.SetSortIndicator(1, qt.AscendingOrder)
+		if got := listed(); !slices.Equal(got, []string{"hopper@example.com", "turing@example.com", "Zed@example.com"}) {
+			t.Errorf("by address: %q", got)
+		}
+		if c, ok := b.selected(); !ok || c.Email != "turing@example.com" {
+			t.Errorf("selected %+v, %v", c, ok)
+		}
+		header.SetSortIndicator(1, qt.DescendingOrder)
+		if got := listed(); !slices.Equal(got, []string{"Zed@example.com", "turing@example.com", "hopper@example.com"}) {
+			t.Errorf("by address, descending: %q", got)
+		}
+		b.list.SetCurrentItem(b.list.TopLevelItem(2))
+		if c, _ := b.selected(); c.Email != "hopper@example.com" {
+			t.Errorf("the last row is %+v", c)
+		}
+
+		// A contact added is put in the order chosen.
+		if err := w.changeAddressBook(func(book *addressbook.Book) (bool, error) {
+			return book.Add(addressbook.Contact{Name: "Charles Babbage", Email: "babbage@example.com"})
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if got := listed(); !slices.Equal(got, []string{"Zed@example.com", "turing@example.com", "hopper@example.com", "babbage@example.com"}) {
+			t.Errorf("after adding: %q", got)
+		}
+	})
 }

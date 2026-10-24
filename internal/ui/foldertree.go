@@ -147,7 +147,7 @@ func (t *folderTree) setAccount(a account.Account) {
 		item.SetData(0, roleFolder, qt.NewQVariant11(""))
 		item.SetData(0, roleName, qt.NewQVariant11(""))
 		item.SetFlags(qt.ItemIsSelectable | qt.ItemIsEnabled)
-		item.SetIcon(0, icon(icons.Account))
+		item.SetIcon(0, sidebarIcon(icons.Account))
 		font := item.Font(0)
 		font.SetBold(true)
 		item.SetFont(0, font)
@@ -316,23 +316,44 @@ func orderFolders(folders []store.Folder, uses map[string]engine.Special) []stor
 	return ordered
 }
 
+// sidebarTints are the colours of the icons of the side bar, so that each
+// kind of folder is told at a glance, as in other clients.
+var sidebarTints = map[string]tint{
+	icons.Account: {light: "#1a73e8", dark: "#6ea8fe"},
+	icons.Inbox:   {light: "#1a73e8", dark: "#6ea8fe"},
+	icons.Drafts:  {light: "#8e44ad", dark: "#c084fc"},
+	icons.Sent:    {light: "#188038", dark: "#5cc77d"},
+	icons.Archive: {light: "#a0622d", dark: "#d9a066"},
+	icons.Folder:  {light: "#c99400", dark: "#f2c94c"},
+	icons.Trash:   {light: "#6b6b6b", dark: "#a8a8a8"},
+}
+
+// sidebarIcon returns the icon with the name as the side bar shows it, in
+// its colour if it has one.
+func sidebarIcon(name string) *qt.QIcon {
+	if t, ok := sidebarTints[name]; ok {
+		return tintedIcon(name, t)
+	}
+	return icon(name)
+}
+
 // folderIcon returns the icon of a folder, by its use.
 func folderIcon(f store.Folder, uses map[string]engine.Special) *qt.QIcon {
 	if remote.IsInbox(f.Name) {
-		return icon(icons.Inbox)
+		return sidebarIcon(icons.Inbox)
 	}
 	use, ok := uses[f.Name]
 	switch {
 	case !ok:
-		return icon(icons.Folder)
+		return sidebarIcon(icons.Folder)
 	case use == engine.Sent:
-		return icon(icons.Sent)
+		return sidebarIcon(icons.Sent)
 	case use == engine.Drafts:
-		return icon(icons.Drafts)
+		return sidebarIcon(icons.Drafts)
 	case use == engine.Trash:
-		return icon(icons.Trash)
+		return sidebarIcon(icons.Trash)
 	}
-	return icon(icons.Archive)
+	return sidebarIcon(icons.Archive)
 }
 
 // setUnread shows how many messages of the folder are unread, and keeps it

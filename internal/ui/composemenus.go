@@ -36,6 +36,13 @@ func (c *composer) makeMenus() {
 		super(e)
 	})
 
+	// Close, as Escape, closes the window as its close button does, asking
+	// first about a message that has not been sent.
+	file := c.MenuBar().AddMenuWithTitle("&File")
+	c.closeItem = file.AddActionWithText("&Close")
+	c.closeItem.SetShortcut(qt.NewQKeySequence2("Esc"))
+	c.closeItem.OnTriggered(func() { c.Close() })
+
 	edit := c.MenuBar().AddMenuWithTitle("&Edit")
 	// The fields and the body take the standard keys themselves, so the
 	// items only show them: were they the items' shortcuts, they would

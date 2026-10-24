@@ -212,20 +212,7 @@ func (w *Window) applyInterface(changed settings.Settings) {
 		w.setSourceFont()
 	}
 	if theme {
-		w.setTheme()
-	}
-}
-
-// setTheme puts the theme of the settings into effect. What shows HTML on a
-// white page has the rest of its colours from the theme, so is given them
-// again.
-func (w *Window) setTheme() {
-	applyTheme(w.config.Theme)
-	w.view.showPage()
-	for c := range composers {
-		if c.html {
-			showAsPaper(c.body.QWidget)
-		}
+		applyTheme(w.config.Theme)
 	}
 }
 

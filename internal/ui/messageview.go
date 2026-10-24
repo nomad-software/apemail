@@ -139,7 +139,6 @@ func (v *messageView) follow(link string) {
 func (v *messageView) clear() {
 	v.msg, v.folder, v.uid = nil, "", 0
 	v.addSender = nil
-	showInTheme(v.browser.QWidget)
 	clearLayout(v.headerGrid.QLayout)
 	v.headers.SetVisible(false)
 	v.setAttachments(nil)
@@ -166,21 +165,10 @@ func (v *messageView) show(m *message.Message, folder string, uid uint32) {
 
 	v.setAttachments(m.Files())
 
-	v.showPage()
 	if m.HTML != "" {
 		v.browser.SetHtml(m.HTML)
 	} else {
 		v.browser.SetHtml(textToHTML(m.Text))
-	}
-}
-
-// showPage shows an HTML message on a white page, as it was written to be
-// seen, and anything else in the colours of the theme.
-func (v *messageView) showPage() {
-	if v.msg != nil && v.msg.HTML != "" {
-		showAsPaper(v.browser.QWidget)
-	} else {
-		showInTheme(v.browser.QWidget)
 	}
 }
 

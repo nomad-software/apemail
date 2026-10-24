@@ -47,6 +47,8 @@ type composer struct {
 	// focus, as the menu takes the focus while it is open.
 	editor editor
 	edit   editActions
+	// closeItem is File > Close, which Escape is the shortcut of.
+	closeItem *qt.QAction
 	// receipt and dsn are the options of the Options menu: a return
 	// receipt, and delivery status notifications.
 	receipt, dsn *qt.QAction
@@ -127,10 +129,7 @@ func (w *Window) newComposer(e *engine.Engine) *composer {
 
 	c.body = qt.NewQTextEdit2()
 	c.body.SetAcceptRichText(c.html)
-	if c.html {
-		// An HTML message is written on the page it is read on.
-		showAsPaper(c.body.QWidget)
-	} else {
+	if !c.html {
 		fixed := qt.QFontDatabase_SystemFont(qt.QFontDatabase__FixedFont)
 		c.body.SetFont(fixed)
 		runtime.KeepAlive(fixed)
@@ -140,12 +139,6 @@ func (w *Window) newComposer(e *engine.Engine) *composer {
 
 	c.makeButtonBar()
 	c.makeMenus()
-	// Escape closes the window as its close button does, asking first
-	// about a message that has not been sent.
-	escape := qt.NewQAction2("Close")
-	escape.SetShortcut(qt.NewQKeySequence2("Esc"))
-	escape.OnTriggered(func() { c.Close() })
-	c.QWidget.AddAction(escape)
 	composers[c] = true
 	c.OnCloseEvent(func(super func(*qt.QCloseEvent), event *qt.QCloseEvent) {
 		if !c.mayClose() {

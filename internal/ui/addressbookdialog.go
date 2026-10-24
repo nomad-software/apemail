@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"slices"
 	"strings"
 
 	qt "github.com/mappu/miqt/qt6"
@@ -15,10 +16,14 @@ type bookWindow struct {
 	*qt.QWidget
 	w *Window
 
-	table                 *qt.QTableWidget
+	list                  *qt.QTreeWidget
 	edit, remove, writeTo *qt.QPushButton
 	// contacts are those listed, in the order of the rows.
 	contacts []addressbook.Contact
+	// sortColumn and sortOrder are how the rows are sorted, which a click
+	// on a column's header changes.
+	sortColumn int
+	sortOrder  qt.SortOrder
 	// dialog is the contact dialog opened last, which tests answer.
 	dialog *contactDialog
 }
@@ -41,17 +46,33 @@ func (w *Window) showAddressBook() {
 	b.SetWindowTitle("Address Book")
 	layout := qt.NewQHBoxLayout(b.QWidget)
 
-	b.table = qt.NewQTableWidget3(0, 2)
-	b.table.SetHorizontalHeaderLabels([]string{"Name", "Email"})
-	b.table.SetSelectionBehavior(qt.QAbstractItemView__SelectRows)
-	b.table.SetSelectionMode(qt.QAbstractItemView__SingleSelection)
-	b.table.SetEditTriggers(qt.QAbstractItemView__NoEditTriggers)
-	b.table.VerticalHeader().SetVisible(false)
-	b.table.HorizontalHeader().SetStretchLastSection(true)
-	b.table.SetColumnWidth(0, 220)
-	b.table.OnItemSelectionChanged(b.updateButtons)
-	b.table.OnCellDoubleClicked(func(row, _ int) { b.writeAndClose(row) })
-	layout.AddWidget(b.table.QWidget)
+	// A list as the messages are, without a grid, sorted by a click on a
+	// column's header. The rows are sorted here rather than by the view,
+	// so that they stay in the order of contacts.
+	b.list = qt.NewQTreeWidget2()
+	b.list.SetColumnCount(2)
+	b.list.SetHeaderLabels([]string{"Name", "Email"})
+	b.list.SetRootIsDecorated(false)
+	b.list.SetUniformRowHeights(true)
+	b.list.SetAllColumnsShowFocus(true)
+	b.list.SetSelectionBehavior(qt.QAbstractItemView__SelectRows)
+	b.list.SetSelectionMode(qt.QAbstractItemView__SingleSelection)
+	b.list.SetEditTriggers(qt.QAbstractItemView__NoEditTriggers)
+	b.list.SetColumnWidth(0, 220)
+	header := b.list.Header()
+	header.SetSectionsMovable(false)
+	header.SetSectionsClickable(true)
+	header.SetSortIndicatorShown(true)
+	header.SetSortIndicator(b.sortColumn, b.sortOrder)
+	header.OnSortIndicatorChanged(func(column int, order qt.SortOrder) {
+		b.sortColumn, b.sortOrder = column, order
+		b.show(w.contacts.book.Contacts)
+	})
+	b.list.OnItemSelectionChanged(b.updateButtons)
+	b.list.OnItemDoubleClicked(func(item *qt.QTreeWidgetItem, _ int) {
+		b.writeAndClose(b.list.IndexOfTopLevelItem(item))
+	})
+	layout.AddWidget(b.list.QWidget)
 
 	buttons := qt.NewQVBoxLayout2()
 	button := func(text string, clicked func()) *qt.QPushButton {
@@ -74,7 +95,7 @@ func (w *Window) showAddressBook() {
 	del.SetShortcut(qt.NewQKeySequence2("Del"))
 	del.SetShortcutContext(qt.WidgetShortcut)
 	del.OnTriggered(b.removeSelected)
-	b.table.QWidget.AddAction(del)
+	b.list.QWidget.AddAction(del)
 	escape := qt.NewQAction2("Close")
 	escape.SetShortcut(qt.NewQKeySequence2("Esc"))
 	escape.OnTriggered(func() { b.Close() })
@@ -91,31 +112,56 @@ func (w *Window) showAddressBook() {
 	b.Show()
 }
 
-// show lists the contacts, keeping the one selected selected.
+// show lists the contacts in the order chosen, keeping the one selected
+// selected.
 func (b *bookWindow) show(contacts []addressbook.Contact) {
 	selected, _ := b.selected()
-	b.contacts = contacts
-	b.table.SetRowCount(len(contacts))
-	row := -1
-	for i, c := range contacts {
-		b.table.SetItem(i, 0, qt.NewQTableWidgetItem2(c.Name))
-		b.table.SetItem(i, 1, qt.NewQTableWidgetItem2(c.Email))
+	b.contacts = b.sorted(contacts)
+	// Clearing the list announces a change of selection, which would ask
+	// of rows that are not there yet.
+	b.list.BlockSignals(true)
+	b.list.Clear()
+	var current *qt.QTreeWidgetItem
+	for _, c := range b.contacts {
+		item := qt.NewQTreeWidgetItem2([]string{c.Name, c.Email})
+		b.list.AddTopLevelItem(item)
 		if selected.Email != "" && strings.EqualFold(c.Email, selected.Email) {
-			row = i
+			current = item
 		}
 	}
-	if row >= 0 {
-		b.table.SelectRow(row)
+	b.list.BlockSignals(false)
+	if current != nil {
+		b.list.SetCurrentItem(current)
 	} else {
-		b.table.ClearSelection()
+		b.list.ClearSelection()
 	}
 	b.updateButtons()
 }
 
+// sorted returns the contacts in the order of the column chosen. The book
+// keeps them in that of names (those without one by their address), and
+// addresses are sorted whatever their case, as the book is.
+func (b *bookWindow) sorted(contacts []addressbook.Contact) []addressbook.Contact {
+	out := slices.Clone(contacts)
+	if b.sortColumn == 1 {
+		slices.SortStableFunc(out, func(x, y addressbook.Contact) int {
+			return strings.Compare(strings.ToLower(x.Email), strings.ToLower(y.Email))
+		})
+	}
+	if b.sortOrder == qt.DescendingOrder {
+		slices.Reverse(out)
+	}
+	return out
+}
+
 // selected returns the contact that is selected, if one is.
 func (b *bookWindow) selected() (addressbook.Contact, bool) {
-	row := b.table.CurrentRow()
-	if row < 0 || row >= len(b.contacts) || !b.table.SelectionModel().IsRowSelected(row) {
+	item := b.list.CurrentItem()
+	if item == nil || !item.IsSelected() {
+		return addressbook.Contact{}, false
+	}
+	row := b.list.IndexOfTopLevelItem(item)
+	if row < 0 || row >= len(b.contacts) {
 		return addressbook.Contact{}, false
 	}
 	return b.contacts[row], true

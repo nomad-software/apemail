@@ -1,8 +1,6 @@
 package ui
 
 import (
-	"runtime"
-
 	qt "github.com/mappu/miqt/qt6"
 
 	"github.com/nomad-software/apemail/internal/settings"
@@ -147,37 +145,4 @@ func makePalette(cs colours) *qt.QPalette {
 		c.Delete()
 	}
 	return p
-}
-
-// showAsPaper has the widget show HTML as its writer meant it to be seen,
-// on a white page with black text, whatever the theme: HTML mail often
-// sets the colour of its text and not its background, and would be dark on
-// dark in a dark theme. The rest of the widget, as its scroll bars, keeps
-// the colours of the theme. It is done again when the theme changes.
-func showAsPaper(w *qt.QWidget) {
-	theme := qt.QGuiApplication_Palette()
-	p := qt.NewQPalette7(theme)
-	runtime.KeepAlive(theme)
-	defer p.Delete()
-	for _, group := range []qt.QPalette__ColorGroup{qt.QPalette__Active, qt.QPalette__Inactive} {
-		for role, colour := range map[qt.QPalette__ColorRole]string{
-			qt.QPalette__Base:        "#ffffff",
-			qt.QPalette__Text:        "#000000",
-			qt.QPalette__Link:        "#0b57d0",
-			qt.QPalette__LinkVisited: "#6a1b9a",
-		} {
-			c := qt.NewQColor6(colour)
-			p.SetColor(group, role, c)
-			c.Delete()
-		}
-	}
-	w.SetPalette(p)
-}
-
-// showInTheme has the widget show what is in it in the colours of the
-// theme, following it as it changes.
-func showInTheme(w *qt.QWidget) {
-	none := qt.NewQPalette()
-	w.SetPalette(none)
-	none.Delete()
 }

@@ -76,9 +76,11 @@ it you have.
 
 - A light or dark theme, or one that follows the desktop's and changes with
   it (the User interface tab of File > Settings). The icons are ApeMail's
-  own, drawn in the colours of the theme. HTML messages are always shown on
-  a white page, as they are written to be seen, so that mail which sets the
-  colour of its text stays readable in a dark theme.
+  own, drawn in the colours of the theme, as are the messages read and
+  written. The folders of the side bar are each in a colour of their kind,
+  filled with a pale wash of it (the inbox blue, drafts purple, sent mail
+  green, the archive brown, the trash grey and other folders yellow),
+  lighter in the dark theme.
 
 **Writing**
 
@@ -94,6 +96,8 @@ it you have.
 - Reply, reply to all and forward, with the reply above or below the quote,
   as the account says. Forwarding keeps the attachments, and replies and
   forwards keep the images the message shows.
+- File > Close (Escape) closes the window, asking first whether to save a
+  message that has not been sent.
 - The Edit menu cuts, copies, pastes (also without formatting, in an HTML
   message), deletes and selects in the field or text last clicked in, and
   undoes and redoes. The Format menu has the formatting of the buttons.
@@ -130,7 +134,8 @@ it you have.
 
 - The **Address Book** button (or File > Address Book) lists the names and
   addresses of your contacts, to add, change, remove (after asking) and write
-  to. Double-click a contact to close it and write to them.
+  to. Click a column's header to sort by it. Double-click a contact to close
+  it and write to them.
 - The button beside the sender of a message puts them in the address book,
   or, if the message asks for replies to go elsewhere (Reply-To), whoever
   they go to, as replying does: the button is then beside Reply to.
@@ -273,7 +278,7 @@ Measure it yourself with `make bench`.
 | Ctrl+S | Save as a draft. |
 | Ctrl+B, Ctrl+I, Ctrl+U | Bold, italic and underline, in an HTML message. |
 | Ctrl+Shift+V | Paste without formatting, in an HTML message. |
-| Escape | Close the window, asking first whether to save a message that has not been sent. |
+| Escape | Close the window (File > Close), asking first whether to save a message that has not been sent. |
 | Delete | Remove the selected attachment, in the list of attachments. |
 
 A letter or other character key is never a shortcut on its own, so nothing

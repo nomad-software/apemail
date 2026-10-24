@@ -110,7 +110,7 @@ func TestShortcutsHaveModifiers(t *testing.T) {
 			actions = append(actions, c.attachList.QWidget.Actions()...)
 			actions = append(actions, c.QWidget.Actions()...)
 			e := c.edit
-			actions = append(actions, e.undo, e.redo, e.cut, e.copy, e.paste, e.pastePlain, e.del, e.selectAll, c.receipt, c.dsn)
+			actions = append(actions, c.closeItem, e.undo, e.redo, e.cut, e.copy, e.paste, e.pastePlain, e.del, e.selectAll, c.receipt, c.dsn)
 			defer c.Close()
 		}
 		for _, a := range actions {
@@ -544,9 +544,9 @@ func TestMenus(t *testing.T) {
 			for _, a := range c.MenuBar().Actions() {
 				titles = append(titles, strings.ReplaceAll(a.Text(), "&", ""))
 			}
-			want := []string{"Edit", "Options"}
+			want := []string{"File", "Edit", "Options"}
 			if html {
-				want = []string{"Edit", "Format", "Options"}
+				want = []string{"File", "Edit", "Format", "Options"}
 			}
 			if !slices.Equal(titles, want) {
 				t.Fatalf("html %v: menus %v", html, titles)
@@ -578,24 +578,26 @@ func TestMenus(t *testing.T) {
 	}
 }
 
-// TestEscapeCloses checks that Escape closes the window to write a message
-// in.
-func TestEscapeCloses(t *testing.T) {
+// TestCloseItem checks that File > Close, which Escape is the shortcut of,
+// closes the window to write a message in.
+func TestCloseItem(t *testing.T) {
 	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove))
 	w := newTestWindow(t, s)
 	wait(t, "the account", func() bool { return len(w.engines) == 1 })
 	c := openComposer(t, w)
 	mainthread.Wait(func() {
-		var escape *qt.QAction
-		for _, a := range c.QWidget.Actions() {
-			if a.Shortcut().ToString() == "Esc" {
-				escape = a
-			}
+		// The item is in the menu it was made by, the first.
+		file := qt.UnsafeNewQMenu(c.closeItem.Parent().UnsafePointer())
+		if c.MenuBar().Actions()[0].UnsafePointer() != file.MenuAction().UnsafePointer() || len(file.Actions()) != 1 {
+			t.Fatal("Close is not the File menu's one item")
 		}
-		if escape == nil {
-			t.Fatal("no action has Escape")
+		if got := strings.ReplaceAll(c.closeItem.Text(), "&", ""); got != "Close" {
+			t.Errorf("item = %q", got)
 		}
-		escape.Trigger()
+		if got := c.closeItem.Shortcut().ToString(); got != "Esc" {
+			t.Errorf("shortcut = %q", got)
+		}
+		c.closeItem.Trigger()
 	})
 	wait(t, "the window closed", func() bool { return !composers[c] })
 }
