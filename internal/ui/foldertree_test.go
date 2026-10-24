@@ -17,7 +17,7 @@ import (
 // found by its usual name. It has their place among the folders, and the
 // folders within it stay below it.
 func TestFoldersShownByUse(t *testing.T) {
-	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Archives", "Archives/2026", "Old mail", "Sent Items", "Work")
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Archives", "Archives/2026", "Old mail", "Old mail/2026", "Sent Items", "Work")
 	w := newTestWindow(t, s, func(a *account.Account) { a.Folders.Archive = "Old mail" })
 	wait(t, "the folders", func() bool {
 		return mainthread.Wait2(func() bool { return w.folders.folders[w.account]["Work"] != nil })
@@ -32,8 +32,12 @@ func TestFoldersShownByUse(t *testing.T) {
 		if got := items["Old mail"].ToolTip(0); got != "Old mail" {
 			t.Errorf("the archive's tool tip is %q", got)
 		}
-		if got := w.folders.folderName(w.account, "Old mail"); got != "Archive" {
-			t.Errorf("the archive is named %q above the list", got)
+		// Above the list, a folder is named with those it is within,
+		// as the side bar names them.
+		for folder, want := range map[string]string{"Old mail": "Archive", "Old mail/2026": "Archive/2026", "Archives/2026": "Archives/2026", "Work": "Work"} {
+			if got := w.folders.folderPath(w.account, folder); got != want {
+				t.Errorf("%s is named %q above the list, not %q", folder, got, want)
+			}
 		}
 		var order []string
 		account := w.folders.accounts[w.account]

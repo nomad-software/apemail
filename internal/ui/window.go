@@ -420,14 +420,14 @@ func (w *Window) FoldersChanged(id string, folders []store.Folder) {
 // pixels.
 const titlePadding = 6
 
-// showFolderTitle shows the name of the folder listed, and how many
+// showFolderTitle shows the path of the folder listed, and how many
 // messages it has once they are listed. Nothing is shown where no folder is.
 func (w *Window) showFolderTitle() {
 	if w.folder == "" {
 		w.folderTitle.SetVisible(false)
 		return
 	}
-	text := "<span style=\"font-size: large; font-weight: bold\">" + html.EscapeString(w.folders.folderName(w.account, w.folder)) + "</span>"
+	text := "<span style=\"font-size: large; font-weight: bold\">" + html.EscapeString(w.folders.folderPath(w.account, w.folder)) + "</span>"
 	if n, ok := w.list.listed(); ok {
 		text += "&nbsp;&nbsp;" + messageCount(n)
 	}

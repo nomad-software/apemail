@@ -10,7 +10,7 @@ import (
 	"github.com/nomad-software/apemail/internal/remote/remotetest"
 )
 
-// TestFolderTitle checks that the name of the folder listed, as the side
+// TestFolderTitle checks that the path of the folder listed, as the side
 // bar shows it, and how many messages it has are shown above the list, and
 // that nothing is where no folder is listed.
 func TestFolderTitle(t *testing.T) {
@@ -46,9 +46,10 @@ func TestFolderTitle(t *testing.T) {
 	})
 	wait(t, "the inbox counted again", shows(">Inbox<", "2 messages"))
 
-	// A folder within another is named as the side bar names it.
+	// A folder within another is named with those it is within, as the
+	// side bar names them.
 	mainthread.Wait(func() { w.folders.selectFolder(w.account, "Projects/Engine") })
-	wait(t, "the folder counted", shows(">Engine<", "1 message"))
+	wait(t, "the folder counted", shows(">Projects/Engine<", "1 message"))
 	mainthread.Wait(func() {
 		if strings.Contains(title(), "1 messages") {
 			t.Errorf("title = %q", title())

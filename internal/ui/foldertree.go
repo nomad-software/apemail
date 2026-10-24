@@ -365,14 +365,26 @@ func folderIcon(f store.Folder, uses map[string]engine.Special) *qt.QIcon {
 	return sidebarIcon(icons.Archive)
 }
 
-// folderName returns the name the tree shows the folder by, without its
-// count of unread messages: Inbox, the name of its use (as Archive), or the
-// last part of its name.
-func (t *folderTree) folderName(id, folder string) string {
-	if item, ok := t.folders[id][folder]; ok {
-		return t.names[item]
+// folderPath returns the folder as the tree shows it, without counts of
+// unread messages: the name it shows the folder by (Inbox, the name of its
+// use, as Archive, or the last part of its name), after those of the
+// folders it is within, each followed by /, as Archive/2026.
+func (t *folderTree) folderPath(id, folder string) string {
+	item, ok := t.folders[id][folder]
+	if !ok {
+		return folder
 	}
-	return folder
+	path := t.names[item]
+	// Parent is a new wrapper of the item, not the one names is kept by,
+	// so the folder is found by its name, which the account has none of.
+	for parent := item.Parent(); parent != nil; parent = parent.Parent() {
+		above, ok := t.folders[id][itemData(parent, roleName)]
+		if !ok {
+			break
+		}
+		path = t.names[above] + "/" + path
+	}
+	return path
 }
 
 // setUnread shows how many messages of the folder are unread, and keeps it

@@ -57,7 +57,8 @@ it you have.
   the sent and drafts folders) and the full date and time. Unread messages
   are bold and flagged ones red. Click a heading to sort by it, and drag
   the border between two headings to share the width between them. Above
-  it are the name of the folder and how many messages it holds.
+  it are the folder, with those it is within (as Archive/2026), and how
+  many messages it holds.
 - Plain text and HTML messages are shown, with their links, the images they
   carry within them, and their attachments, which are saved with a click.
   An image on the internet, which is not loaded, is shown as a small icon
