@@ -366,6 +366,11 @@ func newAccountDialog(parent *qt.QWidget, a account.Account, isNew bool, folders
 	if a.QuoteBelow {
 		quote.SetCurrentIndex(1)
 	}
+	remoteImages := qt.NewQCheckBox3("Load images from the internet when a message is shown")
+	remoteImages.SetChecked(a.LoadRemoteImages)
+	remoteImagesNote := qt.NewQLabel3("Loading them tells the sender that the message was read, when, and where from. " +
+		"Without this, they are loaded only when Load Remote Images is pressed above a message. Only images are loaded.")
+	remoteImagesNote.SetWordWrap(true)
 	checkOnStart := qt.NewQCheckBox3("Check for new messages when ApeMail starts")
 	checkOnStart.SetChecked(a.CheckOnStart)
 	syncNote := qt.NewQLabel3("New mail is seen as it arrives in the inbox (IMAP IDLE) while ApeMail is running. " +
@@ -374,6 +379,8 @@ func newAccountDialog(parent *qt.QWidget, a account.Account, isNew bool, folders
 	syncNote.SetWordWrap(true)
 	optionsForm.AddRow3("Compose messages in:", format.QWidget)
 	optionsForm.AddRow3("When replying:", quote.QWidget)
+	optionsForm.AddRow3("Images:", remoteImages.QWidget)
+	optionsForm.AddRow3("", remoteImagesNote.QWidget)
 	optionsForm.AddRow3("", checkOnStart.QWidget)
 	optionsForm.AddRow3("", syncNote.QWidget)
 	tabs.AddTab(optionsPage, "Composition && Sync")
@@ -432,6 +439,7 @@ func newAccountDialog(parent *qt.QWidget, a account.Account, isNew bool, folders
 		changed.QuoteBelow = quote.CurrentIndex() == 1
 		changed.ArchiveBy = account.ArchiveBy(currentData(archiveBy))
 		changed.CheckOnStart = checkOnStart.IsChecked()
+		changed.LoadRemoteImages = remoteImages.IsChecked()
 		if err := changed.Check(); err != nil {
 			warning(d.QWidget, "Account", err.Error())
 			return

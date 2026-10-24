@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"html"
@@ -8,21 +9,27 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/emersion/go-message/mail"
 	qt "github.com/mappu/miqt/qt6"
+	"github.com/mappu/miqt/qt6/mainthread"
 
 	"github.com/nomad-software/apemail/internal/icons"
+	"github.com/nomad-software/apemail/internal/images"
 	"github.com/nomad-software/apemail/internal/message"
 )
 
 // messageView shows a message: its headers, its attachments and its body.
 //
-// HTML is shown by a QTextBrowser, which fetches nothing from the internet,
-// so images a message links to are never loaded and cannot tell the sender
-// that it was read. Images the message carries itself (cid: and data:) are
-// shown; nothing else is loaded, local files included.
+// HTML is shown by a QTextBrowser, which fetches nothing from the internet
+// itself and runs no scripts, so images a message links to are not loaded,
+// and cannot tell the sender that it was read, unless the user asks: Load
+// Remote Images, or the account's setting to load them always. Then they are
+// fetched away from the UI's thread, and given to the browser when it asks
+// for an image, and for nothing else. Images the message carries itself
+// (cid: and data:) are shown; nothing else is loaded, local files included.
 type messageView struct {
 	*qt.QWidget
 
@@ -37,6 +44,23 @@ type messageView struct {
 	msg    *message.Message
 	folder string
 	uid    uint32
+
+	// loadImages is the button that loads the images the message links to
+	// on the internet, if it links to any that are not loaded.
+	loadImages *qt.QPushButton
+	// images are those loaded, by their address in the message, and
+	// imageAddresses the address in the message of each, by the address
+	// the browser asks for, which Qt writes its own way.
+	images         map[string][]byte
+	imageAddresses map[string]string
+	// stopImages stops the images being loaded, if they are.
+	stopImages context.CancelFunc
+	// loadAlways reports if the account shown has its images loaded when
+	// a message is shown.
+	loadAlways func() bool
+	// gone is set when the view is destroyed, so that images that arrive
+	// afterwards are not shown in it.
+	gone bool
 
 	// addSender is the button which puts whoever replies to the message
 	// go to in the address book, if a message is shown: beside Reply to,
@@ -82,13 +106,15 @@ func newMessageView() *messageView {
 	})
 	v.browser.OnAnchorClicked(func(link *qt.QUrl) { v.follow(link.ToString()) })
 	layout.AddWidget(v.browser.QWidget)
+	v.OnDestroyed(func() { v.gone = true })
 
 	v.clear()
 	return v
 }
 
 // resource returns what the message carries for a URL in its HTML: a part
-// for cid:, the data of data:, and nothing for anything else. It is a value
+// for cid:, the data of data:, an image from the internet that has been
+// loaded, and nothing for anything else. It is a value
 // a constructor made, which returned deletes once Qt has copied it.
 func (v *messageView) resource(typeVal int, name string) *qt.QVariant {
 	if v.msg == nil || typeVal != int(qt.QTextDocument__ImageResource) {
@@ -102,6 +128,10 @@ func (v *messageView) resource(typeVal int, name string) *qt.QVariant {
 		}
 	case strings.HasPrefix(strings.ToLower(name), "data:"):
 		if data, ok := dataURL(name); ok {
+			return qt.NewQVariant12(data)
+		}
+	default:
+		if data, ok := v.images[v.imageAddresses[name]]; ok {
 			return qt.NewQVariant12(data)
 		}
 	}
@@ -138,7 +168,8 @@ func (v *messageView) follow(link string) {
 // clear shows nothing.
 func (v *messageView) clear() {
 	v.msg, v.folder, v.uid = nil, "", 0
-	v.addSender = nil
+	v.addSender, v.loadImages = nil, nil
+	v.forgetImages()
 	clearLayout(v.headerGrid.QLayout)
 	v.headers.SetVisible(false)
 	v.setAttachments(nil)
@@ -159,17 +190,98 @@ func (v *messageView) failed(err error) {
 
 // show shows the message, which is in the folder with the UID.
 func (v *messageView) show(m *message.Message, folder string, uid uint32) {
+	v.forgetImages()
 	v.msg, v.folder, v.uid = m, folder, uid
 
 	v.showHeaders(m)
 
 	v.setAttachments(m.Files())
 
-	if m.HTML != "" {
-		v.browser.SetHtml(message.SmallRemoteImages(m.HTML))
-	} else {
+	if m.HTML == "" {
 		v.browser.SetHtml(textToHTML(m.Text))
+		return
 	}
+	v.showHTML()
+	if v.loadImages != nil && v.loadAlways != nil && v.loadAlways() {
+		v.loadRemoteImages()
+	}
+}
+
+// showHTML shows the HTML of the message, with the images from the internet
+// that have been loaded, and small icons in place of the others.
+func (v *messageView) showHTML() {
+	v.browser.SetHtml(message.SmallRemoteImages(v.msg.HTML, func(src string) bool {
+		_, ok := v.images[src]
+		return ok
+	}))
+}
+
+// webImages returns the addresses of the images the message links to on
+// the internet.
+func webImages(m *message.Message) []string {
+	return slices.DeleteFunc(message.RemoteImages(m.HTML), func(src string) bool { return !images.Web(src) })
+}
+
+// loadRemoteImages loads the images the message shown links to on the
+// internet, away from the UI's thread, and shows them once they are. Those
+// that cannot be loaded are left as they were, and the button tries them
+// again.
+func (v *messageView) loadRemoteImages() {
+	m, button := v.msg, v.loadImages
+	if m == nil || button == nil {
+		return
+	}
+	v.stopLoading()
+	ctx, stop := context.WithCancel(context.Background())
+	v.stopImages = stop
+	button.SetEnabled(false)
+	button.SetText("Loading Images…")
+	srcs := webImages(m)
+	go func() {
+		got := images.Fetch(ctx, srcs)
+		mainthread.Start(func() {
+			// Another message may be shown by now, or none.
+			if v.gone || v.msg != m || ctx.Err() != nil {
+				return
+			}
+			stop()
+			v.stopImages = nil
+			for src, data := range got {
+				v.images[src] = data
+				// The browser asks for the image by the address as Qt
+				// writes it.
+				u := qt.NewQUrl3(src)
+				v.imageAddresses[u.ToString()] = src
+				u.Delete()
+			}
+			bar := v.browser.VerticalScrollBar()
+			at := bar.Value()
+			v.showHTML()
+			bar.SetValue(at)
+			if missing := len(srcs) - len(v.images); missing > 0 {
+				button.SetEnabled(true)
+				button.SetText("Load Remote Images")
+				button.SetToolTip(fmt.Sprintf("%d of %d images could not be loaded. Try again", missing, len(srcs)))
+			} else {
+				button.SetVisible(false)
+			}
+		})
+	}()
+}
+
+// stopLoading stops the images being loaded, if they are.
+func (v *messageView) stopLoading() {
+	if v.stopImages != nil {
+		v.stopImages()
+		v.stopImages = nil
+	}
+}
+
+// forgetImages stops the images being loaded, and forgets those that were,
+// as another message is shown.
+func (v *messageView) forgetImages() {
+	v.stopLoading()
+	v.images, v.imageAddresses = map[string][]byte{}, map[string]string{}
 }
 
 // showHeaders shows the subject of the message, and who it is from and to
@@ -238,6 +350,15 @@ func (v *messageView) showHeaders(m *message.Message) {
 	row("Cc", message.FormatAddresses(m.Cc))
 	if !m.Date.IsZero() {
 		row("Date", m.Date.Local().Format("Monday 2 January 2006 15:04"))
+	}
+	// The images the message links to are loaded by a button at the
+	// bottom right of the headers, in a column of its own beside them.
+	if len(webImages(m)) > 0 {
+		v.loadImages = qt.NewQPushButton3("Load Remote Images")
+		v.loadImages.SetIcon(icon(icons.Image))
+		v.loadImages.SetToolTip("Load the images this message shows from the internet, which tells the sender that it was read")
+		v.loadImages.OnClicked(v.loadRemoteImages)
+		v.headerGrid.AddWidget5(v.loadImages.QWidget, 0, 2, n+1, 1, qt.AlignRight|qt.AlignBottom)
 	}
 	v.headers.SetVisible(true)
 }

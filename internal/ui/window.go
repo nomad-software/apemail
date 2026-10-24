@@ -155,6 +155,10 @@ func NewWindow(files Files) *Window {
 	w.list.contextMenu = w.messageMenu
 	w.view.compose = w.composeNew
 	w.view.inBook = w.inAddressBook
+	w.view.loadAlways = func() bool {
+		e := w.engines[w.account]
+		return e != nil && e.Account().LoadRemoteImages
+	}
 	w.view.addContacts = func(addrs []*mail.Address) { w.showError(w.addContacts(addrs)) }
 
 	w.OnCloseEvent(func(super func(event *qt.QCloseEvent), event *qt.QCloseEvent) {

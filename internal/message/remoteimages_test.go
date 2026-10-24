@@ -1,6 +1,7 @@
 package message_test
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/nomad-software/apemail/internal/message"
@@ -31,8 +32,28 @@ func TestSmallRemoteImages(t *testing.T) {
 		{`<p class="a" style="width: 620px">Fish &amp; chips &nbsp;<!-- <img src="https://x/a.png" width="620"> --></p><style>img { width: 620px }</style>`,
 			`<p class="a" style="width: 620px">Fish &amp; chips &nbsp;<!-- <img src="https://x/a.png" width="620"> --></p><style>img { width: 620px }</style>`},
 	} {
-		if got := message.SmallRemoteImages(c.in); got != c.want {
+		if got := message.SmallRemoteImages(c.in, nil); got != c.want {
 			t.Errorf("%s\ngot  %s\nwant %s", c.in, got, c.want)
 		}
+	}
+}
+
+// TestSmallRemoteImagesLoaded checks that images that have been loaded keep
+// the size the message gives them, and the others are made small.
+func TestSmallRemoteImagesLoaded(t *testing.T) {
+	in := `<img src="https://x/a.png" width="620"><img src=" https://x/b.png " width="620">`
+	got := message.SmallRemoteImages(in, func(src string) bool { return src == "https://x/b.png" })
+	if want := `<img src="https://x/a.png" width="16"><img src=" https://x/b.png " width="620">`; got != want {
+		t.Errorf("got  %s\nwant %s", got, want)
+	}
+}
+
+func TestRemoteImages(t *testing.T) {
+	in := `<img src="https://x/a.png?a=1&amp;b=2"><IMG SRC="cid:pic"><img src="data:image/png;base64,AA==">` +
+		`<!-- <img src="https://x/hidden.png"> --><img src=" http://x/b.gif "><img src="https://x/a.png?a=1&amp;b=2"><img alt="none">` +
+		`<p style="background: url(https://x/c.png)">x</p>`
+	got := message.RemoteImages(in)
+	if want := []string{"https://x/a.png?a=1&b=2", "http://x/b.gif"}; !slices.Equal(got, want) {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }

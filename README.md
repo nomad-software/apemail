@@ -23,9 +23,10 @@ it you have.
   folder synchronises.
 - **Private by design.** Your accounts, their passwords and the copy of your
   mail are encrypted with your own SSH keys. Images a message links to on
-  the internet are never loaded, so a sender cannot tell that you read it.
-  No account, no cloud, no telemetry: it talks to your mail servers and
-  nothing else. See [Encryption](#encryption).
+  the internet are not loaded unless you ask, so a sender cannot tell that
+  you read it. No account, no cloud, no telemetry: it talks to your mail
+  servers, and to the web only for the images you ask for. See
+  [Encryption](#encryption).
 - **Careful with your mail.** Checking for mail never changes anything on the
   server, opening a message does not mark it read until it is shown, and
   deleted mail goes to the trash. Only deleting from the trash, or deleting a
@@ -61,8 +62,11 @@ it you have.
   many messages it holds.
 - Plain text and HTML messages are shown, with their links, the images they
   carry within them, and their attachments, which are saved with a click.
-  An image on the internet, which is not loaded, is shown as a small icon
-  where it would be.
+  An image on the internet is not loaded, and is shown as a small icon where
+  it would be, until you press **Load Remote Images** at the bottom right
+  of the message's header (or the account is set to load them always). Then
+  only the images are fetched: no stylesheets, backgrounds or scripts, no
+  cookies, and no more than 100 images of 10 MB each.
 - New mail in the inbox is seen as it arrives, while ApeMail is running
   (IMAP IDLE). There is no checking every few minutes.
 - Only what you look at is fetched, so a mailbox of many years costs nothing
@@ -167,6 +171,8 @@ it you have.
 - **Test Connection** for the incoming and outgoing servers, and **Read
   Folders from Server** to choose the folders from.
 - Check the inbox for mail when ApeMail starts.
+- Load the images messages link to on the internet when they are shown,
+  rather than only when asked (off unless you turn it on).
 - **Remove Account** (Accounts menu, or the account's menu in the side bar)
   removes it from ApeMail after asking; the mailbox on the server is not
   touched.

@@ -237,3 +237,60 @@ func TestOtherMessageChosenWhileDownloading(t *testing.T) {
 		}
 	})
 }
+
+// TestImagesOfAnotherMessage checks that the images of a message that
+// arrive once another is shown are not shown with it, and that the button
+// of the other is left as it is.
+func TestImagesOfAnotherMessage(t *testing.T) {
+	s := newImageServer(t)
+	s.hold = make(chan struct{})
+	var v *messageView
+	mainthread.Wait(func() {
+		v = newMessageView()
+		v.show(imageMessage(s, "/a.png"), "INBOX", 1)
+		v.loadImages.Click()
+	})
+	t.Cleanup(func() { mainthread.Wait(func() { v.DeleteLater() }) })
+	eventually(t, "the image to be asked for", func() bool { return s.count("/a.png") == 1 })
+
+	// The images arrive while the UI's thread is busy, and are shown
+	// after the other message is.
+	other := imageMessage(s, "/b.png")
+	mainthread.Wait(func() {
+		close(s.hold)
+		time.Sleep(300 * time.Millisecond)
+		v.show(other, "INBOX", 2)
+	})
+	time.Sleep(100 * time.Millisecond)
+	mainthread.Wait(func() {
+		if len(v.images) != 0 || v.msg != other {
+			t.Errorf("the images of the first are kept with the other: %d", len(v.images))
+		}
+		if !v.loadImages.IsEnabled() || v.loadImages.Text() != "Load Remote Images" {
+			t.Errorf("the other's button says %q", v.loadImages.Text())
+		}
+	})
+}
+
+// TestImagesAfterViewGone checks that images that arrive once the view has
+// been destroyed, as when the window closes, are not shown in it.
+func TestImagesAfterViewGone(t *testing.T) {
+	s := newImageServer(t)
+	s.hold = make(chan struct{})
+	var v *messageView
+	mainthread.Wait(func() {
+		v = newMessageView()
+		v.show(imageMessage(s, "/a.png"), "INBOX", 1)
+		v.loadImages.Click()
+	})
+	eventually(t, "the image to be asked for", func() bool { return s.count("/a.png") == 1 })
+	mainthread.Wait(func() { v.Delete() })
+	close(s.hold)
+	time.Sleep(200 * time.Millisecond)
+	// Had the view been touched, the test would have crashed.
+	mainthread.Wait(func() {
+		if !v.gone {
+			t.Error("the view does not know it is gone")
+		}
+	})
+}

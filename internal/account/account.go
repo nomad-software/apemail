@@ -136,6 +136,10 @@ type Account struct {
 	// than above it.
 	QuoteBelow bool `json:"quoteBelow,omitempty"`
 
+	// LoadRemoteImages has the images a message links to on the internet
+	// loaded when it is shown, rather than only when the user asks.
+	LoadRemoteImages bool `json:"loadRemoteImages,omitempty"`
+
 	// CheckOnStart has the inbox checked for new mail when the client
 	// starts.
 	CheckOnStart bool `json:"checkOnStart"`
