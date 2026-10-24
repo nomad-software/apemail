@@ -224,7 +224,7 @@ func (w *Window) applySettings(changed settings.Settings, keys *crypt.Keys, from
 	old := w.keys
 	w.stopAccounts()
 	w.closeAddressBook()
-	w.Status("settings", "Applying the settings…")
+	w.setDoing("Applying the settings…")
 	go func() {
 		var failed []error
 		moved := !move
@@ -245,7 +245,7 @@ func (w *Window) applySettings(changed settings.Settings, keys *crypt.Keys, from
 			}
 		}
 		mainthread.Start(func() {
-			w.Status("settings", "")
+			w.setDoing("")
 			if keys != nil {
 				w.keys = keys
 				w.config.PublicKey, w.config.PrivateKey = changed.PublicKey, changed.PrivateKey
@@ -273,6 +273,7 @@ func (w *Window) stopAccounts() {
 	}
 	w.engines = map[string]*engine.Engine{}
 	w.order = nil
+	clear(w.statuses)
 	w.account, w.folder = "", ""
 	w.folders.clear()
 	w.list.clear()

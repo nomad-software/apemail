@@ -103,7 +103,7 @@ func (e *Engine) SendReceipt(raw []byte, rcpts []string, done func(error)) {
 
 // send sends the message, keeping a copy in the sent folder if keep is true.
 func (e *Engine) send(raw []byte, rcpts []string, dsn, keep bool, done func(error)) {
-	go func() {
+	e.spawn(func() {
 		err := send.Send(e.acct.Outgoing, e.acct.Email, rcpts, raw, dsn)
 		if errors.Is(err, send.ErrUnreachable) {
 			p := store.Pending{Kind: store.PendingSend, From: e.acct.Email, To: rcpts, DSN: dsn, Raw: raw}
@@ -125,7 +125,7 @@ func (e *Engine) send(raw []byte, rcpts []string, dsn, keep bool, done func(erro
 		if keep {
 			e.keepSent(raw)
 		}
-	}()
+	})
 }
 
 // sentFlags are the flags of the copy of mail that was sent.

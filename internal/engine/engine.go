@@ -88,10 +88,17 @@ type Engine struct {
 	statuses map[statusPart]string
 
 	syncs chan string
-	ops   chan func(*remote.Conn) error
-	stop  chan struct{}
-	wg    sync.WaitGroup
-	once  sync.Once
+	// ops are what the user has asked of the op worker and it has yet to
+	// do, which opReady says there are. They are added with mu held, and
+	// none once the engine is closed, so that every one added is done.
+	ops     []func(*remote.Conn) error
+	opReady chan struct{}
+	// stop is closed, with mu held, when the engine is closed, and wg
+	// counts the goroutines of the engine, which closing it waits for. No
+	// goroutine is started once stop is closed (spawn), so none touches
+	// the local copy after Close has returned, when it may be moved.
+	stop chan struct{}
+	wg   sync.WaitGroup
 }
 
 // New starts the work of the account, whose local copy is st. Nothing is
@@ -111,14 +118,29 @@ func New(acct account.Account, st *store.Store, listener Listener, post func(fun
 		folderSyncs: map[string]*sync.Mutex{},
 		statuses:    map[statusPart]string{},
 		syncs:       make(chan string, 64),
-		ops:         make(chan func(*remote.Conn) error, 1024),
+		opReady:     make(chan struct{}, 1),
 		stop:        make(chan struct{}),
 	}
-	e.wg.Add(3)
-	go e.syncWorker()
-	go e.opWorker()
-	go e.saver()
+	e.spawn(e.syncWorker)
+	e.spawn(e.opWorker)
+	e.spawn(e.saver)
 	return e
+}
+
+// spawn runs f in a goroutine that closing the engine waits for, unless the
+// engine has been closed, and reports if it did.
+func (e *Engine) spawn(f func()) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.stopped() {
+		return false
+	}
+	e.wg.Add(1)
+	go func() {
+		defer e.wg.Done()
+		f()
+	}()
+	return true
 }
 
 // Account returns the account the engine works for.
@@ -126,12 +148,17 @@ func (e *Engine) Account() account.Account {
 	return e.acct
 }
 
-// Close stops the work of the account and closes its connections. Work that
-// has been asked for and not started is not done.
+// Close stops the work of the account and closes its connections. What has
+// been asked of the op worker and not started is given no connection, as it
+// is when the server cannot be reached, so that each says it was not done,
+// and a draft is kept to be saved later. Syncs that have not started are
+// not done.
 func (e *Engine) Close() {
-	e.once.Do(func() { close(e.stop) })
-	// What is waiting on the network is let go, rather than waited for.
 	e.mu.Lock()
+	if !e.stopped() {
+		close(e.stop)
+	}
+	// What is waiting on the network is let go, rather than waited for.
 	for c := range e.conns {
 		c.Abort()
 	}
@@ -166,9 +193,12 @@ func (e *Engine) status(format string, args ...any) {
 }
 
 // say tells the listener what a part of the engine is doing, or that it is
-// done if format is empty, with what the other parts are doing.
+// done if format is empty, with what the other parts are doing. It is
+// posted with statusMu held, so that the listener is told in the order the
+// parts changed, and the last it is told is how they are.
 func (e *Engine) say(part statusPart, format string, args ...any) {
 	e.statusMu.Lock()
+	defer e.statusMu.Unlock()
 	e.statuses[part] = fmt.Sprintf(format, args...)
 	var parts []string
 	for p := mainStatus; p <= allStatus; p++ {
@@ -176,7 +206,6 @@ func (e *Engine) say(part statusPart, format string, args ...any) {
 			parts = append(parts, text)
 		}
 	}
-	e.statusMu.Unlock()
 	text := strings.Join(parts, " · ")
 	e.post(func() { e.listener.Status(e.acct.ID, text) })
 }
@@ -192,18 +221,22 @@ func (e *Engine) failed(err error) {
 // Start shows the folders kept from before, and then, if the account says
 // to, checks the inbox for new mail, which starts watching it.
 func (e *Engine) Start() {
-	go func() {
+	e.spawn(func() {
 		folders, err := e.store.Folders()
 		if err != nil {
 			e.failed(fmt.Errorf("reading the folders kept: %w", err))
 		}
-		if len(folders) > 0 {
-			e.setFolders(folders)
+		e.mu.Lock()
+		// The server may have listed them meanwhile, which is newer.
+		if len(folders) > 0 && e.folders == nil {
+			e.folders = folders
+			e.post(func() { e.listener.FoldersChanged(e.acct.ID, slices.Clone(folders)) })
 		}
+		e.mu.Unlock()
 		if e.acct.CheckOnStart {
 			e.Refresh("")
 		}
-	}()
+	})
 }
 
 // Refresh checks the folder for new mail, or the inbox if folder is empty,
@@ -251,25 +284,19 @@ func (e *Engine) Folders() []store.Folder {
 	return slices.Clone(e.folders)
 }
 
-// setFolders keeps the folders and tells the listener of them.
-func (e *Engine) setFolders(folders []store.Folder) {
-	e.mu.Lock()
-	e.folders = slices.Clone(folders)
-	e.mu.Unlock()
-	e.post(func() { e.listener.FoldersChanged(e.acct.ID, folders) })
-}
-
 // Open reads the index of the folder, which is given to the listener, and
 // then synchronises the folder.
 func (e *Engine) Open(folder string) {
-	go func() {
+	e.spawn(func() {
 		e.preload(folder)
 		e.mu.Lock()
 		s := snapshot(e.index(folder))
-		e.mu.Unlock()
+		// Posted with mu held, as changed is, so that a sync that
+		// changes the index meanwhile is shown after it, not before.
 		e.post(func() { e.listener.FolderChanged(e.acct.ID, s) })
+		e.mu.Unlock()
 		e.requestSync(folder)
-	}()
+	})
 }
 
 // connect makes a connection to the IMAP server, which closing the engine
@@ -305,20 +332,37 @@ func (e *Engine) disconnect(c *remote.Conn) {
 	}
 }
 
-// do asks the op worker to do something with its connection.
+// do asks the op worker to do something with its connection. Nothing is
+// done once the engine has been closed.
 func (e *Engine) do(op func(*remote.Conn) error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	if e.stopped() {
 		return
 	}
+	e.ops = append(e.ops, op)
 	select {
-	case e.ops <- op:
-	case <-e.stop:
+	case e.opReady <- struct{}{}:
+	default:
+		// The worker has been told already.
 	}
+}
+
+// nextOp returns what the op worker is to do next, if anything.
+func (e *Engine) nextOp() (func(*remote.Conn) error, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if len(e.ops) == 0 {
+		return nil, false
+	}
+	op := e.ops[0]
+	e.ops[0] = nil
+	e.ops = e.ops[1:]
+	return op, true
 }
 
 // opWorker does what the user asks of the mailbox, in the order it is asked.
 func (e *Engine) opWorker() {
-	defer e.wg.Done()
 	var conn *remote.Conn
 	defer func() {
 		if conn != nil {
@@ -326,11 +370,23 @@ func (e *Engine) opWorker() {
 		}
 	}()
 	for {
-		var op func(*remote.Conn) error
-		select {
-		case <-e.stop:
-			return
-		case op = <-e.ops:
+		op, ok := e.nextOp()
+		if !ok {
+			select {
+			case <-e.stop:
+				// Nothing is added once the engine is closed, so
+				// these are the last.
+				for op, ok := e.nextOp(); ok; op, ok = e.nextOp() {
+					op(nil)
+				}
+				return
+			case <-e.opReady:
+			}
+			continue
+		}
+		if e.stopped() {
+			op(nil)
+			continue
 		}
 		if conn == nil {
 			c, err := e.connect(true, nil)

@@ -73,8 +73,10 @@ type composer struct {
 	saved []engine.Saved
 	// sent says the message has been sent, or put in the outbox.
 	sent bool
-	// sending says it is being sent, while which the window is not used.
-	sending bool
+	// sending says it is being sent, while which the window is not used,
+	// and savingDraft that a draft of it is being saved. The window does
+	// not close while either is, as what they end with is shown in it.
+	sending, savingDraft bool
 }
 
 // composers are the windows of the messages being written.
@@ -336,7 +338,9 @@ func (c *composer) saveDraft(done func()) {
 		return
 	}
 	c.StatusBar().ShowMessage("Saving the draft…")
+	c.savingDraft = true
 	c.engine().SaveDraft(raw, func(saved engine.Saved, err error) {
+		c.savingDraft = false
 		c.StatusBar().ClearMessage()
 		if err != nil {
 			c.warn("Save Draft", err)
@@ -355,7 +359,7 @@ func (c *composer) saveDraft(done func()) {
 // moves the drafts of it that are no longer needed to the trash, and reports
 // if the window can close.
 func (c *composer) mayClose() bool {
-	if c.sending {
+	if c.sending || c.savingDraft {
 		return false
 	}
 	keepLatest := false

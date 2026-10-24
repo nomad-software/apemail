@@ -32,6 +32,9 @@ type Server struct {
 	Host   string
 	Port   int
 	server *imapserver.Server
+	// options are those the server was started with, with its mailbox,
+	// which Restart starts it again with.
+	options *imapserver.Options
 
 	mu       sync.Mutex
 	commands []string
@@ -71,7 +74,7 @@ func Start(t *testing.T, caps imap.CapSet, folders ...string) *Server {
 	mem.AddUser(user)
 
 	s := &Server{}
-	s.server = imapserver.New(&imapserver.Options{
+	s.options = &imapserver.Options{
 		NewSession: func(*imapserver.Conn) (imapserver.Session, *imapserver.GreetingData, error) {
 			return mem.NewSession(), nil, nil
 		},
@@ -80,19 +83,47 @@ func Start(t *testing.T, caps imap.CapSet, folders ...string) *Server {
 		DebugWriter:  (*commandLog)(s),
 		// Clients that a test drops on purpose are not worth reporting.
 		Logger: log.New(io.Discard, "", 0),
-	})
+	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	go s.server.Serve(ln)
-	t.Cleanup(func() { s.server.Close() })
+	s.serve(ln)
+	t.Cleanup(func() { s.running().Close() })
 
 	s.Addr = ln.Addr().String()
 	host, port, _ := net.SplitHostPort(s.Addr)
 	s.Host = host
 	s.Port, _ = strconv.Atoi(port)
 	return s
+}
+
+// serve has a server answer clients on the listener.
+func (s *Server) serve(ln net.Listener) {
+	server := imapserver.New(s.options)
+	s.mu.Lock()
+	s.server = server
+	s.mu.Unlock()
+	go server.Serve(ln)
+}
+
+// running returns the server that is answering clients.
+func (s *Server) running() *imapserver.Server {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.server
+}
+
+// Restart drops every client, as a server that is restarted does, and
+// answers again at the same address with the same mailbox.
+func (s *Server) Restart(t *testing.T) {
+	t.Helper()
+	s.running().Close()
+	ln, err := net.Listen("tcp", s.Addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.serve(ln)
 }
 
 // commandLog records the commands clients send, from the traffic of the

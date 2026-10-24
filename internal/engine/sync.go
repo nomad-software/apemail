@@ -18,7 +18,6 @@ const listFolders = "\x00list"
 
 // syncWorker synchronises folders as it is asked to.
 func (e *Engine) syncWorker() {
-	defer e.wg.Done()
 	var conn *remote.Conn
 	defer func() {
 		if conn != nil {
@@ -46,6 +45,7 @@ func (e *Engine) syncWorker() {
 			}
 		}
 
+		reused := conn != nil
 		if conn == nil {
 			e.status("Connecting to %s…", e.acct.Incoming.Host)
 			c, err := e.connect(false, nil)
@@ -57,28 +57,46 @@ func (e *Engine) syncWorker() {
 			conn = c
 		}
 		err := e.sync(conn, wanted)
+		if err != nil && reused && isConnErr(err) && !e.stopped() {
+			// A connection kept from before can have been dropped
+			// meanwhile, as when the server restarts, or a router
+			// forgets it overnight: the sync is tried once more on
+			// another. What was done before it failed is done again,
+			// as nothing a sync does changes the mailbox.
+			e.disconnect(conn)
+			conn = nil
+			c, cerr := e.connect(false, nil)
+			if cerr != nil {
+				err = cerr
+			} else {
+				conn = c
+				err = e.sync(conn, wanted)
+			}
+		}
 		e.status("")
 		if err != nil {
 			e.failed(err)
 			// The connection may be what failed, so another is made
 			// next time.
-			e.disconnect(conn)
-			conn = nil
+			if conn != nil {
+				e.disconnect(conn)
+				conn = nil
+			}
 			continue
 		}
-		if !watching && !e.stopped() {
-			watching = true
-			e.wg.Add(1)
-			go e.watcher()
+		if !watching {
+			watching = e.spawn(e.watcher)
 		}
 	}
 }
 
-// forgetGone keeps the folders as listed, which throws away the local copies
-// of those that have gone from the server, and their indexes. The indexes
-// are not saved meanwhile, so that none is saved into a folder after it was
-// thrown away.
-func (e *Engine) forgetGone(list []store.Folder) {
+// listed keeps the folders as the server listed them, and tells the
+// listener of them. That throws away the local copies of those that have
+// gone, and what is known of them. The indexes are not saved meanwhile, so
+// that none is saved into a folder after it was thrown away, and the
+// folders are kept and saved as one, as addFolder does, so that the list
+// saved is the one kept.
+func (e *Engine) listed(list []store.Folder) {
 	e.saveMu.Lock()
 	defer e.saveMu.Unlock()
 	if err := e.store.SaveFolders(list); err != nil {
@@ -86,32 +104,44 @@ func (e *Engine) forgetGone(list []store.Folder) {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.folders = slices.Clone(list)
+	gone := func(name string) bool {
+		return !slices.ContainsFunc(list, func(f store.Folder) bool { return f.Name == name })
+	}
 	for name := range e.indexes {
-		if !slices.ContainsFunc(list, func(f store.Folder) bool { return f.Name == name }) {
+		if gone(name) {
 			delete(e.indexes, name)
 			delete(e.dirty, name)
 		}
 	}
+	for name := range e.edited {
+		if gone(name) {
+			delete(e.edited, name)
+			delete(e.flagEdits, name)
+		}
+	}
+	e.post(func() { e.listener.FoldersChanged(e.acct.ID, list) })
 }
 
 // sync lists the folders, if that is wanted, and synchronises the folders
 // that are wanted.
 func (e *Engine) sync(conn *remote.Conn, wanted map[string]bool) error {
 	if wanted[listFolders] {
-		delete(wanted, listFolders)
 		e.status("Listing the folders…")
 		list, err := conn.Folders()
 		if err != nil {
 			return err
 		}
-		e.forgetGone(list)
-		e.setFolders(list)
+		e.listed(list)
 	}
 
 	known := e.Folders()
 	for name := range wanted {
 		if e.stopped() {
 			return nil
+		}
+		if name == listFolders {
+			continue
 		}
 		// A folder that is asked for before the folders are listed is
 		// synchronised all the same.
@@ -245,11 +275,15 @@ func (e *Engine) put(ix *store.Index, s store.Summary, edits uint64) {
 	ix.Put(s)
 }
 
+// watchRetry is how long the watcher waits to connect again after its
+// connection ends, which doubles each time it cannot, up to watchRetryMost.
+var watchRetry, watchRetryMost = 10 * time.Second, 5 * time.Minute
+
 // watcher idles in the inbox, and has it synchronised when something in it
 // changes. A server that cannot idle is not watched: the user checks for
-// mail.
+// mail. When it connects again, after its connection ended, the inbox is
+// synchronised, as mail may have arrived while it was not watching.
 func (e *Engine) watcher() {
-	defer e.wg.Done()
 	inbox := ""
 	for _, f := range e.Folders() {
 		if remote.IsInbox(f.Name) {
@@ -260,7 +294,8 @@ func (e *Engine) watcher() {
 		return
 	}
 
-	backoff := 10 * time.Second
+	backoff := watchRetry
+	again := false
 	for !e.stopped() {
 		signal := make(chan struct{}, 1)
 		notify := func() {
@@ -286,6 +321,10 @@ func (e *Engine) watcher() {
 			return
 		}
 		if err == nil {
+			if again {
+				e.requestSync(inbox)
+			}
+			again = true
 			err = e.watch(conn, inbox, signal)
 			e.disconnect(conn)
 		}
@@ -300,9 +339,9 @@ func (e *Engine) watcher() {
 		case <-time.After(backoff):
 		}
 		if err != nil {
-			backoff = min(backoff*2, 5*time.Minute)
+			backoff = min(backoff*2, watchRetryMost)
 		} else {
-			backoff = 10 * time.Second
+			backoff = watchRetry
 		}
 	}
 }

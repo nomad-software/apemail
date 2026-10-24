@@ -79,7 +79,6 @@ const saveDelay = 2 * time.Second
 // saver saves the indexes that have changed, a while after they do, and
 // those that are left when the engine is closed.
 func (e *Engine) saver() {
-	defer e.wg.Done()
 	for {
 		select {
 		case <-e.stop:

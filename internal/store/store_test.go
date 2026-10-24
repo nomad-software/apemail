@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -258,5 +259,47 @@ func BenchmarkLoadIndex100k(b *testing.B) {
 		if _, err := s.Index("INBOX"); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+// TestPendingAtOnce checks that work kept at the same moment, from several
+// goroutines at once, is each kept in a file of its own rather than one
+// over another, as mail sent from two windows while the server cannot be
+// reached is.
+func TestPendingAtOnce(t *testing.T) {
+	s, _ := open(t)
+	created := time.Now()
+	const n = 16
+	var wg sync.WaitGroup
+	ids := make([]string, n)
+	for i := range n {
+		wg.Go(func() {
+			p, err := s.AddPending(store.Pending{Kind: store.PendingSend, Raw: []byte(fmt.Sprint(i)), Created: created})
+			if err != nil {
+				t.Error(err)
+			}
+			ids[i] = p.ID
+		})
+	}
+	wg.Wait()
+	pending, err := s.Pending()
+	if err != nil || len(pending) != n {
+		t.Fatalf("%d kept, not %d: %v", len(pending), n, err)
+	}
+	seen := map[string]bool{}
+	for _, p := range pending {
+		seen[string(p.Raw)] = true
+	}
+	if len(seen) != n {
+		t.Errorf("%d different ones kept, not %d", len(seen), n)
+	}
+	// Each can be removed by the ID it was given.
+	for _, id := range ids {
+		if err := s.RemovePending(id); err != nil {
+			t.Error(err)
+		}
+	}
+	if pending, _ := s.Pending(); len(pending) != 0 {
+		t.Errorf("%d left", len(pending))
 	}
 }

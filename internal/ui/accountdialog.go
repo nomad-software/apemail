@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	qt "github.com/mappu/miqt/qt6"
-	"github.com/mappu/miqt/qt6/mainthread"
 
 	"github.com/nomad-software/apemail/internal/account"
 	"github.com/nomad-software/apemail/internal/autoconfig"
@@ -110,17 +109,15 @@ func newServerFields(s account.Server, ports map[account.Security]int, test func
 		s := f.server()
 		f.result.SetText("Testing…")
 		testButton.SetEnabled(false)
-		go func() {
-			err := test(s)
-			mainthread.Start(func() {
-				testButton.SetEnabled(true)
-				if err != nil {
-					f.result.SetText(failure(err.Error()))
-				} else {
-					f.result.SetText(success("The connection and login worked."))
-				}
-			})
-		}()
+		var err error
+		inBackground(page, func() { err = test(s) }, func() {
+			testButton.SetEnabled(true)
+			if err != nil {
+				f.result.SetText(failure(err.Error()))
+			} else {
+				f.result.SetText(success("The connection and login worked."))
+			}
+		})
 	})
 	return page, form, f
 }
@@ -309,9 +306,11 @@ func newAccountDialog(parent *qt.QWidget, a account.Account, isNew bool, folders
 		s := incoming.server()
 		readResult.SetText("Reading the folders…")
 		readFolders.SetEnabled(false)
-		go func() {
-			var names []string
-			c, err := remote.Dial(s, remote.Options{})
+		var names []string
+		var err error
+		inBackground(d.QWidget, func() {
+			var c *remote.Conn
+			c, err = remote.Dial(s, remote.Options{})
 			if err == nil {
 				var list []store.Folder
 				list, err = c.Folders()
@@ -322,18 +321,17 @@ func newAccountDialog(parent *qt.QWidget, a account.Account, isNew bool, folders
 					}
 				}
 			}
-			mainthread.Start(func() {
-				readFolders.SetEnabled(true)
-				if err != nil {
-					readResult.SetText(failure(err.Error()))
-					return
-				}
-				for _, c := range []*qt.QComboBox{sent, drafts, trash, archive} {
-					fillFolders(c, names)
-				}
-				readResult.SetText(fmt.Sprintf("%d folders were found.", len(names)))
-			})
-		}()
+		}, func() {
+			readFolders.SetEnabled(true)
+			if err != nil {
+				readResult.SetText(failure(err.Error()))
+				return
+			}
+			for _, c := range []*qt.QComboBox{sent, drafts, trash, archive} {
+				fillFolders(c, names)
+			}
+			readResult.SetText(fmt.Sprintf("%d folders were found.", len(names)))
+		})
 	})
 	foldersNote := qt.NewQLabel3("Automatic uses the folder the server marks for the purpose (RFC 6154), or one with a usual name for it, " +
 		"as Archive or Archives. If there is none, it is made on the server, as Sent, Drafts, Trash or Archive, the first time it is needed.")
@@ -383,25 +381,24 @@ func newAccountDialog(parent *qt.QWidget, a account.Account, isNew bool, folders
 		address := strings.TrimSpace(email.Text())
 		lookupResult.SetText(html.EscapeString("Looking up the settings of " + address + "…"))
 		lookup.SetEnabled(false)
-		go func() {
-			config, err := autoconfig.Lookup(context.Background(), address)
-			mainthread.Start(func() {
-				lookup.SetEnabled(true)
-				if err != nil {
-					lookupResult.SetText(failure(err.Error() + ". The servers can be filled in by hand."))
-					return
-				}
-				// What has been typed of the passwords is kept.
-				in, out := config.Incoming, config.Outgoing
-				in.Password = incoming.password.Text()
-				incoming.set(in)
-				if out.Host != "" {
-					out.Password = outgoing.password.Text()
-					outgoing.set(out)
-				}
-				lookupResult.SetText(success("Found in " + config.Source + ". Check the servers, and enter the passwords."))
-			})
-		}()
+		var config *autoconfig.Config
+		var err error
+		inBackground(d.QWidget, func() { config, err = autoconfig.Lookup(context.Background(), address) }, func() {
+			lookup.SetEnabled(true)
+			if err != nil {
+				lookupResult.SetText(failure(err.Error() + ". The servers can be filled in by hand."))
+				return
+			}
+			// What has been typed of the passwords is kept.
+			in, out := config.Incoming, config.Outgoing
+			in.Password = incoming.password.Text()
+			incoming.set(in)
+			if out.Host != "" {
+				out.Password = outgoing.password.Text()
+				outgoing.set(out)
+			}
+			lookupResult.SetText(success("Found in " + config.Source + ". Check the servers, and enter the passwords."))
+		})
 	})
 
 	buttons := qt.NewQDialogButtonBox5(qt.QDialogButtonBox__Ok|qt.QDialogButtonBox__Cancel, qt.Horizontal)

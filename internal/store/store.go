@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/nomad-software/apemail/internal/crypt"
@@ -122,6 +123,10 @@ func (ix *Index) Remove(uid uint32) bool {
 type Store struct {
 	dir  string
 	keys *crypt.Keys
+	// pendingMu is held while pending work is given its ID and kept, so
+	// that two kept at once, as mail sent from two windows while the
+	// server cannot be reached, are never given the same file.
+	pendingMu sync.Mutex
 }
 
 // Open returns the copy kept in dir, which is encrypted with keys. Nothing is
@@ -274,16 +279,33 @@ func (s *Store) outboxDir() string {
 	return filepath.Join(s.dir, "outbox")
 }
 
-// AddPending keeps work to do later, giving it its ID.
+// AddPending keeps work to do later, giving it its ID: when it was asked
+// for, in nanoseconds, or the next number that no other work has.
 func (s *Store) AddPending(p Pending) (Pending, error) {
+	s.pendingMu.Lock()
+	defer s.pendingMu.Unlock()
 	if err := os.MkdirAll(s.outboxDir(), 0o700); err != nil {
 		return p, err
 	}
 	if p.Created.IsZero() {
 		p.Created = time.Now()
 	}
-	p.ID = fmt.Sprintf("%d", p.Created.UnixNano())
-	return p, jsonfile.SaveWith(filepath.Join(s.outboxDir(), p.ID+".json"), p, s.keys)
+	for n := uint64(p.Created.UnixNano()); ; n++ {
+		p.ID = strconv.FormatUint(n, 10)
+		_, err := os.Lstat(s.pendingPath(p.ID))
+		if errors.Is(err, fs.ErrNotExist) {
+			break
+		}
+		if err != nil {
+			return p, err
+		}
+	}
+	return p, jsonfile.SaveWith(s.pendingPath(p.ID), p, s.keys)
+}
+
+// pendingPath returns the path of the file of the pending work with the ID.
+func (s *Store) pendingPath(id string) string {
+	return filepath.Join(s.outboxDir(), id+".json")
 }
 
 // Pending returns the work there is to do, oldest first.
@@ -317,7 +339,7 @@ func (s *Store) RemovePending(id string) error {
 	if _, err := strconv.ParseUint(id, 10, 64); err != nil {
 		return fmt.Errorf("%q names no pending work", id)
 	}
-	err := os.Remove(filepath.Join(s.outboxDir(), id+".json"))
+	err := os.Remove(s.pendingPath(id))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}

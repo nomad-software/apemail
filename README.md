@@ -216,6 +216,14 @@ Go makes it natural to do many things at once, and ApeMail does:
   is worked out on every processor at once.
 - **Reading a large folder's index holds nothing up.** It is read from disk
   without stopping the account's other work.
+- **Nothing is lost when an account stops**, as it does when its settings
+  are applied or the program closes: what it was doing is finished first,
+  and what you asked of it that had not started is answered as if the
+  server could not be reached, so a draft goes to the outbox.
+- **A dropped connection is made again.** When the server restarts, or a
+  router forgets an idle connection overnight, the next check makes a new
+  one rather than failing, and the inbox is checked for what arrived while
+  it was gone.
 
 ### The local copy
 
@@ -456,7 +464,11 @@ afterwards, including that nothing was changed that should not have been.
 Synchronising with CONDSTORE is tested against a small IMAP server of the
 project's own (`internal/remote/condstoretest`), and sending against an SMTP
 server for tests (`internal/send/sendtest`). The interface tests run Qt
-offscreen, so they do not need a display.
+offscreen, so they do not need a display. The work done at once is tested
+together under the race detector: accounts stopped while every kind of work
+is under way, mail sent from several windows at once, the server dropping
+every connection, and answers that arrive after the window they were for
+has closed.
 
 How a folder of 100,000 messages fares is measured with:
 

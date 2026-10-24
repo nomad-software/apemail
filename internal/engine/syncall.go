@@ -22,7 +22,7 @@ var ErrStopped = errors.New("the synchronising of every folder was stopped")
 // stopped, or what went wrong. It does nothing if it is running already.
 func (e *Engine) SyncAll(done func(error)) {
 	e.mu.Lock()
-	if e.allStop != nil || e.stopped() {
+	if e.allStop != nil {
 		e.mu.Unlock()
 		return
 	}
@@ -30,9 +30,7 @@ func (e *Engine) SyncAll(done func(error)) {
 	e.allStop = stop
 	e.mu.Unlock()
 
-	e.wg.Add(1)
-	go func() {
-		defer e.wg.Done()
+	started := e.spawn(func() {
 		err := e.syncAll(stop)
 		e.mu.Lock()
 		e.allStop = nil
@@ -44,7 +42,12 @@ func (e *Engine) SyncAll(done func(error)) {
 		default:
 		}
 		e.reply(done, err)
-	}()
+	})
+	if !started {
+		e.mu.Lock()
+		e.allStop = nil
+		e.mu.Unlock()
+	}
 }
 
 // SyncingAll reports if SyncAll is running.
@@ -100,8 +103,7 @@ func (e *Engine) syncAll(stop chan struct{}) error {
 	if err != nil {
 		return err
 	}
-	e.forgetGone(list)
-	e.setFolders(list)
+	e.listed(list)
 	order := e.syncOrder(list)
 	for i, folder := range order {
 		if e.stopped() {
@@ -146,14 +148,7 @@ func (e *Engine) syncOrder(list []store.Folder) []string {
 // (STATUS), on a connection of its own, which opens none of them, and gives
 // the counts to the listener and done what went wrong, if anything did.
 func (e *Engine) UpdateCounts(done func(error)) {
-	if e.stopped() {
-		return
-	}
-	e.wg.Add(1)
-	go func() {
-		defer e.wg.Done()
-		e.reply(done, e.updateCounts())
-	}()
+	e.spawn(func() { e.reply(done, e.updateCounts()) })
 }
 
 // updateCounts counts the unread messages of every folder.
@@ -169,8 +164,7 @@ func (e *Engine) updateCounts() error {
 	if err != nil {
 		return err
 	}
-	e.forgetGone(list)
-	e.setFolders(list)
+	e.listed(list)
 	var folders []string
 	for _, f := range list {
 		if f.Selectable() {

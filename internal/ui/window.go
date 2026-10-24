@@ -65,8 +65,10 @@ type Window struct {
 
 	// account and folder are those whose messages are listed.
 	account, folder string
-	// statuses are what each account is doing.
+	// statuses are what each account is doing, and doing what the window
+	// itself is, as applying the settings.
 	statuses map[string]string
+	doing    string
 
 	// contacts is the address book, and bookDialog its window if it is
 	// open.
@@ -354,6 +356,9 @@ func (w *Window) updateActions() {
 // showStatus shows what the accounts are doing.
 func (w *Window) showStatus() {
 	var parts []string
+	if w.doing != "" {
+		parts = append(parts, w.doing)
+	}
 	for _, id := range w.order {
 		if text := w.statuses[id]; text != "" {
 			if len(w.order) > 1 {
@@ -528,7 +533,19 @@ func (w *Window) sentFolder(id, folder string) bool {
 
 // Status shows what an account is doing.
 func (w *Window) Status(id, text string) {
+	// What an engine closed since says, as the accounts are stopped while
+	// the settings are applied, is no longer so.
+	if w.engines[id] == nil {
+		return
+	}
 	w.statuses[id] = text
+	w.showStatus()
+}
+
+// setDoing shows what the window itself is doing, or that it is done if text
+// is empty.
+func (w *Window) setDoing(text string) {
+	w.doing = text
 	w.showStatus()
 }
 

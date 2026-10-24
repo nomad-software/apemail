@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nomad-software/apemail/internal/account"
 )
@@ -84,10 +85,15 @@ func (r fakeResolver) LookupSRV(_ context.Context, service, proto, name string) 
 	return "", nil, errors.New("no SRV")
 }
 
+// ispdbDelay is how long the ISPDB of the test takes to answer.
+var ispdbDelay time.Duration
+
 // fake has the lookups reach only a server of the test, which has a
 // configuration for the domains given.
 func fake(t *testing.T, domains map[string]string, r fakeResolver) {
+	delay := ispdbDelay
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		time.Sleep(delay)
 		domain := strings.TrimPrefix(req.URL.Path, "/ispdb/")
 		if body, ok := domains[domain]; ok {
 			w.Write([]byte(body))
@@ -155,5 +161,23 @@ func TestLookupNothing(t *testing.T) {
 	}
 	if _, err := Lookup(context.Background(), "not an address"); err == nil {
 		t.Error("an address was accepted")
+	}
+}
+
+// TestLookupTrustedWins checks that every place is asked at once, and that
+// the answer of one that is quick does not win over that of one that is
+// trusted more and slower: the ISPDB over the SRV records.
+func TestLookupTrustedWins(t *testing.T) {
+	ispdbDelay = 200 * time.Millisecond
+	defer func() { ispdbDelay = 0 }()
+	fake(t, map[string]string{"example.com": sample}, fakeResolver{srv: map[string]net.SRV{
+		"imaps.example.com": {Target: "srv.example.com.", Port: 993},
+	}})
+	c, err := Lookup(context.Background(), "me@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Incoming.Host != "imap.example.com" || !strings.Contains(c.Source, "ISPDB") {
+		t.Errorf("config = %+v", c)
 	}
 }

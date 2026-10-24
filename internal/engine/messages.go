@@ -18,7 +18,7 @@ import (
 // thread: from the local copy, or downloaded if it is not kept. It is not
 // marked as read.
 func (e *Engine) Message(folder string, uid uint32, got func(raw []byte, err error)) {
-	go func() {
+	e.spawn(func() {
 		raw, err := e.store.Message(folder, uid)
 		if err == nil {
 			e.post(func() { got(raw, nil) })
@@ -46,14 +46,31 @@ func (e *Engine) Message(folder string, uid uint32, got func(raw []byte, err err
 				err = errors.New("the message is no longer on the server")
 			}
 			if err == nil {
-				if serr := e.store.SaveMessage(folder, uid, raw); serr != nil {
-					e.failed(fmt.Errorf("keeping the message: %w", serr))
-				}
+				e.keepMessage(folder, validity, uid, raw)
 			}
 			e.post(func() { got(raw, err) })
 			return err
 		})
-	}()
+	})
+}
+
+// keepMessage keeps a message that was downloaded from the folder when its
+// UIDVALIDITY was validity, unless the folder has been numbered anew or has
+// gone since, when its UID may be another message's. saveMu is held, as the
+// local copy of a folder is thrown away with it held.
+func (e *Engine) keepMessage(folder string, validity, uid uint32, raw []byte) {
+	e.saveMu.Lock()
+	defer e.saveMu.Unlock()
+	e.mu.Lock()
+	ix, ok := e.indexes[folder]
+	same := ok && ix.UIDValidity == validity
+	e.mu.Unlock()
+	if !same {
+		return
+	}
+	if err := e.store.SaveMessage(folder, uid, raw); err != nil {
+		e.failed(fmt.Errorf("keeping the message: %w", err))
+	}
 }
 
 // SetFlag adds the flag to the messages, or takes it away, on the server
@@ -270,19 +287,22 @@ func (e *Engine) hasFolder(name string) bool {
 }
 
 // addFolder lists a folder that has been made, and shows it at once, rather
-// than when the folders are next listed.
+// than when the folders are next listed. saveMu is held, as listed holds it,
+// so that the folders saved last are those kept last.
 func (e *Engine) addFolder(f store.Folder) {
+	e.saveMu.Lock()
+	defer e.saveMu.Unlock()
 	e.mu.Lock()
 	if !slices.ContainsFunc(e.folders, func(g store.Folder) bool { return g.Name == f.Name }) {
 		e.folders = append(e.folders, f)
 		remote.SortFolders(e.folders)
 	}
 	list := slices.Clone(e.folders)
+	e.post(func() { e.listener.FoldersChanged(e.acct.ID, list) })
 	e.mu.Unlock()
 	if err := e.store.SaveFolders(list); err != nil {
 		e.failed(fmt.Errorf("saving the folders: %w", err))
 	}
-	e.post(func() { e.listener.FoldersChanged(e.acct.ID, list) })
 }
 
 // Trash moves the messages to the trash folder, which is made if there is

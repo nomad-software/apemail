@@ -1,8 +1,10 @@
 package ui
 
 import (
-	qt "github.com/mappu/miqt/qt6"
 	"runtime"
+
+	qt "github.com/mappu/miqt/qt6"
+	"github.com/mappu/miqt/qt6/mainthread"
 )
 
 // fitDialog makes the dialog the width, or wider if it needs to be, and as
@@ -24,4 +26,21 @@ func fitDialog(d *qt.QDialog, width int) {
 func openDialog(d *qt.QDialog) {
 	d.OnFinished(func(int) { d.DeleteLater() })
 	d.Open()
+}
+
+// inBackground runs work away from the UI's thread, as what reaches a server
+// does, and then done on the UI's thread, unless w has been destroyed by
+// then: a dialog answered meanwhile has been deleted, with its widgets,
+// which done would use.
+func inBackground(w *qt.QWidget, work, done func()) {
+	gone := false
+	w.OnDestroyed(func() { gone = true })
+	go func() {
+		work()
+		mainthread.Start(func() {
+			if !gone {
+				done()
+			}
+		})
+	}()
 }
