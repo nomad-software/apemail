@@ -1,20 +1,46 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 
 	qt "github.com/mappu/miqt/qt6"
+	"github.com/mappu/miqt/qt6/mainthread"
 
 	"github.com/nomad-software/apemail/internal/appicon"
 	"github.com/nomad-software/apemail/internal/desktop"
+	"github.com/nomad-software/apemail/internal/instance"
 	"github.com/nomad-software/apemail/internal/settings"
 	"github.com/nomad-software/apemail/internal/ui"
 )
 
 func main() {
+	// One copy runs at a time: one started while another runs, as from the
+	// desktop, has that one's window shown and leaves, passing on the
+	// desktop's leave to take the focus. Nothing else is done before, so
+	// that it leaves at once.
+	var claim *instance.Instance
+	if dir, err := instance.Dir(); err == nil {
+		claim, err = instance.Claim(dir, os.Getenv("XDG_ACTIVATION_TOKEN"))
+		switch {
+		case errors.Is(err, instance.ErrRunning):
+			return
+		case errors.Is(err, instance.ErrNoAnswer):
+			fmt.Fprintln(os.Stderr, "apemail:", err)
+			os.Exit(1)
+		case err != nil:
+			// The program runs, as it would without the check.
+			fmt.Fprintln(os.Stderr, "apemail: another copy could be started beside this one:", err)
+		default:
+			defer claim.Close()
+		}
+	} else if !errors.Is(err, errors.ErrUnsupported) {
+		fmt.Fprintln(os.Stderr, "apemail: another copy could be started beside this one:", err)
+	}
+
 	var files ui.Files
 
 	// The settings are kept where the system keeps the configuration of
@@ -56,6 +82,11 @@ func main() {
 
 	window := ui.NewWindow(files)
 	window.Start()
+	if claim != nil {
+		claim.Serve(func(token string) {
+			mainthread.Start(func() { window.Activate(token) })
+		})
+	}
 
 	qt.QApplication_Exec()
 }

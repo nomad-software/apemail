@@ -508,6 +508,15 @@ If the desktop keeps showing an older icon after an update, it has the old
 one cached: logging out and in again clears it (on KDE, so does deleting
 `~/.cache/icon-cache.kcache`).
 
+Only one copy of ApeMail runs at a time. Starting it again while it runs (from
+the desktop's menu, or `./apemail`) brings the window there is to the front,
+even if it was minimised, and the new copy leaves at once. The copy that runs
+holds a lock, `apemail.lock`, and listens on a socket, `apemail.sock`, in
+`$XDG_RUNTIME_DIR` (or a folder of your own, `apemail-<uid>`, in the temporary
+folder); the system lets go of the lock if the program dies, and the next copy
+clears the socket away. Under Wayland the new copy hands on the desktop's
+activation token, without which the window would only ask for attention.
+
 The settings are kept where the system keeps the configuration of programs:
 
 | System | Settings file |
