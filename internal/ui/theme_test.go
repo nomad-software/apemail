@@ -92,6 +92,63 @@ func washed(ic *qt.QIcon, colour string) int {
 	return n
 }
 
+// themeBase returns the name of the style the application's is: that of the
+// style a proxy style is over, or its own.
+func themeBase() string {
+	style := qt.QApplication_Style()
+	if style.Inherits("QProxyStyle") {
+		return qt.UnsafeNewQProxyStyle(style.UnsafePointer()).BaseStyle().Name()
+	}
+	return style.Name()
+}
+
+// boxEdge returns how much the edge of the box of a check box that is not
+// checked stands out from the box: the most that the lightness of a pixel
+// of the box, edge and all, differs from that of the box within it.
+func boxEdge() int {
+	box := qt.NewQCheckBox3("Ticked")
+	defer box.Delete()
+	box.AdjustSize()
+	pixmap := box.Grab()
+	img := pixmap.ToImage()
+	runtime.KeepAlive(pixmap)
+	palette := qt.QGuiApplication_Palette()
+	base := palette.Color(qt.QPalette__Active, qt.QPalette__Base).Lightness()
+	runtime.KeepAlive(palette)
+	// The box is at the left, before the space and the text.
+	width := box.Style().PixelMetric(qt.QStyle__PM_IndicatorWidth, nil, box.QWidget)
+	most := 0
+	for y := range img.Height() {
+		for x := range width {
+			c := qt.NewQColor4(img.Pixel(x, y))
+			most = max(most, abs(c.Lightness()-base))
+			c.Delete()
+		}
+	}
+	return most
+}
+
+// abs returns the size of n.
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+// TestCheckBoxEdges checks that the boxes of check boxes have an edge that
+// shows in the light and dark themes, which Fusion's own barely does.
+func TestCheckBoxEdges(t *testing.T) {
+	for _, theme := range []string{settings.ThemeLight, settings.ThemeDark} {
+		useTheme(t, theme)
+		mainthread.Wait(func() {
+			if got := boxEdge(); got < 80 {
+				t.Errorf("%s: the edge of a check box stands out from it by %d of 255", theme, got)
+			}
+		})
+	}
+}
+
 // useTheme puts the theme into effect until the test ends, when the
 // system's is put back.
 func useTheme(t *testing.T, name string) {
@@ -111,7 +168,7 @@ func TestThemes(t *testing.T) {
 
 	useTheme(t, settings.ThemeDark)
 	mainthread.Wait(func() {
-		if got := qt.QApplication_Style().Name(); got != "fusion" {
+		if got := themeBase(); got != "fusion" {
 			t.Errorf("style = %q", got)
 		}
 		if got := windowColour(); got != "#2d2d2d" {

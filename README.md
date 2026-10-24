@@ -69,9 +69,11 @@ it you have.
   only the images are fetched: no stylesheets, backgrounds or scripts, no
   cookies, and no more than 100 images of 10 MB each.
 - HTML is shown by Qt, which reads less of HTML than a web browser does, so
-  a message is made fit for it first: what the message hides
-  (`display: none`, as a newsletter's preview text, the rows it shows only
-  on a phone and its tracking pixel) is left out, and sizes Qt cannot read
+  a message is made fit for it first: what the message hides on a
+  computer's screen (`display: none`, in its style or by its stylesheet, as
+  a newsletter's preview text, what it shows only on a phone and its
+  tracking pixel) is left out, what its stylesheet shows on a computer
+  though Outlook is not to see it is shown, and sizes Qt cannot read
   (`width="600px"`, `height="auto"`, or a width in the style) are made
   pixels, as otherwise an image is drawn no height at all and a table
   squeezed into a narrow column.

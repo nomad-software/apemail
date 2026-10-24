@@ -17,9 +17,10 @@ import (
 	"golang.org/x/net/html"
 )
 
-// Lifetime is how long a message is served, which is long enough for the
+// lifetime is how long a message is served, which is long enough for the
 // browser to open it and load its images, and for it to be loaded again.
-const Lifetime = 10 * time.Minute
+// Tests make it shorter.
+var lifetime = 10 * time.Minute
 
 // policy keeps the browser from running the message's scripts or plugins,
 // sending its forms or framing other pages, as the message is mail rather
@@ -41,7 +42,7 @@ type Page struct {
 }
 
 // Serve serves the HTML of a message, with the parts it shows by their
-// content ID (cid:ID), for Lifetime, and returns where.
+// content ID (cid:ID), for a while (lifetime), and returns where.
 func Serve(htmlText string, parts map[string]Part) (*Page, error) {
 	token := make([]byte, 16)
 	if _, err := rand.Read(token); err != nil {
@@ -88,7 +89,9 @@ func Serve(htmlText string, parts map[string]Part) (*Page, error) {
 	}
 	// Serve returns when the server is closed, and closes the listener.
 	go p.server.Serve(l)
-	p.timer = time.AfterFunc(Lifetime, p.Close)
+	// The server is closed by the timer itself rather than by Close, which
+	// stops the timer and may be called before it is made.
+	p.timer = time.AfterFunc(lifetime, func() { p.server.Close() })
 	return p, nil
 }
 

@@ -1,10 +1,56 @@
 package ui
 
 import (
+	"runtime"
+
 	qt "github.com/mappu/miqt/qt6"
 
 	"github.com/nomad-software/apemail/internal/settings"
 )
+
+// newThemeStyle returns the style of the light and dark themes: Fusion,
+// with the boxes of check boxes edged more clearly. Fusion edges them in a
+// shade a little darker than the window, which in the light theme is barely
+// seen between the white of the box and the page it is on, and in the dark
+// theme is as dark as the box. The edge is drawn again in a colour half way
+// between the text and the box, which shows in either, and fades with the
+// text where the box is disabled. Qt keeps the style, and deletes it when
+// another is put in its place.
+func newThemeStyle() *qt.QStyle {
+	s := qt.NewQProxyStyle2("Fusion")
+	s.OnDrawPrimitive(func(super func(qt.QStyle__PrimitiveElement, *qt.QStyleOption, *qt.QPainter, *qt.QWidget), element qt.QStyle__PrimitiveElement, option *qt.QStyleOption, painter *qt.QPainter, widget *qt.QWidget) {
+		super(element, option, painter, widget)
+		// A box the keyboard has brought the focus to keeps the edge
+		// Fusion gives it, in the colour of the selection.
+		focus := qt.QStyle__State_HasFocus | qt.QStyle__State_KeyboardFocusChange
+		if element == qt.QStyle__PE_IndicatorCheckBox && option.State()&focus != focus {
+			edgeBox(option, painter)
+		}
+	})
+	return s.QStyle
+}
+
+// edgeBox draws the edge of the box of a check box, in a colour half way
+// between that of text and that of the box.
+func edgeBox(option *qt.QStyleOption, painter *qt.QPainter) {
+	palette := option.Palette()
+	text, base := palette.ColorWithCr(qt.QPalette__Text), palette.ColorWithCr(qt.QPalette__Base)
+	edge := qt.NewQColor3((text.Red()+base.Red())/2, (text.Green()+base.Green())/2, (text.Blue()+base.Blue())/2)
+	runtime.KeepAlive(palette)
+	r := option.Rect()
+	// An outline drawn without antialiasing covers the pixel below and to
+	// the right of each of its lines, so it is one less each way.
+	rect := qt.NewQRectF4(float64(r.X()), float64(r.Y()), float64(r.Width()-1), float64(r.Height()-1))
+	runtime.KeepAlive(r)
+	painter.Save()
+	painter.SetRenderHint2(qt.QPainter__Antialiasing, false)
+	painter.SetPen(edge)
+	painter.SetBrushWithStyle(qt.NoBrush)
+	painter.DrawRect(rect)
+	painter.Restore()
+	edge.Delete()
+	rect.Delete()
+}
 
 // themes are the themes that can be chosen, by the name the settings keep
 // them by, in the order they are offered: the system's, which is "", and
@@ -47,7 +93,7 @@ func applyTheme(name string) {
 		p = qt.NewQPalette()
 	}
 	if name != "" {
-		qt.QApplication_SetStyleWithStyle("Fusion")
+		qt.QApplication_SetStyle(newThemeStyle())
 	}
 	qt.QApplication_SetPalette(p)
 	p.Delete()

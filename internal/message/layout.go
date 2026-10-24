@@ -10,11 +10,15 @@ import (
 	"golang.org/x/net/html/atom"
 )
 
-// withoutHidden returns the HTML without the elements whose style hides
-// them (display: none), and what is in them. Qt shows them: a newsletter's
-// preview text, the rows it shows only on a phone (a stylesheet for small
-// screens shows them in place of others), and tracking pixels.
+// withoutHidden returns the HTML without the elements that are hidden on a
+// computer's screen (display: none), by their style or the stylesheet's
+// rules for their classes (displayRules), and what is in them. Qt shows
+// them: a newsletter's preview text, what it shows only on a phone, and
+// tracking pixels. What the stylesheet shows though the element's style
+// hides it, as a newsletter does what it shows on a computer but not in
+// Outlook, has display taken out of its style, as Qt would hide it.
 func withoutHidden(s string) string {
+	rules := displayRules(s)
 	z := html.NewTokenizer(strings.NewReader(s))
 	var b strings.Builder
 	b.Grow(len(s))
@@ -44,14 +48,46 @@ func withoutHidden(s string) string {
 			// The element ended as the one after it, or the one it is
 			// in, starts or ends, which is kept.
 		}
-		if (tt == html.StartTagToken || tt == html.SelfClosingTagToken) && hidden(t) {
-			if tt == html.StartTagToken && !void(t.DataAtom) {
-				skipping = t.DataAtom
+		if tt == html.StartTagToken || tt == html.SelfClosingTagToken {
+			v, set := display(t, rules)
+			switch {
+			case set && strings.HasPrefix(v, "none"):
+				if tt == html.StartTagToken && !void(t.DataAtom) {
+					skipping = t.DataAtom
+				}
+				continue
+			case hiddenByStyle(t):
+				raw = withoutDisplay(t).String()
 			}
-			continue
 		}
 		b.WriteString(raw)
 	}
+}
+
+// hiddenByStyle reports if the style of the element hides it.
+func hiddenByStyle(t html.Token) bool {
+	v, ok := styleValue(t, "display")
+	return ok && strings.HasPrefix(v, "none")
+}
+
+// withoutDisplay returns the element with display taken out of its style.
+func withoutDisplay(t html.Token) html.Token {
+	attrs := slices.Clone(t.Attr)
+	for i, a := range attrs {
+		if a.Key != "style" {
+			continue
+		}
+		var kept []string
+		for decl := range strings.SplitSeq(a.Val, ";") {
+			k, _, _ := strings.Cut(decl, ":")
+			if !strings.EqualFold(strings.TrimSpace(k), "display") && strings.TrimSpace(decl) != "" {
+				kept = append(kept, strings.TrimSpace(decl))
+			}
+		}
+		attrs[i].Val = strings.Join(kept, ";")
+	}
+	t.Attr = attrs
+	return t
 }
 
 // hiddenEnds reports if the hidden element, with the elements open within
@@ -118,14 +154,8 @@ func void(a atom.Atom) bool {
 	return false
 }
 
-// hidden reports if the style of the element hides it.
-func hidden(t html.Token) bool {
-	v, ok := styleValue(t, "display")
-	return ok && strings.HasPrefix(v, "none")
-}
-
 // styleValue returns the value of a property of the style of an element,
-// in lower case.
+// in lower case and without !important.
 func styleValue(t html.Token, property string) (string, bool) {
 	for _, a := range t.Attr {
 		if a.Key != "style" {
@@ -137,7 +167,8 @@ func styleValue(t html.Token, property string) (string, bool) {
 		for decl := range strings.SplitSeq(a.Val, ";") {
 			k, v, ok := strings.Cut(decl, ":")
 			if ok && strings.EqualFold(strings.TrimSpace(k), property) {
-				value, found = strings.ToLower(strings.TrimSpace(v)), true
+				value, _ = cssValue(v)
+				found = true
 			}
 		}
 		return value, found
@@ -145,12 +176,27 @@ func styleValue(t html.Token, property string) (string, bool) {
 	return "", false
 }
 
+// cssValue returns the value of a declaration of CSS, in lower case and
+// without !important, and whether it was important.
+func cssValue(v string) (string, bool) {
+	v = strings.ToLower(strings.TrimSpace(v))
+	if before, ok := strings.CutSuffix(v, "!important"); ok {
+		return strings.TrimSpace(before), true
+	}
+	return v, false
+}
+
 // pixelSizes returns the HTML with the sizes of its images, tables and
 // cells as Qt reads them: a number of pixels (or, for a table or cell, a
 // percentage), taken from the style if the attribute has none. Qt reads
-// any other attribute, as width="600px" or height="auto", as 0, which hides
-// an image or squeezes a table into a narrow column, and leaves a size in
-// the style alone.
+// any other attribute, as width="600px", height="auto" or one that is
+// empty, as 0, which hides an image or squeezes a table into a narrow
+// column, and leaves a size in the style alone. The attribute is kept
+// where both have a size, though a browser takes the style's, as a style
+// that makes a table or image as wide as the page (width: 100%) comes with
+// a max-width Qt does not read either, which the attribute is nearer to.
+// The size of an image the style makes auto is left out, so that Qt keeps
+// its shape as a browser does.
 func pixelSizes(s string) string {
 	z := html.NewTokenizer(strings.NewReader(s))
 	var b strings.Builder
@@ -180,17 +226,18 @@ func pixelSizes(s string) string {
 		changed := false
 		for _, key := range keys {
 			i := slices.IndexFunc(t.Attr, func(a html.Attribute) bool { return a.Key == key })
+			styled, hasStyle := styleValue(t, key)
 			size, ok := "", false
-			if i >= 0 {
+			switch {
+			case t.DataAtom == atom.Img && hasStyle && styled == "auto":
+			case i >= 0:
 				size, ok = qtSize(t.Attr[i].Val, percent)
-				if size == t.Attr[i].Val {
+				if ok && size == t.Attr[i].Val {
 					continue
 				}
 			}
-			if !ok {
-				if v, styled := styleValue(t, key); styled {
-					size, ok = qtSize(v, percent)
-				}
+			if !ok && hasStyle && styled != "auto" {
+				size, ok = qtSize(styled, percent)
 			}
 			switch {
 			case ok && i >= 0:
@@ -212,6 +259,10 @@ func pixelSizes(s string) string {
 	}
 }
 
+// maxSize is the largest size, in pixels, that is kept: a larger one is
+// nonsense, and would not fit in a number Qt reads.
+const maxSize = 100000
+
 // qtSize returns a size as Qt reads it, a whole number of pixels or a
 // percentage (if percent allows one), and whether the size is one of those.
 func qtSize(v string, percent bool) (string, bool) {
@@ -227,7 +278,7 @@ func qtSize(v string, percent bool) (string, bool) {
 		v = strings.TrimSuffix(v, "px")
 	}
 	f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
-	if err != nil || !(f >= 0) || math.IsInf(f, 0) {
+	if err != nil || !(f >= 0) || f > maxSize {
 		return "", false
 	}
 	return strconv.Itoa(int(math.Round(f))) + unit, true

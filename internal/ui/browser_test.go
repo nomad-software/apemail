@@ -14,7 +14,8 @@ import (
 // TestViewInBrowser checks that an HTML message has a button beside the one
 // that loads its images which opens it in the web browser, served as the
 // message has it rather than as it was made fit for Qt, with the images it
-// carries; and that a message in plain text has none.
+// carries; that a message in plain text has none; and that the message is
+// served no more once the view is destroyed.
 func TestViewInBrowser(t *testing.T) {
 	var opened []string
 	open := openURL
@@ -30,6 +31,12 @@ func TestViewInBrowser(t *testing.T) {
 		t.Fatal(err)
 	}
 	var v *messageView
+	deleted := false
+	t.Cleanup(func() {
+		if !deleted {
+			mainthread.Wait(func() { v.DeleteLater() })
+		}
+	})
 	mainthread.Wait(func() {
 		v = newMessageView()
 		v.Resize(800, 600)
@@ -44,7 +51,6 @@ func TestViewInBrowser(t *testing.T) {
 		}
 		v.inBrowser.Click()
 	})
-	defer mainthread.Wait(func() { v.DeleteLater() })
 	if len(opened) != 1 {
 		t.Fatalf("%d pages were opened", len(opened))
 	}
@@ -74,4 +80,12 @@ func TestViewInBrowser(t *testing.T) {
 			t.Error("a message in plain text has the buttons of the HTML message shown before")
 		}
 	})
+
+	// The message is served no more once the view is gone.
+	mainthread.Wait(func() { v.Delete() })
+	deleted = true
+	if resp, err := http.Get(opened[0]); err == nil {
+		resp.Body.Close()
+		t.Error("the message is still served once the view is gone")
+	}
 }

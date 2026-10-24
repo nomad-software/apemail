@@ -55,8 +55,10 @@ type messageView struct {
 	images         map[string][]byte
 	imageAddresses map[string]string
 	// inBrowser is the button which shows the message in the web browser,
-	// if it is HTML.
+	// if it is HTML, and pages the messages being served to it, which stop
+	// being served when the view is destroyed, if their time is not up.
 	inBrowser *qt.QPushButton
+	pages     []*preview.Page
 	// stopImages stops the images being loaded, if they are.
 	stopImages context.CancelFunc
 	// loadAlways reports if the account shown has its images loaded when
@@ -110,7 +112,12 @@ func newMessageView() *messageView {
 	})
 	v.browser.OnAnchorClicked(func(link *qt.QUrl) { v.follow(link.ToString()) })
 	layout.AddWidget(v.browser.QWidget)
-	v.OnDestroyed(func() { v.gone = true })
+	v.OnDestroyed(func() {
+		v.gone = true
+		for _, p := range v.pages {
+			p.Close()
+		}
+	})
 
 	v.clear()
 	return v
@@ -196,6 +203,7 @@ func (v *messageView) viewInBrowser() {
 		warning(v.QWidget, "View in Browser", "The message could not be shown in the browser: "+err.Error())
 		return
 	}
+	v.pages = append(v.pages, page)
 	openURL(page.URL)
 }
 

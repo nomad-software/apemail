@@ -85,3 +85,12 @@ func TestFlattenedTablesKeepColours(t *testing.T) {
 		t.Errorf("got\n%s\nwant\n%s", got, want)
 	}
 }
+
+// TestFlattenedTablesImportantColours checks that a colour marked important
+// is kept without !important, which a <div>'s style would not read.
+func TestFlattenedTablesImportantColours(t *testing.T) {
+	got := parseHTML(t, nested(4, `<table style="background-color: #000 !important; color: #FFF !important"><tr><td>X</td></tr></table>`))
+	if want := nested(4, `<div style="background-color:#000;color:#fff"><div><div>X</div></div></div>`); got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
