@@ -57,9 +57,11 @@ type Message struct {
 	ReceiptTo []*mail.Address
 
 	// Text and HTML are the plain text and HTML versions of the body. A
-	// message can have either, or both.
-	Text string
-	HTML string
+	// message can have either, or both. HTML is made fit for Qt to show,
+	// and SourceHTML is the HTML as the message has it, for a web browser.
+	Text       string
+	HTML       string
+	SourceHTML string
 
 	Attachments []Attachment
 }
@@ -155,6 +157,7 @@ func Parse(raw []byte) (*Message, error) {
 			})
 		}
 	}
+	m.SourceHTML = m.HTML
 	m.HTML = flatTables(pixelSizes(withoutHidden(withoutQtMarker(m.HTML))))
 	return m, nil
 }

@@ -33,13 +33,14 @@ const (
 	Bullets     = "bullets"
 	Numbers     = "numbers"
 	Image       = "image"
+	Browser     = "browser"
 )
 
 // Names are every icon there is.
 var Names = []string{
 	GetMail, Write, Reply, ReplyAll, Forward, Archive, Trash, AddressBook, AddContact, Attachment,
 	Account, Inbox, Folder, Sent, Drafts,
-	Save, Bold, Italic, Underline, Bullets, Numbers, Image,
+	Save, Bold, Italic, Underline, Bullets, Numbers, Image, Browser,
 }
 
 //go:embed svg/*.svg

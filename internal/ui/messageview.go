@@ -19,6 +19,7 @@ import (
 	"github.com/nomad-software/apemail/internal/icons"
 	"github.com/nomad-software/apemail/internal/images"
 	"github.com/nomad-software/apemail/internal/message"
+	"github.com/nomad-software/apemail/internal/preview"
 )
 
 // messageView shows a message: its headers, its attachments and its body.
@@ -53,6 +54,9 @@ type messageView struct {
 	// the browser asks for, which Qt writes its own way.
 	images         map[string][]byte
 	imageAddresses map[string]string
+	// inBrowser is the button which shows the message in the web browser,
+	// if it is HTML.
+	inBrowser *qt.QPushButton
 	// stopImages stops the images being loaded, if they are.
 	stopImages context.CancelFunc
 	// loadAlways reports if the account shown has its images loaded when
@@ -161,14 +165,44 @@ func (v *messageView) follow(link string) {
 			v.compose(u.Opaque, u.Query().Get("subject"))
 		}
 	case "http", "https":
-		qt.QDesktopServices_OpenUrl(qt.NewQUrl3(link))
+		openURL(link)
 	}
+}
+
+// openURL opens an address in the desktop's web browser. Tests replace it,
+// so that no browser opens.
+var openURL = func(link string) {
+	u := qt.NewQUrl3(link)
+	qt.QDesktopServices_OpenUrl(u)
+	u.Delete()
+}
+
+// viewInBrowser shows the message in the web browser, as it is meant to
+// look, with the images it carries: it is served from this computer for a
+// while (preview.Serve) rather than written to a file, which would hold it
+// unencrypted.
+func (v *messageView) viewInBrowser() {
+	if v.msg == nil {
+		return
+	}
+	parts := map[string]preview.Part{}
+	for _, a := range v.msg.Attachments {
+		if a.ContentID != "" {
+			parts[a.ContentID] = preview.Part{ContentType: a.ContentType, Data: a.Data}
+		}
+	}
+	page, err := preview.Serve(v.msg.SourceHTML, parts)
+	if err != nil {
+		warning(v.QWidget, "View in Browser", "The message could not be shown in the browser: "+err.Error())
+		return
+	}
+	openURL(page.URL)
 }
 
 // clear shows nothing.
 func (v *messageView) clear() {
 	v.msg, v.folder, v.uid = nil, "", 0
-	v.addSender, v.loadImages = nil, nil
+	v.addSender, v.loadImages, v.inBrowser = nil, nil, nil
 	v.forgetImages()
 	clearLayout(v.headerGrid.QLayout)
 	v.headers.SetVisible(false)
@@ -292,6 +326,8 @@ func (v *messageView) forgetImages() {
 // and when, with a button beside the sender to put them in the address book.
 func (v *messageView) showHeaders(m *message.Message) {
 	clearLayout(v.headerGrid.QLayout)
+	// The buttons of the message shown before are gone with the headers.
+	v.loadImages, v.inBrowser = nil, nil
 	subject := m.Subject
 	if subject == "" {
 		subject = "(no subject)"
@@ -355,15 +391,26 @@ func (v *messageView) showHeaders(m *message.Message) {
 	if !m.Date.IsZero() {
 		row("Date", m.Date.Local().Format("Monday 2 January 2006 15:04"))
 	}
-	// The images the message links to are loaded by a button at the
-	// bottom right of the headers, in a column of its own beside them.
+	// The buttons for HTML go at the bottom right of the headers, in a
+	// column of their own beside them: one that loads the images the
+	// message links to, and one that shows it in the web browser.
+	buttons := qt.NewQHBoxLayout2()
+	buttons.SetSpacing(4)
 	if len(webImages(m)) > 0 {
 		v.loadImages = qt.NewQPushButton3("Load Remote Images")
 		v.loadImages.SetIcon(icon(icons.Image))
 		v.loadImages.SetToolTip("Load the images this message shows from the internet, which tells the sender that it was read")
 		v.loadImages.OnClicked(v.loadRemoteImages)
-		v.headerGrid.AddWidget5(v.loadImages.QWidget, 0, 2, n+1, 1, qt.AlignRight|qt.AlignBottom)
+		buttons.AddWidget(v.loadImages.QWidget)
 	}
+	if m.SourceHTML != "" {
+		v.inBrowser = qt.NewQPushButton3("View in Browser")
+		v.inBrowser.SetIcon(icon(icons.Browser))
+		v.inBrowser.SetToolTip("Show this message in the web browser, as it is meant to look, which loads its images from the internet and tells the sender that it was read")
+		v.inBrowser.OnClicked(v.viewInBrowser)
+		buttons.AddWidget(v.inBrowser.QWidget)
+	}
+	v.headerGrid.AddLayout4(buttons.QLayout, 0, 2, n+1, 1, qt.AlignRight|qt.AlignBottom)
 	v.headers.SetVisible(true)
 }
 

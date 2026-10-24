@@ -75,6 +75,12 @@ it you have.
   (`width="600px"`, `height="auto"`, or a width in the style) are made
   pixels, as otherwise an image is drawn no height at all and a table
   squeezed into a narrow column.
+- **View in Browser**, beside Load Remote Images, shows an HTML message in
+  your web browser, as it is meant to look. The browser loads its images
+  from the internet, which tells the sender that it was read, but runs none
+  of its scripts. The message is not written to a file, which would leave
+  it unencrypted on disk: ApeMail serves it to the browser itself, on this
+  computer only, at an address no one can guess, for ten minutes.
 - New mail in the inbox is seen as it arrives, while ApeMail is running
   (IMAP IDLE). There is no checking every few minutes.
 - Only what you look at is fetched, so a mailbox of many years costs nothing

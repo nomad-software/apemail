@@ -1,6 +1,10 @@
 package message_test
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/nomad-software/apemail/internal/message"
+)
 
 // TestHiddenLeftOut checks that elements whose style hides them are left
 // out with what is in them, as a newsletter's preview text, the rows it
@@ -76,5 +80,21 @@ func TestSizesInPixels(t *testing.T) {
 		if got := parseHTML(t, c.in); got != c.want {
 			t.Errorf("%s: got\n%s\nwant\n%s", c.name, got, c.want)
 		}
+	}
+}
+
+// TestSourceHTMLKept checks that the HTML of a message is kept as it is,
+// for a web browser, beside that made fit for Qt.
+func TestSourceHTMLKept(t *testing.T) {
+	body := `<div style="display:none">Preview</div><img src="a.png" width="600px" height="auto">` + nested(6, "Hello")
+	m, err := message.Parse([]byte("From: a@example.com\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" + body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.SourceHTML != body {
+		t.Errorf("the HTML as the message has it is\n%s\nwant\n%s", m.SourceHTML, body)
+	}
+	if m.HTML == body {
+		t.Error("the HTML shown was not made fit for Qt")
 	}
 }
