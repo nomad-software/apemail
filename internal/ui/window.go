@@ -728,24 +728,47 @@ func (w *Window) deleteMessages() {
 	}
 }
 
-// folderMenu shows the menu of a folder.
-func (w *Window) folderMenu(id, folder string) {
+// folderMenu shows the menu of an account or a folder in the side bar.
+func (w *Window) folderMenu(id, name, folder string) {
+	if menu := w.sidebarMenu(id, name, folder); menu != nil {
+		popUp(menu)
+	}
+}
+
+// sidebarMenu returns the menu of the account, if name is empty, or of the
+// folder with the name, which is opened as folder (empty for one that only
+// holds others). It is nil if the account has gone.
+func (w *Window) sidebarMenu(id, name, folder string) *qt.QMenu {
 	e := w.engines[id]
 	if e == nil {
-		return
+		return nil
 	}
 	menu := qt.NewQMenu2()
 	// Get Mail checks the folder, or the inbox of the account.
-	label := "Get Mail for " + e.Account().Title()
-	if folder != "" {
-		label = "Get Mail in " + folder
+	if name == "" {
+		menu.AddActionWithText("Get Mail for " + e.Account().Title()).OnTriggered(func() { e.Refresh("") })
+	} else if folder != "" {
+		menu.AddActionWithText("Get Mail in " + folder).OnTriggered(func() { e.Refresh(folder) })
 	}
-	menu.AddActionWithText(label).OnTriggered(func() { e.Refresh(folder) })
 	menu.AddActionWithText("Update Unread Counts").OnTriggered(func() { w.updateUnreadCounts(e) })
 	menu.AddActionWithText(syncAllLabel(e)).OnTriggered(func() { w.syncAllFolders(e) })
 	menu.AddSeparator()
+	if name == "" {
+		menu.AddActionWithText("New Folder…").OnTriggered(func() { w.newFolderDialog(e) })
+	} else {
+		del := menu.AddActionWithText("Delete Folder…")
+		del.OnTriggered(func() { w.deleteFolder(e, name) })
+		// The inbox, and the folders the account uses, are kept.
+		if err := e.Deletable(name); err != nil {
+			del.SetEnabled(false)
+		}
+	}
+	menu.AddSeparator()
 	menu.AddActionWithText("Account Settings…").OnTriggered(func() { w.editAccountDialog(e.Account(), false) })
-	popUp(menu)
+	if name == "" {
+		menu.AddActionWithText("Remove Account…").OnTriggered(func() { w.removeAccountOf(e) })
+	}
+	return menu
 }
 
 // messageMenu shows the menu of the messages that are selected.

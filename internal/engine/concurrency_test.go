@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -409,5 +410,49 @@ func TestServerRestarted(t *testing.T) {
 	wait(t, "the folder again", func() bool { return subjects(l.index("Work")) == "work,more work" })
 	if errs := l.errors(); len(errs) > 0 {
 		t.Errorf("errors: %v", errs)
+	}
+}
+
+// TestDeleteFolderWhileSynchronising checks that a folder being synchronised
+// is not deleted until the sync is done, so that no sync keeps what it read
+// of the folder after it was thrown away, and that it is deleted once the
+// sync is done.
+func TestDeleteFolderWhileSynchronising(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Projects")
+	s.Append(t, "Projects", "a")
+	e, l, _ := started(t, s)
+	contents, err := folderContents(t, e, "Projects")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The sync of Projects is held, not that of the inbox, which may
+	// still be under way.
+	held, release := s.Hold(t, `EXAMINE "Projects"`)
+	defer release()
+	e.Open("Projects")
+	select {
+	case <-held:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the folder was not synchronised")
+	}
+	if err := result(t, func(done func(error)) { e.DeleteFolder(contents, done) }); err == nil || !strings.Contains(err.Error(), "synchronised") {
+		t.Errorf("deleting while it was synchronised: %v", err)
+	}
+	if got := serverFolders(t, s); !slices.Contains(got, "Projects") {
+		t.Fatalf("the folder was deleted while it was synchronised: %q", got)
+	}
+
+	release()
+	wait(t, "the sync", func() bool { ix := l.index("Projects"); return ix != nil && len(ix.Messages) == 1 })
+	contents, err = folderContents(t, e, "Projects")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := result(t, func(done func(error)) { e.DeleteFolder(contents, done) }); err != nil {
+		t.Fatal(err)
+	}
+	if got := serverFolders(t, s); slices.Contains(got, "Projects") {
+		t.Errorf("the server has %q", got)
 	}
 }

@@ -143,9 +143,11 @@ func (l *commandLog) Write(p []byte) (int, error) {
 		l.mu.Lock()
 	}
 	for _, line := range bytes.Split(p, []byte("\r\n")) {
-		// A command is a tag and then its name.
+		// A command is a tag and then its name. The server's untagged
+		// answers, which the traffic has too, start with *, and some
+		// are named as the command is (* STATUS).
 		fields := bytes.Fields(line)
-		if len(fields) < 2 {
+		if len(fields) < 2 || string(fields[0]) == "*" {
 			continue
 		}
 		name := string(bytes.ToUpper(fields[1]))
@@ -166,6 +168,9 @@ func init() {
 	for _, name := range []string{"SELECT", "EXAMINE", "STORE", "EXPUNGE", "MOVE", "COPY", "APPEND", "FETCH", "IDLE", "STATUS"} {
 		commandNames[name] = true
 		commandNames["UID "+name] = true
+	}
+	for _, name := range []string{"CREATE", "DELETE", "RENAME", "CLOSE", "UNSELECT"} {
+		commandNames[name] = true
 	}
 }
 

@@ -25,7 +25,7 @@ func dial(t *testing.T, s *remotetest.Server, writable bool) *remote.Conn {
 }
 
 // changing are the commands which change a mailbox.
-var changing = []string{"SELECT", "STORE", "UID STORE", "EXPUNGE", "UID EXPUNGE", "MOVE", "UID MOVE", "COPY", "UID COPY", "APPEND"}
+var changing = []string{"SELECT", "STORE", "UID STORE", "EXPUNGE", "UID EXPUNGE", "MOVE", "UID MOVE", "COPY", "UID COPY", "APPEND", "CREATE", "DELETE", "RENAME", "CLOSE"}
 
 // unchanged fails the test if a command which changes a mailbox was sent.
 func unchanged(t *testing.T, commands []string) {
@@ -153,8 +153,10 @@ func TestReadOnly(t *testing.T) {
 	s.Commands()
 
 	checks := map[string]error{
-		"flags": c.SetFlags("INBOX", u.UIDValidity, uids, true, `\Seen`),
-		"move":  c.Move("INBOX", u.UIDValidity, uids, "Trash"),
+		"flags":         c.SetFlags("INBOX", u.UIDValidity, uids, true, `\Seen`),
+		"move":          c.Move("INBOX", u.UIDValidity, uids, "Trash"),
+		"create":        c.Create("New", ""),
+		"delete folder": c.DeleteFolder("Trash"),
 	}
 	_, _, checks["append"] = c.Append("INBOX", []byte("Subject: x\r\n\r\nx"), nil)
 	for name, err := range checks {
@@ -387,5 +389,80 @@ func TestSyncWhileAnotherExpunges(t *testing.T) {
 	}
 	if len(u.Flags) != 2 {
 		t.Errorf("flags of %d messages: %v", len(u.Flags), u.Flags)
+	}
+}
+
+// TestStatus checks that folders are counted without being opened, and
+// that a folder that holds only others is not asked about.
+func TestStatus(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Work")
+	s.Append(t, "Work", "a")
+	s.Append(t, "Work", "b")
+	c := dial(t, s, false)
+	s.Commands()
+	got, err := c.Status([]store.Folder{{Name: "Work"}, {Name: "Holder", Attrs: []string{`\Noselect`}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Name != "Work" || !got[0].Selectable || got[0].Messages != 2 || got[0].UIDNext == 0 || got[0].UIDValidity == 0 {
+		t.Errorf("Work = %+v", got)
+	}
+	if got[1] != (remote.FolderStatus{Name: "Holder"}) {
+		t.Errorf("Holder = %+v", got[1])
+	}
+	commands := s.Commands()
+	if !slices.Equal(commands, []string{"STATUS"}) {
+		t.Errorf("commands = %v", commands)
+	}
+	unchanged(t, commands)
+
+	if _, err := c.Status([]store.Folder{{Name: "Missing"}}); err == nil {
+		t.Error("a folder that is not there was counted")
+	}
+}
+
+// TestDeleteFolder checks that a folder is deleted with its mail, that the
+// folder the connection has open is left by opening the inbox read-only,
+// never by CLOSE, and that the inbox is never deleted.
+func TestDeleteFolder(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Old", "Work")
+	s.Append(t, "Old", "a", imap.FlagDeleted)
+	s.Append(t, "Work", "b", imap.FlagDeleted)
+	c := dial(t, s, true)
+	// Work is opened to be changed, as setting a flag does.
+	u, err := c.Sync(&store.Index{Folder: "Work"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetFlags("Work", u.UIDValidity, []uint32{u.Added[0].UID}, true, `\Seen`); err != nil {
+		t.Fatal(err)
+	}
+	s.Commands()
+
+	if err := c.DeleteFolder("Old"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.DeleteFolder("INBOX"); err == nil {
+		t.Error("the inbox was deleted")
+	}
+	commands := s.Commands()
+	if !slices.Equal(commands, []string{"EXAMINE", "DELETE"}) {
+		t.Errorf("commands = %v", commands)
+	}
+	folders, err := c.Folders()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(folders) != 2 || folders[0].Name != "INBOX" || folders[1].Name != "Work" {
+		t.Errorf("folders = %+v", folders)
+	}
+	// The message marked as deleted in the folder that was open is still
+	// there: it was not expunged by leaving it.
+	if msgs := s.Messages(t, "Work"); len(msgs) != 1 {
+		t.Errorf("Work = %+v", msgs)
+	}
+
+	if err := c.DeleteFolder("Missing"); err == nil {
+		t.Error("a folder that is not there was deleted")
 	}
 }

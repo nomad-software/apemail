@@ -28,8 +28,9 @@ it you have.
   nothing else. See [Encryption](#encryption).
 - **Careful with your mail.** Checking for mail never changes anything on the
   server, opening a message does not mark it read until it is shown, and
-  deleted mail goes to the trash. Only deleting from the trash removes mail
-  for good, and you are asked first. See [Safety](#safety).
+  deleted mail goes to the trash. Only deleting from the trash, or deleting a
+  folder, removes mail for good, and you are asked first. See
+  [Safety](#safety).
 - **Simple and familiar.** A menu bar, a bar of large buttons with their
   names under them, the folders on the left, the messages and the message
   on the right. If you used a desktop email client years ago, you already
@@ -134,6 +135,12 @@ it you have.
   needed. The side bar shows each by what it is for, whatever the server
   calls it, so every account looks the same: an archive called Archives,
   or one you chose, is shown as Archive.
+- **New Folder** (the account's menu in the side bar) makes a folder on the
+  server, among your own or within another.
+- **Delete Folder** (the folder's menu in the side bar) deletes a folder from
+  the server, with the folders within it and all their mail, after showing
+  how many messages each holds and asking. The inbox and the account's
+  sent, drafts, trash and archive folders cannot be deleted.
 
 **Address book**
 
@@ -159,6 +166,9 @@ it you have.
 - **Test Connection** for the incoming and outgoing servers, and **Read
   Folders from Server** to choose the folders from.
 - Check the inbox for mail when ApeMail starts.
+- **Remove Account** (Accounts menu, or the account's menu in the side bar)
+  removes it from ApeMail after asking; the mailbox on the server is not
+  touched.
 - **Update Unread Counts** (Accounts menu, or the account's menu in the side
   bar) asks the server how many messages of every folder are unread, in a
   second or two, without opening any.
@@ -532,6 +542,12 @@ ApeMail treats your mailbox as yours, not its own:
   `EXAMINE`), and messages are downloaded without being marked read.
 - Deleting moves mail to the trash. Only deleting from the trash removes mail
   for good, and you are asked first.
+- Deleting a folder asks first, saying how many messages it and every folder
+  within it hold. If anything has changed by the time it is done, as mail
+  arriving, a message moved out, or a folder made within it, nothing is
+  deleted and you are told. A folder being synchronised is not deleted until
+  that is done, and the inbox and the folders the account uses are never
+  deleted.
 - Mail is only ever expunged by its UID, so messages that another client has
   marked as deleted are left alone. A server that cannot expunge particular
   messages (no UIDPLUS) is never asked to expunge at all.

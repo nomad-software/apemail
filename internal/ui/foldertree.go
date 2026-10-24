@@ -49,8 +49,10 @@ type folderTree struct {
 	// selected is called with the account and folder that are selected.
 	// The folder is empty if it is an account that is.
 	selected func(id, folder string)
-	// contextMenu is called for the menu of an account or folder.
-	contextMenu func(id, folder string)
+	// contextMenu is called for the menu of an account or folder, with
+	// the name of the folder, which is empty for an account, and the
+	// folder to open, which is empty too for one that only holds others.
+	contextMenu func(id, name, folder string)
 	// dropped is called with messages dropped on a folder of an account,
 	// and reports if they are moved there.
 	dropped func(d draggedMessages, id, folder string) bool
@@ -113,7 +115,7 @@ func newFolderTree(expanded map[string]map[string]bool) *folderTree {
 		if item == nil || t.contextMenu == nil {
 			return
 		}
-		t.contextMenu(itemData(item, roleAccount), itemData(item, roleFolder))
+		t.contextMenu(itemData(item, roleAccount), itemData(item, roleName), itemData(item, roleFolder))
 	})
 	return t
 }

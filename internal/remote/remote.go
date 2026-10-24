@@ -682,6 +682,77 @@ func (c *Conn) Create(name, use string) error {
 	return nil
 }
 
+// FolderStatus is what a folder holds, as the server counts it.
+type FolderStatus struct {
+	Name string
+	// Selectable is false for a folder that holds only other folders
+	// (\Noselect), which is not counted.
+	Selectable bool
+	Messages   uint32
+	// UIDNext and UIDValidity change when a message arrives, and when
+	// the folder is numbered anew, though the count may not.
+	UIDNext     uint32
+	UIDValidity uint32
+}
+
+// Status counts the messages of each folder (STATUS), which opens none and
+// so changes nothing. Every folder is asked about before any answer is
+// waited for. A folder that holds only other folders is not asked about.
+func (c *Conn) Status(folders []store.Folder) ([]FolderStatus, error) {
+	commands := make([]*imapclient.StatusCommand, len(folders))
+	for i, f := range folders {
+		if f.Selectable() {
+			commands[i] = c.c.Status(f.Name, &imap.StatusOptions{NumMessages: true, UIDNext: true, UIDValidity: true})
+		}
+	}
+	statuses := make([]FolderStatus, len(folders))
+	for i, cmd := range commands {
+		statuses[i].Name = folders[i].Name
+		if cmd == nil {
+			continue
+		}
+		data, err := cmd.Wait()
+		if err != nil {
+			return nil, fmt.Errorf("counting the messages of %s: %w", folders[i].Name, err)
+		}
+		if data.NumMessages == nil {
+			return nil, fmt.Errorf("the server did not say how many messages %s holds", folders[i].Name)
+		}
+		statuses[i] = FolderStatus{
+			Name:        folders[i].Name,
+			Selectable:  true,
+			Messages:    *data.NumMessages,
+			UIDNext:     uint32(data.UIDNext),
+			UIDValidity: data.UIDValidity,
+		}
+	}
+	return statuses, nil
+}
+
+// DeleteFolder deletes the folder from the server, with every message in it,
+// for good. The folder the connection has open, if any, is left first, by
+// opening the inbox read-only, which every server can do and which expunges
+// nothing (RFC 3501), and never by CLOSE, which would expunge the messages
+// marked as deleted in it.
+func (c *Conn) DeleteFolder(name string) error {
+	if !c.writable {
+		return ErrReadOnly
+	}
+	if IsInbox(name) {
+		return errors.New("the inbox cannot be deleted")
+	}
+	if c.selected != "" {
+		if _, err := c.examine("INBOX"); err != nil {
+			return err
+		}
+	}
+	if err := c.c.Delete(name).Wait(); err != nil {
+		return fmt.Errorf("deleting the folder %s: %w", name, err)
+	}
+	c.c.Unsubscribe(name).Wait()
+	return nil
+}
+
 // PersonalPrefix returns what the names of the user's own folders start
 // with, such as "INBOX." on servers which keep every folder within the
 // inbox, or "" on those that do not or cannot say.

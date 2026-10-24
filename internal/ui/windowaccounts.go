@@ -130,13 +130,17 @@ func (w *Window) editAccountDialog(a account.Account, isNew bool) {
 	})
 }
 
-// removeCurrentAccount removes the account that is selected from the client,
-// once the user agrees. Its mailbox on the server is not touched.
+// removeCurrentAccount removes the account that is selected, as
+// removeAccountOf does.
 func (w *Window) removeCurrentAccount() {
-	e := w.currentEngine()
-	if e == nil {
-		return
+	if e := w.currentEngine(); e != nil {
+		w.removeAccountOf(e)
 	}
+}
+
+// removeAccountOf removes the account of the engine from the client, once
+// the user agrees. Its mailbox on the server is not touched.
+func (w *Window) removeAccountOf(e *engine.Engine) {
 	a := e.Account()
 	if !confirm(w.QWidget, "Remove Account",
 		fmt.Sprintf("Remove %s from ApeMail?\n\nIts settings and the copy of its mail kept on this computer are deleted, "+
