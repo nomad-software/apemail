@@ -3,6 +3,7 @@ package engine
 import (
 	"strings"
 
+	"github.com/nomad-software/apemail/internal/account"
 	"github.com/nomad-software/apemail/internal/remote"
 	"github.com/nomad-software/apemail/internal/store"
 )
@@ -28,13 +29,20 @@ var specialUses = map[Special]struct {
 // useNames name the uses, as pending work records them.
 var useNames = map[Special]string{Sent: "sent", Drafts: "drafts", Trash: "trash", Archive: "archive"}
 
+// Name returns the name of the use, which the folder for it is made with
+// if the mailbox has none and shown by in the side bar whatever the server
+// calls it: Sent, Drafts, Trash or Archive.
+func (use Special) Name() string {
+	return specialUses[use].names[0]
+}
+
 // FolderFor returns the folder with the use, or, if there is none, the name
 // it will be made with when it is first needed.
 func (e *Engine) FolderFor(use Special) string {
 	if f := e.SpecialFolder(use); f != "" {
 		return f
 	}
-	return specialUses[use].names[0]
+	return use.Name()
 }
 
 // ensureFolder returns the folder with the use, making it on the server if
@@ -47,7 +55,7 @@ func (e *Engine) ensureFolder(c *remote.Conn, use Special) (string, error) {
 		return name, nil
 	}
 	if name == "" {
-		name = c.PersonalPrefix() + specialUses[use].names[0]
+		name = c.PersonalPrefix() + use.Name()
 	}
 	if err := c.Create(name, specialUses[use].attr); err != nil {
 		return "", err
@@ -57,25 +65,31 @@ func (e *Engine) ensureFolder(c *remote.Conn, use Special) (string, error) {
 	return name, nil
 }
 
-// SpecialFolder returns the folder with the use: the one the account names,
-// or the one the server marks with the use, or one with a usual name for
-// it. It is empty if there is none.
+// SpecialFolder returns the folder of the account with the use, as
+// SpecialIn does.
 func (e *Engine) SpecialFolder(use Special) string {
+	return SpecialIn(e.acct.Folders, e.Folders(), use)
+}
+
+// SpecialIn returns the folder with the use: the one the account's settings
+// name, or else the one among the folders FindSpecial finds. It is empty if
+// there is none.
+func SpecialIn(chosen account.Folders, folders []store.Folder, use Special) string {
 	var named string
 	switch use {
 	case Sent:
-		named = e.acct.Folders.Sent
+		named = chosen.Sent
 	case Drafts:
-		named = e.acct.Folders.Drafts
+		named = chosen.Drafts
 	case Trash:
-		named = e.acct.Folders.Trash
+		named = chosen.Trash
 	case Archive:
-		named = e.acct.Folders.Archive
+		named = chosen.Archive
 	}
 	if named != "" {
 		return named
 	}
-	return FindSpecial(e.Folders(), use)
+	return FindSpecial(folders, use)
 }
 
 // FindSpecial returns the folder with the use among the folders: the one

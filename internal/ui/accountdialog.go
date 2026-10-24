@@ -334,7 +334,8 @@ func newAccountDialog(parent *qt.QWidget, a account.Account, isNew bool, folders
 		})
 	})
 	foldersNote := qt.NewQLabel3("Automatic uses the folder the server marks for the purpose (RFC 6154), or one with a usual name for it, " +
-		"as Archive or Archives. If there is none, it is made on the server, as Sent, Drafts, Trash or Archive, the first time it is needed.")
+		"as Archive or Archives. If there is none, it is made on the server, as Sent, Drafts, Trash or Archive, the first time it is needed. " +
+		"The side bar shows each by what it is for, whatever the server calls it: an archive called Archives is shown as Archive.")
 	foldersNote.SetWordWrap(true)
 	foldersForm.AddRow3("Sent mail:", sent.QWidget)
 	foldersForm.AddRow3("Drafts:", drafts.QWidget)

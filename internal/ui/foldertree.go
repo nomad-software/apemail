@@ -214,7 +214,7 @@ func (t *folderTree) setFolders(a account.Account, folders []store.Folder) {
 	items := map[string]*qt.QTreeWidgetItem{}
 	t.folders[a.ID] = items
 
-	uses := folderUses(folders)
+	uses := folderUses(a.Folders, folders)
 	ordered := orderFolders(folders, uses)
 
 	// Every folder is made first, and then each is put below the folder
@@ -245,8 +245,13 @@ func (t *folderTree) setFolders(a account.Account, folders []store.Folder) {
 			}
 		}
 		under.AddChild(item)
+		// A folder for a use is shown by the use, whatever the server
+		// calls it, so that every account has the same: Archives is
+		// shown as Archive.
 		if remote.IsInbox(f.Name) {
 			name = "Inbox"
+		} else if use, ok := uses[f.Name]; ok {
+			name = use.Name()
 		}
 		t.names[item] = name
 		item.SetText(0, name)
@@ -287,11 +292,13 @@ func (t *folderTree) setFolders(a account.Account, folders []store.Folder) {
 	}
 }
 
-// folderUses returns the special use of each folder that has one, by name.
-func folderUses(folders []store.Folder) map[string]engine.Special {
+// folderUses returns the special use of each folder that has one, by name:
+// the folders the account's settings choose, or else those found as the
+// engine finds them.
+func folderUses(chosen account.Folders, folders []store.Folder) map[string]engine.Special {
 	uses := map[string]engine.Special{}
 	for _, use := range []engine.Special{engine.Drafts, engine.Sent, engine.Archive, engine.Trash} {
-		if name := engine.FindSpecial(folders, use); name != "" {
+		if name := engine.SpecialIn(chosen, folders, use); name != "" {
 			uses[name] = use
 		}
 	}
@@ -357,7 +364,8 @@ func folderIcon(f store.Folder, uses map[string]engine.Special) *qt.QIcon {
 }
 
 // folderName returns the name the tree shows the folder by, without its
-// count of unread messages: the last part of its name, or Inbox.
+// count of unread messages: Inbox, the name of its use (as Archive), or the
+// last part of its name.
 func (t *folderTree) folderName(id, folder string) string {
 	if item, ok := t.folders[id][folder]; ok {
 		return t.names[item]

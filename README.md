@@ -131,7 +131,9 @@ it you have.
   marks them as (RFC 6154 special-use), or by their usual names (Archive or
   Archives, Sent Items, Deleted Items, ...), or can be chosen for each
   account. If one is missing it is made on the server the first time it is
-  needed.
+  needed. The side bar shows each by what it is for, whatever the server
+  calls it, so every account looks the same: an archive called Archives,
+  or one you chose, is shown as Archive.
 
 **Address book**
 

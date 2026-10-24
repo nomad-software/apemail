@@ -822,3 +822,31 @@ func TestArchiveFolder(t *testing.T) {
 		}
 	}
 }
+
+// TestArchiveChosen checks that mail is archived into the folder the
+// account's settings choose, rather than the one that would be found.
+func TestArchiveChosen(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Archive", "Archives")
+	s.Append(t, "INBOX", "hello")
+	e, l, _ := start(t, s, func(a *account.Account) {
+		a.Folders.Archive = "Archives"
+		a.ArchiveBy = account.ArchiveSingle
+	})
+	wait(t, "the inbox", func() bool { ix := l.index("INBOX"); return ix != nil && len(ix.Messages) == 1 })
+	if got := e.SpecialFolder(engine.Archive); got != "Archives" {
+		t.Errorf("the archive is %q", got)
+	}
+
+	if err := result(t, func(done func(error)) { e.Archive("INBOX", []uint32{l.index("INBOX").Messages[0].UID}, done) }); err != nil {
+		t.Fatal(err)
+	}
+	if msgs := s.Messages(t, "Archives"); len(msgs) != 1 || msgs[0].Subject != "hello" {
+		t.Errorf("Archives = %+v", msgs)
+	}
+	if msgs := s.Messages(t, "Archive"); len(msgs) != 0 {
+		t.Errorf("Archive = %+v", msgs)
+	}
+	if msgs := s.Messages(t, "INBOX"); len(msgs) != 0 {
+		t.Errorf("inbox = %+v", msgs)
+	}
+}
