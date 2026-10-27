@@ -1,4 +1,4 @@
-# ApeMail
+# <img src="internal/appicon/appicon.png" alt="" width="40" height="40"> ApeMail
 
 A simple IMAP email client, in the spirit of the desktop email clients of
 years ago. It is written in Go with a Qt 6 interface using the
