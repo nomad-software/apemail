@@ -287,8 +287,8 @@ func TestFormatAddressQuotes(t *testing.T) {
 }
 
 // TestParseLineEnds checks that the text of a message has its lines ended
-// by LF alone, as Qt's editor takes a CR for another line, whether they end
-// in CRLF, as mail does, or a CR alone, and in a second text part too.
+// by LF alone, as a page takes a CR for another line, whether they end in
+// CRLF, as mail does, or a CR alone, and in a second text part too.
 func TestParseLineEnds(t *testing.T) {
 	raw := "From: a@example.com\r\nSubject: s\r\nMIME-Version: 1.0\r\n" +
 		"Content-Type: multipart/mixed; boundary=b\r\n\r\n" +

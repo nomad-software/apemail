@@ -2,10 +2,11 @@ package ui
 
 import (
 	"fmt"
+	"html"
+	"maps"
 	"mime"
 	"os"
 	"path/filepath"
-	"runtime"
 
 	qt "github.com/mappu/miqt/qt6"
 
@@ -19,56 +20,6 @@ const maxImageWidth = 600
 // imageFilter is the filter of the file dialog that picks an image to put
 // in a message.
 const imageFilter = "Images (*.png *.jpg *.jpeg *.gif *.bmp *.webp)"
-
-// setList makes the paragraphs of the selection a list of a style, or, if on
-// is false, takes them out of the list they are in.
-func (c *composer) setList(style qt.QTextListFormat__Style, on bool) {
-	cursor := c.body.TextCursor()
-	defer runtime.KeepAlive(cursor)
-	list := cursor.CurrentList()
-	switch {
-	case on && list != nil:
-		// A list of the other style becomes one of this.
-		f := list.Format()
-		f.SetStyle(style)
-		list.SetFormat(f)
-		runtime.KeepAlive(f)
-	case on:
-		cursor.CreateListWithStyle(style)
-	case list != nil:
-		doc := c.body.Document()
-		for b := doc.FindBlock(cursor.SelectionStart()); b.IsValid() && b.Position() <= cursor.SelectionEnd(); {
-			if l := b.TextList(); l != nil {
-				l.Remove(b)
-				// The indent the list gave the paragraph goes with it.
-				pos := qt.NewQTextCursor4(b)
-				f := pos.BlockFormat()
-				f.SetIndent(0)
-				pos.SetBlockFormat(f)
-				runtime.KeepAlive(f)
-				pos.Delete()
-			}
-			next := b.Next()
-			runtime.KeepAlive(b)
-			b = next
-		}
-	}
-	c.showList()
-}
-
-// showList checks the list button of the style of the list at the cursor.
-func (c *composer) showList() {
-	style := qt.QTextListFormat__Style(0)
-	cursor := c.body.TextCursor()
-	if list := cursor.CurrentList(); list != nil {
-		f := list.Format()
-		style = f.Style()
-		runtime.KeepAlive(f)
-	}
-	runtime.KeepAlive(cursor)
-	c.bullets.SetChecked(style == qt.QTextListFormat__ListDisc)
-	c.numbers.SetChecked(style == qt.QTextListFormat__ListDecimal)
-}
 
 // insertImage asks for an image and puts it in the message where the cursor
 // is.
@@ -104,26 +55,36 @@ func (c *composer) putImage(name string, data []byte) error {
 		Data:        data,
 	}
 	c.addImage(a)
-	f := qt.NewQTextImageFormat()
-	defer f.Delete()
-	f.SetName("cid:" + a.ContentID)
+	tag := `<img src="cid:` + html.EscapeString(a.ContentID) + `"`
 	if img.Width() > maxImageWidth {
-		f.SetWidth(maxImageWidth)
+		tag += fmt.Sprintf(` width="%d"`, maxImageWidth)
 	}
-	cursor := c.body.TextCursor()
-	cursor.InsertImageWithFormat(f)
-	runtime.KeepAlive(cursor)
+	c.body.exec("insertHTML", tag+">")
 	return nil
 }
 
 // addImage makes an image something the HTML can show as cid:ID.
 func (c *composer) addImage(a message.Attachment) {
 	c.images = append(c.images, a)
-	url := qt.NewQUrl3("cid:" + a.ContentID)
-	defer url.Delete()
-	v := qt.NewQVariant12(a.Data)
-	defer v.Delete()
-	c.body.Document().AddResource(int(qt.QTextDocument__ImageResource), url, v)
+}
+
+// image returns a picture the HTML shows as cid:ID.
+func (c *composer) image(id string) (message.Attachment, bool) {
+	for _, a := range c.images {
+		if a.ContentID == id {
+			return a, true
+		}
+	}
+	return message.Attachment{}, false
+}
+
+// addWebImages gives the body the images on the web that the message view
+// has loaded for the message, if it is the one shown, as it is when it is
+// quoted or continued, so that they are shown without being fetched again.
+func (c *composer) addWebImages(m *message.Message) {
+	if v := c.w.view; v.msg == m {
+		maps.Copy(c.body.webImages, v.images)
+	}
 }
 
 // addImages makes the images a message shows something the HTML of this one

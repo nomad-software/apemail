@@ -84,9 +84,19 @@ func clickAt(v *messageView, x, y int) {
 
 // clickWith clicks the body of the view at the point with the button.
 func clickWith(v *messageView, x, y int, button qt.MouseButton) {
+	clickPage(v.web, x, y, button)
+}
+
+// clickAtPage clicks a page at the point, as the user does.
+func clickAtPage(web *webengine.QWebEngineView, x, y int) {
+	clickPage(web, x, y, qt.LeftButton)
+}
+
+// clickPage clicks a page at the point with the button.
+func clickPage(web *webengine.QWebEngineView, x, y int, button qt.MouseButton) {
 	p := qt.NewQPointF3(float64(x), float64(y))
 	defer p.Delete()
-	target := v.web.FocusProxy()
+	target := web.FocusProxy()
 	for _, typ := range []qt.QEvent__Type{qt.QEvent__MouseButtonPress, qt.QEvent__MouseButtonRelease} {
 		buttons := button
 		if typ == qt.QEvent__MouseButtonRelease {
@@ -377,14 +387,14 @@ func TestFollowsTheme(t *testing.T) {
 // it asks, and that the message is otherwise served as it is.
 func TestDoctypeFirst(t *testing.T) {
 	mainthread.Wait(func() {
-		head := webPage("")
+		head := messagePage("")
 		for _, c := range []struct{ doctype, rest string }{
 			{"<!-- a -->\r\n<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\">", "<html><body>Hello"},
 			{" <!doctype html>", "<p>Hello</p>"},
 			{"", "<html><body>Hello"},
 			{"", "<p>a</p><!doctype html>"},
 		} {
-			if got, want := webPage(c.doctype+c.rest), c.doctype+head+c.rest; got != want {
+			if got, want := messagePage(c.doctype+c.rest), c.doctype+head+c.rest; got != want {
 				t.Errorf("served %q, want %q", got, want)
 			}
 		}

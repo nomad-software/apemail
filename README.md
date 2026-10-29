@@ -111,7 +111,12 @@ it you have.
 **Writing**
 
 - Write in plain text or HTML (bold, italic, underline, bulleted and
-  numbered lists), with a signature for each account.
+  numbered lists), with a signature for each account. A message is written
+  in the same engine it is shown in, so a message quoted or forwarded looks
+  as it does when read, and is kept from the internet as it is there: its
+  scripts do not run, and its images are shown as they were when it was
+  read: those you had loaded, or, if the account loads them when a message
+  is shown, those it links to.
 - A signature can be written in the account's settings, or be a file of text
   or HTML, read each time you write a message so changes to it show at once.
   An HTML signature is turned into text for a message written as text, and
@@ -284,9 +289,10 @@ Go makes it natural to do many things at once, and ApeMail does:
 
 ### The message
 
-- Messages are shown by Chromium, which lays out a newsletter of tables
-  nested a dozen deep at once, and is given the message from memory rather
-  than through a file or a web server.
+- Messages are shown and written by Chromium, which lays out a newsletter
+  of tables nested a dozen deep at once, so a reply to one opens at once
+  too, and is given the message from memory rather than through a file or a
+  web server.
 
 ### Measured
 
@@ -592,12 +598,14 @@ ApeMail treats your mailbox as yours, not its own:
   the wrong messages.
 - Removing an account removes only what is kept on this computer. The
   mailbox on the server is not touched.
-- A message is shown with its scripts off and nothing loaded from the
-  internet: not its images until you ask, nor its stylesheets, fonts, frames
-  or links fetched ahead. Its page is given every connection to a proxy that
-  is not there, so even what goes past the checks of each request reaches
-  no one. It draws without the graphics card, so nothing in a message
-  reaches the card's driver. A link opens in your web browser, never in the message.
+- A message is shown, and quoted in a reply or forward, with its scripts off
+  and nothing loaded from the internet: not its images until you ask (or
+  the account says to), nor its stylesheets, fonts, frames or links fetched
+  ahead. Its page is given every connection to a proxy that is not there,
+  so even what goes past the checks of each request reaches no one. It
+  draws without the graphics card, so nothing in a message reaches the
+  card's driver. A link opens in your web browser, never in the message,
+  and one in a message being written is not followed at all.
 
 ## Testing
 
@@ -612,10 +620,10 @@ Synchronising with CONDSTORE is tested against a small IMAP server of the
 project's own (`internal/remote/condstoretest`), and sending against an SMTP
 server for tests (`internal/send/sendtest`). The interface tests run Qt
 offscreen, so they do not need a display, Qt WebEngine with them: messages
-are shown and clicked as you would, and one that names a server of the
-test's own in every way a page can (images, stylesheets, fonts, frames,
-scripts, preconnecting, prefetching) fails the test if any connection at
-all is made to it. The work done at once is tested
+are shown, clicked, written and typed in as you would, and one that names a
+server of the test's own in every way a page can (images, stylesheets,
+fonts, frames, scripts, preconnecting, prefetching), shown or quoted in a
+reply, fails the test if any connection at all is made to it. The work done at once is tested
 together under the race detector: accounts stopped while every kind of work
 is under way, mail sent from several windows at once, the server dropping
 every connection, and answers that arrive after the window they were for

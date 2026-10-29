@@ -7,7 +7,6 @@ import (
 	"mime"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/emersion/go-message/mail"
@@ -33,8 +32,10 @@ type composer struct {
 	to, cc, bcc, subject *qt.QLineEdit
 	// completers complete the addresses typed in To, Cc and Bcc from the
 	// address book.
-	completers  []*addressCompleter
-	body        *qt.QTextEdit
+	completers []*addressCompleter
+	// body is what is written, as HTML if html is set, and otherwise as
+	// plain text.
+	body        *bodyEditor
 	attachList  *qt.QListWidget
 	attachments []message.Attachment
 	// images are the pictures put in the HTML, which shows each as
@@ -52,9 +53,10 @@ type composer struct {
 	// receipt and dsn are the options of the Options menu: a return
 	// receipt, and delivery status notifications.
 	receipt, dsn *qt.QAction
-	// bold is the button which makes text bold, and bullets and numbers
-	// those which make a list, in a message written as HTML.
-	bold, bullets, numbers *qt.QAction
+	// bold, italic and underline are the buttons which format text, and
+	// bullets and numbers those which make a list, in a message written as
+	// HTML, which show the format at the cursor.
+	bold, italic, underline, bullets, numbers *qt.QAction
 	// formatting are the buttons which format text, which formatMenu has
 	// too.
 	formatting []*qt.QAction
@@ -129,14 +131,10 @@ func (w *Window) newComposer(e *engine.Engine) *composer {
 	c.attachList.SetToolTip("Attachments; press Delete to remove the one selected")
 	layout.AddWidget(c.attachList.QWidget)
 
-	c.body = qt.NewQTextEdit2()
-	c.body.SetAcceptRichText(c.html)
-	if !c.html {
-		fixed := qt.QFontDatabase_SystemFont(qt.QFontDatabase__FixedFont)
-		c.body.SetFont(fixed)
-		runtime.KeepAlive(fixed)
-	}
-	layout.AddWidget(c.body.QWidget)
+	c.body = newBodyEditor(c.QObject, c.html)
+	c.body.parts = c.image
+	c.body.loadImages = a.LoadRemoteImages
+	layout.AddWidget(c.body.web.QWidget)
 	c.SetCentralWidget(central)
 
 	c.makeButtonBar()
@@ -193,38 +191,29 @@ func (c *composer) makeButtonBar() {
 
 	if c.html {
 		bar.AddSeparator()
-		format := func(text, shortcut string, ic *qt.QIcon, set func(on bool)) *qt.QAction {
-			a := add(text, shortcut, ic, nil)
+		// Each button does the editing command of its name to the text
+		// selected, which turns the format on or off as it is there.
+		format := func(text, shortcut string, ic *qt.QIcon, command string) *qt.QAction {
+			a := add(text, shortcut, ic, func() { c.body.exec(command, "") })
 			a.SetCheckable(true)
-			// Only the user's clicks change the text: the button is
-			// also checked to follow the cursor, which must not.
-			a.OnTriggered(func() { set(a.IsChecked()) })
 			return a
 		}
-		c.bold = format("Bold", "Ctrl+B", icon(icons.Bold), func(on bool) {
-			if on {
-				c.body.SetFontWeight(int(qt.QFont__Bold))
-			} else {
-				c.body.SetFontWeight(int(qt.QFont__Normal))
-			}
-		})
-		italic := format("Italic", "Ctrl+I", icon(icons.Italic), c.body.SetFontItalic)
-		underline := format("Underline", "Ctrl+U", icon(icons.Underline), c.body.SetFontUnderline)
-		c.bullets = format("Bullets", "", icon(icons.Bullets), func(on bool) {
-			c.setList(qt.QTextListFormat__ListDisc, on)
-		})
-		c.numbers = format("Numbers", "", icon(icons.Numbers), func(on bool) {
-			c.setList(qt.QTextListFormat__ListDecimal, on)
-		})
+		c.bold = format("Bold", "Ctrl+B", icon(icons.Bold), "bold")
+		c.italic = format("Italic", "Ctrl+I", icon(icons.Italic), "italic")
+		c.underline = format("Underline", "Ctrl+U", icon(icons.Underline), "underline")
+		c.bullets = format("Bullets", "", icon(icons.Bullets), "insertUnorderedList")
+		c.numbers = format("Numbers", "", icon(icons.Numbers), "insertOrderedList")
 		add("Image", "", icon(icons.Image), c.insertImage)
-		// The buttons show the format of the text at the cursor.
-		c.body.OnCurrentCharFormatChanged(func(f *qt.QTextCharFormat) {
-			c.bold.SetChecked(f.FontWeight() >= int(qt.QFont__Bold))
-			italic.SetChecked(f.FontItalic())
-			underline.SetChecked(f.FontUnderline())
-		})
-		c.body.OnCursorPositionChanged(c.showList)
-		c.formatting = []*qt.QAction{c.bold, italic, underline, c.bullets, c.numbers}
+		// The buttons show the format of the text at the cursor, as the
+		// body says it is, whatever a click on one checked.
+		c.body.onState = func(s editState) {
+			c.bold.SetChecked(s.Bold)
+			c.italic.SetChecked(s.Italic)
+			c.underline.SetChecked(s.Underline)
+			c.bullets.SetChecked(s.Bullets)
+			c.numbers.SetChecked(s.Numbers)
+		}
+		c.formatting = []*qt.QAction{c.bold, c.italic, c.underline, c.bullets, c.numbers}
 	}
 	c.AddToolBar(qt.TopToolBarArea, bar)
 }
@@ -234,72 +223,91 @@ func (c *composer) engine() *engine.Engine {
 	return c.w.engines[currentData(c.from)]
 }
 
-// draft returns the message as it has been written.
-func (c *composer) draft() (*message.Draft, error) {
-	e := c.engine()
-	if e == nil {
-		return nil, errors.New("the account to send from has gone")
+// draft calls got with the message as it has been written, once the body
+// has said what it holds.
+func (c *composer) draft(got func(*message.Draft, error)) {
+	if c.engine() == nil {
+		got(nil, errors.New("the account to send from has gone"))
+		return
 	}
-	a := e.Account()
-	d := &message.Draft{
-		From:          &mail.Address{Name: a.Name, Address: a.Email},
-		ReplyTo:       a.ReplyTo,
-		To:            c.to.Text(),
-		Cc:            c.cc.Text(),
-		Bcc:           c.bcc.Text(),
-		Subject:       c.subject.Text(),
-		Text:          c.body.ToPlainText(),
-		InReplyTo:     c.inReplyTo,
-		References:    c.references,
-		Attachments:   c.attachments,
-		ReturnReceipt: c.receipt.IsChecked(),
-	}
-	if c.html {
-		d.HTML = c.body.ToHtml()
-		// An image is a character of its own in the text, which the
-		// plain version has no use for.
-		d.Text = strings.ReplaceAll(d.Text, "\uFFFC", "")
+	c.body.content(func(html, text string) {
+		// The account may have gone meanwhile.
+		e := c.engine()
+		if e == nil {
+			got(nil, errors.New("the account to send from has gone"))
+			return
+		}
+		a := e.Account()
+		d := &message.Draft{
+			From:          &mail.Address{Name: a.Name, Address: a.Email},
+			ReplyTo:       a.ReplyTo,
+			To:            c.to.Text(),
+			Cc:            c.cc.Text(),
+			Bcc:           c.bcc.Text(),
+			Subject:       c.subject.Text(),
+			Text:          text,
+			HTML:          html,
+			InReplyTo:     c.inReplyTo,
+			References:    c.references,
+			Attachments:   c.attachments,
+			ReturnReceipt: c.receipt.IsChecked(),
+		}
 		for _, img := range c.images {
 			if strings.Contains(d.HTML, "cid:"+img.ContentID) {
 				d.Images = append(d.Images, img)
 			}
 		}
-	}
-	return d, nil
+		got(d, nil)
+	})
 }
 
-// send sends the message.
+// send sends the message. The window is not used from when it is asked
+// for what is written, so that nothing changes that is not sent.
 func (c *composer) send() {
 	if c.sending {
 		return
 	}
-	d, err := c.draft()
-	if err != nil {
-		c.warn("Send", err)
-		return
-	}
-	rcpts, err := d.Recipients()
-	if err != nil {
-		c.warn("Send", err)
-		return
-	}
-	// Recipients has read every list of addresses already.
-	to, _ := message.ParseAddresses(d.To)
-	if len(rcpts) == 0 {
-		c.warn("Send", errors.New("the message has no recipients"))
-		return
-	}
-	if strings.TrimSpace(d.Subject) == "" && !confirm(c.QWidget, "Send", "The message has no subject. Send it anyway?") {
-		return
-	}
-	raw, err := d.Build(false)
-	if err != nil {
-		c.warn("Send", err)
-		return
-	}
-	e := c.engine()
 	c.sending = true
 	c.SetEnabled(false)
+	stop := func(err error) {
+		c.sending = false
+		c.SetEnabled(true)
+		if err != nil {
+			c.warn("Send", err)
+		}
+	}
+	c.draft(func(d *message.Draft, err error) {
+		if err != nil {
+			stop(err)
+			return
+		}
+		rcpts, err := d.Recipients()
+		if err != nil {
+			stop(err)
+			return
+		}
+		if len(rcpts) == 0 {
+			stop(errors.New("the message has no recipients"))
+			return
+		}
+		if strings.TrimSpace(d.Subject) == "" && !confirm(c.QWidget, "Send", "The message has no subject. Send it anyway?") {
+			stop(nil)
+			return
+		}
+		raw, err := d.Build(false)
+		if err != nil {
+			stop(err)
+			return
+		}
+		c.sendBuilt(d, raw, rcpts)
+	})
+}
+
+// sendBuilt sends the message as it has been built, to the recipients.
+func (c *composer) sendBuilt(d *message.Draft, raw []byte, rcpts []string) {
+	// Recipients has read every list of addresses already.
+	to, _ := message.ParseAddresses(d.To)
+	e := c.engine()
 	c.StatusBar().ShowMessage("Sending…")
 	e.Send(raw, rcpts, c.dsn.IsChecked(), func(err error) {
 		c.sending = false
@@ -327,18 +335,33 @@ func (c *composer) send() {
 // saveDraft puts the message in the drafts folder, and then calls done if it
 // is not nil.
 func (c *composer) saveDraft(done func()) {
-	d, err := c.draft()
-	if err != nil {
-		c.warn("Save Draft", err)
+	if c.savingDraft {
 		return
 	}
-	raw, err := d.Build(true)
-	if err != nil {
-		c.warn("Save Draft", err)
-		return
-	}
-	c.StatusBar().ShowMessage("Saving the draft…")
 	c.savingDraft = true
+	c.StatusBar().ShowMessage("Saving the draft…")
+	failed := func(err error) {
+		c.savingDraft = false
+		c.StatusBar().ClearMessage()
+		c.warn("Save Draft", err)
+	}
+	c.draft(func(d *message.Draft, err error) {
+		if err != nil {
+			failed(err)
+			return
+		}
+		raw, err := d.Build(true)
+		if err != nil {
+			failed(err)
+			return
+		}
+		c.saveBuilt(raw, done)
+	})
+}
+
+// saveBuilt puts the message, as it has been built, in the drafts folder,
+// and then calls done if it is not nil.
+func (c *composer) saveBuilt(raw []byte, done func()) {
 	c.engine().SaveDraft(raw, func(saved engine.Saved, err error) {
 		c.savingDraft = false
 		c.StatusBar().ClearMessage()
@@ -346,7 +369,7 @@ func (c *composer) saveDraft(done func()) {
 			c.warn("Save Draft", err)
 			return
 		}
-		c.body.Document().SetModifiedWithBool(false)
+		c.body.modified = false
 		c.saved = append(c.saved, saved)
 		c.StatusBar().ShowMessage2("The draft was saved to "+saved.Folder+".", 5000)
 		if done != nil {
@@ -363,16 +386,13 @@ func (c *composer) mayClose() bool {
 		return false
 	}
 	keepLatest := false
-	if !c.sent && c.body.Document().IsModified() {
+	if !c.sent && c.body.modified {
 		answer := qt.QMessageBox_Question5(c.QWidget, "Close",
 			"The message has not been sent. Save it as a draft?",
 			qt.QMessageBox__Save|qt.QMessageBox__Discard|qt.QMessageBox__Cancel)
 		switch answer {
 		case qt.QMessageBox__Save:
-			c.saveDraft(func() {
-				c.body.Document().SetModifiedWithBool(false)
-				c.Close()
-			})
+			c.saveDraft(func() { c.Close() })
 			return false
 		case qt.QMessageBox__Cancel:
 			return false
@@ -432,7 +452,7 @@ func (c *composer) addAttachment(a message.Attachment) {
 	c.attachments = append(c.attachments, a)
 	c.attachList.AddItem(fmt.Sprintf("%s (%s)", a.Filename, size(len(a.Data))))
 	c.attachList.SetVisible(true)
-	c.body.Document().SetModifiedWithBool(true)
+	c.body.modified = true
 }
 
 // removeAttachment removes the attachment that is selected.
@@ -444,7 +464,7 @@ func (c *composer) removeAttachment() {
 	c.attachments = append(c.attachments[:row], c.attachments[row+1:]...)
 	c.attachList.TakeItem(row).Delete()
 	c.attachList.SetVisible(len(c.attachments) > 0)
-	c.body.Document().SetModifiedWithBool(true)
+	c.body.modified = true
 }
 
 func (c *composer) warn(title string, err error) {
@@ -475,7 +495,7 @@ func (w *Window) composeNew(to, subject string) {
 	if to == "" {
 		c.to.SetFocus()
 	} else {
-		c.body.SetFocus()
+		c.body.web.SetFocus()
 	}
 }
 
@@ -496,9 +516,10 @@ func (w *Window) replyTo(all bool) {
 	c.inReplyTo, c.references = m.ReplyReferences()
 	c.repliedFolder, c.repliedUID = w.view.folder, w.view.uid
 	c.addImages(m)
+	c.addWebImages(m)
 	c.setBody(a, m.Attribution()+"\n"+message.QuoteText(m.Body()), m.QuoteHTML())
 	c.Show()
-	c.body.SetFocus()
+	c.body.web.SetFocus()
 }
 
 // forwardMessage opens a window to forward the message that is shown, with
@@ -519,11 +540,12 @@ func (w *Window) forwardMessage() {
 		quoteHTML += message.TextToHTML(m.Body())
 	}
 	c.addImages(m)
+	c.addWebImages(m)
 	c.setBody(e.Account(), header+"\n"+m.Body(), quoteHTML)
 	for _, a := range m.Files() {
 		c.addAttachment(a)
 	}
-	c.body.Document().SetModifiedWithBool(false)
+	c.body.modified = false
 	c.Show()
 	c.to.SetFocus()
 }
@@ -545,15 +567,16 @@ func (w *Window) composeDraft(e *engine.Engine, m *message.Message, folder strin
 	}
 	if c.html && m.HTML != "" {
 		c.addImages(m)
-		c.body.SetHtml(m.HTML)
+		c.addWebImages(m)
+		c.body.setHTML(m.HTML)
 	} else {
-		c.body.SetPlainText(m.Body())
+		c.body.setText(m.Body(), 0)
 	}
 	for _, a := range m.Files() {
 		c.addAttachment(a)
 	}
 	c.saved = append(c.saved, engine.Saved{Folder: folder, UID: uid, UIDValidity: w.uidValidity(e, folder)})
-	c.body.Document().SetModifiedWithBool(false)
+	c.body.modified = false
 	c.Show()
 }
 

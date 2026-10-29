@@ -13,7 +13,9 @@ import (
 
 	"github.com/nomad-software/apemail/internal/account"
 	"github.com/nomad-software/apemail/internal/addressbook"
+	"github.com/nomad-software/apemail/internal/message"
 	"github.com/nomad-software/apemail/internal/remote/remotetest"
+	"github.com/nomad-software/apemail/internal/send/sendtest"
 )
 
 // TestInBackground checks that what is done away from the UI's thread is
@@ -120,10 +122,8 @@ func TestCloseWhileSavingDraft(t *testing.T) {
 	wait(t, "the account", func() bool { return len(w.engines) == 1 })
 	c := openComposer(t, w)
 	held, release := s.Hold(t, "APPEND")
-	mainthread.Wait(func() {
-		c.body.SetPlainText("Not finished.")
-		c.saveDraft(nil)
-	})
+	typeInBody(t, c, "Not finished.")
+	mainthread.Wait(func() { c.saveDraft(nil) })
 	select {
 	case <-held:
 	case <-time.After(5 * time.Second):
@@ -291,6 +291,93 @@ func TestImagesAfterViewGone(t *testing.T) {
 	mainthread.Wait(func() {
 		if !v.gone {
 			t.Error("the view does not know it is gone")
+		}
+	})
+}
+
+// TestCloseWhileBodyAnswers checks that the window to write a message in
+// does not close while it waits for its body to say what it holds, to send
+// it, and is sent once it has, as what was written then.
+func TestCloseWhileBodyAnswers(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Sent")
+	smtp := sendtest.Start(t, true)
+	w := newTestWindow(t, s, func(a *account.Account) { a.Outgoing = smtp.Account })
+	wait(t, "the account", func() bool { return len(w.engines) == 1 })
+	c := openComposer(t, w)
+	typeInBody(t, c, "Written")
+	mainthread.Wait(func() {
+		// Were it to close, it would not ask about what is written.
+		c.body.modified = false
+		c.send()
+		// The body answers on a later turn of the event loop.
+		if c.Close() || !composers[c] {
+			t.Error("the window closed while the body was asked what it holds")
+		}
+	})
+	wait(t, "the window closed", func() bool { return !composers[c] })
+	if msgs := smtp.Messages(); len(msgs) != 1 || !strings.Contains(string(msgs[0].Data), "Written") {
+		t.Errorf("the server was given %+v", msgs)
+	}
+}
+
+// TestDraftBeforeBodyLoads checks that what the body holds, asked for
+// before it has loaded, is told once it has, as it is then.
+func TestDraftBeforeBodyLoads(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove))
+	w := newTestWindow(t, s, func(a *account.Account) { a.Signature = "Ada" })
+	wait(t, "the account", func() bool { return len(w.engines) == 1 })
+	var c *composer
+	var text string
+	done := false
+	mainthread.Wait(func() {
+		w.composeNew("bob@example.com", "Early")
+		for c = range composers {
+		}
+		if c.body.loaded {
+			t.Fatal("the body loaded at once")
+		}
+		c.draft(func(d *message.Draft, err error) {
+			if err != nil {
+				t.Error(err)
+			}
+			text, done = d.Text, true
+		})
+	})
+	t.Cleanup(func() { closeUnchanged(c) })
+	wait(t, "the draft", func() bool { return done })
+	if !strings.HasSuffix(text, "-- \nAda") {
+		t.Errorf("the draft is %q", text)
+	}
+}
+
+// TestBodyImagesAfterClose checks that images fetched for the body of a
+// message being written that arrive once its window has closed are not
+// shown in it.
+func TestBodyImagesAfterClose(t *testing.T) {
+	images := newImageServer(t)
+	images.hold = make(chan struct{})
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove))
+	w := newTestWindow(t, s, func(a *account.Account) {
+		a.ComposeHTML = true
+		a.LoadRemoteImages = true
+	})
+	wait(t, "the account", func() bool { return len(w.engines) == 1 })
+	var c *composer
+	mainthread.Wait(func() {
+		w.composeDraft(w.engines[w.order[0]], imageMessage(images, "/a.png"), "Drafts", 1)
+		for c = range composers {
+		}
+	})
+	eventually(t, "the image to be asked for", func() bool { return images.count("/a.png") == 1 })
+	body := c.body
+	closeUnchanged(c)
+	wait(t, "the body destroyed", func() bool { return body.gone })
+	close(images.hold)
+	time.Sleep(200 * time.Millisecond)
+	// Had the body been touched, the test would have crashed.
+	mainthread.Wait(func() {
+		if len(body.webImages) != 0 {
+			t.Errorf("%d images were kept by the body gone", len(body.webImages))
 		}
 	})
 }

@@ -6,7 +6,7 @@ import (
 	qt "github.com/mappu/miqt/qt6"
 )
 
-// A Qt value miqt returns by value, as a QVariant, a QTextCursor or a QSize,
+// A Qt value miqt returns by value, as a QVariant, a QFont or a QSize,
 // is freed by a finalizer once Go no longer uses it, and miqt does not keep
 // it alive through its own calls: it can be freed in the middle of the last
 // call made on it, or of one it is given to. Such a value is kept, with

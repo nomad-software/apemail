@@ -6,7 +6,6 @@ import (
 	"html"
 	"maps"
 	"net/url"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -46,17 +45,11 @@ type messageView struct {
 	saveAll      *qt.QPushButton
 	files        []message.Attachment
 
-	// web shows page, the body of the message. id is the view's in
-	// webViews, and serial that of what it shows, which changes each time
-	// it shows something else, so that what was asked for by what it
-	// showed before is not served. body is what it shows, and html the page
-	// served for it, in the colours of the theme; loaded is the serial of
-	// the page last loaded whole. stale is set when it is to be shown
-	// again in the colours of the theme, once the view is seen.
-	web    *webengine.QWebEngineView
-	page   *webengine.QWebEnginePage
-	id     int
-	serial int
+	// webPage shows the body of the message. body is what it shows, and
+	// html the page served for it, in the colours of the theme; loaded is
+	// the serial of the page last loaded whole. stale is set when it is to
+	// be shown again in the colours of the theme, once the view is seen.
+	*webPage
 	body   string
 	html   string
 	loaded int
@@ -86,9 +79,6 @@ type messageView struct {
 	// loadAlways reports if the account shown has its images loaded when
 	// a message is shown.
 	loadAlways func() bool
-	// gone is set when the view is destroyed, so that images that arrive
-	// afterwards are not shown in it.
-	gone bool
 
 	// addSender is the button which puts whoever replies to the message
 	// go to in the address book, if a message is shown: beside Reply to,
@@ -138,11 +128,7 @@ func newMessageView() *messageView {
 			v.page.TriggerAction(webengine.QWebEnginePage__Reload, false)
 		}
 	})
-	v.OnDestroyed(func() {
-		v.gone = true
-		v.stopLoading()
-		delete(webViews, v.id)
-	})
+	v.OnDestroyed(v.stopLoading)
 
 	v.clear()
 	return v
@@ -150,23 +136,22 @@ func newMessageView() *messageView {
 
 // render shows the HTML as the body.
 func (v *messageView) render(body string) {
-	v.serial++
 	v.body, v.stale = body, false
-	v.restyle()
-	u := qt.NewQUrl3(v.pageURL("message"))
-	v.page.Load(u)
-	u.Delete()
+	v.style()
+	v.load("message")
+}
+
+// style makes the page of what is shown in the colours of the theme.
+func (v *messageView) style() {
+	v.html = messagePage(v.body)
+	v.paint()
 }
 
 // restyle makes the page of what is shown in the colours of the theme,
 // and shows it again if it was shown: now if the view is seen, or when it
 // is, as every page reloading at once is slow.
 func (v *messageView) restyle() {
-	v.html = webPage(v.body)
-	palette := qt.QGuiApplication_Palette()
-	base := palette.Color(qt.QPalette__Active, qt.QPalette__Base)
-	v.page.SetBackgroundColor(base)
-	runtime.KeepAlive(palette)
+	v.style()
 	switch {
 	case v.loaded != v.serial:
 		// It is being loaded, as it is now.

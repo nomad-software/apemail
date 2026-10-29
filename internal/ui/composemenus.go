@@ -25,15 +25,24 @@ type editActions struct {
 // body last in focus, Format and Options.
 func (c *composer) makeMenus() {
 	c.editor = c.body
-	for _, f := range []*qt.QLineEdit{c.to, c.cc, c.bcc, c.subject} {
-		f.OnFocusInEvent(func(super func(*qt.QFocusEvent), e *qt.QFocusEvent) {
-			c.editor = f
-			super(e)
-		})
-	}
-	c.body.OnFocusInEvent(func(super func(*qt.QFocusEvent), e *qt.QFocusEvent) {
+	watchFocus()
+	// The body's own menu has the Edit menu's items, for the body.
+	c.body.web.OnContextMenuEvent(func(_ func(*qt.QContextMenuEvent), e *qt.QContextMenuEvent) {
 		c.editor = c.body
-		super(e)
+		c.updateEditMenu()
+		menu := qt.NewQMenu(c.body.web.QWidget)
+		for _, a := range []*qt.QAction{c.edit.undo, c.edit.redo, nil, c.edit.cut, c.edit.copy, c.edit.paste, c.edit.pastePlain, c.edit.del, nil, c.edit.selectAll} {
+			switch {
+			case a == nil:
+				menu.AddSeparator()
+			case a != c.edit.pastePlain || c.html:
+				menu.QWidget.AddAction(a)
+			}
+		}
+		pos := e.GlobalPos()
+		menu.ExecWithPos(pos)
+		runtime.KeepAlive(pos)
+		menu.DeleteLater()
 	})
 
 	// Close, as Escape, closes the window as its close button does, asking
@@ -90,6 +99,37 @@ func (c *composer) makeMenus() {
 	c.dsn.SetToolTip("Ask the mail servers to say when the message is delivered, or cannot be, where the outgoing server supports it")
 }
 
+// watchingFocus is set once watchFocus has started watching.
+var watchingFocus bool
+
+// watchFocus has the window that a field or body which takes the focus is
+// in take it for the one its Edit menu acts on, as the menu takes the focus
+// while it is open. The body is a page, whose own widget, which takes the
+// focus, is Qt WebEngine's, so the program watches where the focus goes
+// rather than each widget it goes to.
+func watchFocus() {
+	if watchingFocus {
+		return
+	}
+	watchingFocus = true
+	app := qt.UnsafeNewQApplication(qt.QCoreApplication_Instance().UnsafePointer())
+	app.OnFocusChanged(func(_, now *qt.QWidget) {
+		if now == nil {
+			return
+		}
+		for c := range composers {
+			for _, f := range []*qt.QLineEdit{c.to, c.cc, c.bcc, c.subject} {
+				if now.UnsafePointer() == f.UnsafePointer() {
+					c.editor = f
+				}
+			}
+			if c.body.web.IsAncestorOf(now) {
+				c.editor = c.body
+			}
+		}
+	})
+}
+
 // updateEditMenu enables the items of the Edit menu that the field or body
 // last in focus can do.
 func (c *composer) updateEditMenu() {
@@ -97,11 +137,8 @@ func (c *composer) updateEditMenu() {
 	switch e := c.editor.(type) {
 	case *qt.QLineEdit:
 		undo, redo, selected = e.IsUndoAvailable(), e.IsRedoAvailable(), e.HasSelectedText()
-	case *qt.QTextEdit:
-		doc := e.Document()
-		cursor := e.TextCursor()
-		undo, redo, selected = doc.IsUndoAvailable(), doc.IsRedoAvailable(), cursor.HasSelection()
-		runtime.KeepAlive(cursor)
+	case *bodyEditor:
+		undo, redo, selected = e.canUndo(), e.canRedo(), e.web.HasSelection()
 	}
 	c.edit.undo.SetEnabled(undo)
 	c.edit.redo.SetEnabled(redo)
@@ -118,10 +155,10 @@ func (c *composer) deleteSelection() {
 		if e.HasSelectedText() {
 			e.Del()
 		}
-	case *qt.QTextEdit:
-		cursor := e.TextCursor()
-		cursor.RemoveSelectedText()
-		runtime.KeepAlive(cursor)
+	case *bodyEditor:
+		if e.web.HasSelection() {
+			e.exec("delete", "")
+		}
 	}
 }
 
@@ -131,5 +168,5 @@ func (c *composer) pastePlain() {
 		c.editor.Paste()
 		return
 	}
-	c.body.InsertPlainText(qt.QGuiApplication_Clipboard().Text())
+	c.body.pastePlain()
 }

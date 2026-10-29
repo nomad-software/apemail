@@ -15,6 +15,7 @@ import (
 	"github.com/nomad-software/apemail/internal/account"
 	"github.com/nomad-software/apemail/internal/addressbook"
 	"github.com/nomad-software/apemail/internal/crypt"
+	"github.com/nomad-software/apemail/internal/message"
 	"github.com/nomad-software/apemail/internal/remote/remotetest"
 	"github.com/nomad-software/apemail/internal/send/sendtest"
 )
@@ -201,10 +202,7 @@ func TestCompleteAddress(t *testing.T) {
 	addContact(t, w, "Hopper, Grace", "grace@example.com")
 	addContact(t, w, "Alan Turing", "alan@example.com")
 	c := openComposer(t, w)
-	defer mainthread.Wait(func() {
-		c.body.Document().SetModifiedWithBool(false)
-		c.Close()
-	})
+	defer closeUnchanged(c)
 
 	mainthread.Wait(func() {
 		if len(c.completers) != 3 {
@@ -232,10 +230,8 @@ func TestCompleteAddress(t *testing.T) {
 		if c.to.CursorPosition() != len(c.to.Text()) {
 			t.Errorf("cursor at %d", c.to.CursorPosition())
 		}
-		d, err := c.draft()
-		if err != nil {
-			t.Fatal(err)
-		}
+		// The field is read as the draft reads it.
+		d := &message.Draft{To: c.to.Text()}
 		if rcpts, err := d.Recipients(); err != nil || !slices.Equal(rcpts, []string{"bob@example.com", "grace@example.com"}) {
 			t.Errorf("recipients = %q, %v", rcpts, err)
 		}
@@ -384,7 +380,7 @@ func TestAddressBookWindow(t *testing.T) {
 		if got := c.to.Text(); got != "Alan Turing <alan@example.com>" {
 			t.Errorf("to = %q", got)
 		}
-		c.body.Document().SetModifiedWithBool(false)
+		c.body.modified = false
 		c.Close()
 
 		// It opens once, and closes with the main window.

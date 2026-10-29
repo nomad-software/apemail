@@ -238,10 +238,7 @@ func TestThemeSetting(t *testing.T) {
 	w := newTestWindow(t, s, func(a *account.Account) { a.ComposeHTML = true })
 	wait(t, "the account", func() bool { return len(w.engines) == 1 })
 	c := openComposer(t, w)
-	defer mainthread.Wait(func() {
-		c.body.Document().SetModifiedWithBool(false)
-		c.Close()
-	})
+	defer closeUnchanged(c)
 
 	mainthread.Wait(func() {
 		// The settings offer the system's first, as it is.
@@ -260,11 +257,9 @@ func TestThemeSetting(t *testing.T) {
 		// The HTML written is in the theme too, once the change of
 		// palette, which is posted to the windows open, is delivered.
 		qt.QCoreApplication_ProcessEvents()
-		p := c.body.Palette()
-		if got := p.Color(qt.QPalette__Active, qt.QPalette__Base).Name(); got != "#1e1e1e" {
-			t.Errorf("compose page %s", got)
+		if got := c.body.page.BackgroundColor(); got.Name() != "#1e1e1e" {
+			t.Errorf("compose page %s", got.Name())
 		}
-		runtime.KeepAlive(p)
 		if saved := settings.Load(w.files.Settings); saved.Theme != settings.ThemeDark {
 			t.Errorf("saved %q", saved.Theme)
 		}

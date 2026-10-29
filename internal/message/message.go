@@ -194,9 +194,9 @@ func partName(h gomessage.Header, params map[string]string, n int) string {
 }
 
 // unixLines returns text with its lines ended by LF alone. Mail ends them
-// with CRLF, and Qt's editor, in which replies quote the text, takes the CR
-// and the LF each for the end of a line, which would double every line
-// break.
+// with CRLF, and some with a CR alone, which a page, where text is shown
+// and written, takes for the end of a line too: a quote, which splits the
+// text into lines at LF, would leave the line after a CR unquoted.
 func unixLines(text string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
 }
