@@ -135,7 +135,7 @@ func TestAbout(t *testing.T) {
 		d := newAboutDialog(nil)
 		defer d.DeleteLater()
 		licences := licenceText()
-		for _, want := range []string{qt.QLibraryInfo_Version().ToString(), "LGPLv3", "miqt", "go-imap", "go-smtp", "go-sasl", "go-message", "age", "x/crypto", "x/text"} {
+		for _, want := range []string{qt.QLibraryInfo_Version().ToString(), "LGPLv3", "Qt WebEngine", "Chromium", "qtwebengine-licensing", "miqt", "go-imap", "go-smtp", "go-sasl", "go-message", "age", "x/crypto", "x/text"} {
 			if !strings.Contains(licences, want) {
 				t.Errorf("the licences do not mention %s", want)
 			}

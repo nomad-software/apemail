@@ -783,9 +783,6 @@ func (w *Window) sidebarMenu(id, name, folder string) *qt.QMenu {
 	}
 	menu.AddSeparator()
 	menu.AddActionWithText("Account Settings…").OnTriggered(func() { w.editAccountDialog(e.Account(), false) })
-	if name == "" {
-		menu.AddActionWithText("Remove Account…").OnTriggered(func() { w.removeAccountOf(e) })
-	}
 	return menu
 }
 

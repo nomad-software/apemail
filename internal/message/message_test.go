@@ -287,8 +287,8 @@ func TestFormatAddressQuotes(t *testing.T) {
 }
 
 // TestParseLineEnds checks that the text of a message has its lines ended
-// by LF alone, as Qt shows a CR as another line, whether they end in CRLF,
-// as mail does, or a CR alone, and in a second text part too.
+// by LF alone, as Qt's editor takes a CR for another line, whether they end
+// in CRLF, as mail does, or a CR alone, and in a second text part too.
 func TestParseLineEnds(t *testing.T) {
 	raw := "From: a@example.com\r\nSubject: s\r\nMIME-Version: 1.0\r\n" +
 		"Content-Type: multipart/mixed; boundary=b\r\n\r\n" +
@@ -305,43 +305,33 @@ func TestParseLineEnds(t *testing.T) {
 	}
 }
 
-// TestQtMarker checks that Qt's marker of its own HTML, which has Qt keep
-// every space and line break of the HTML wherever it is, is taken out of
-// what is read, where another client may have quoted it, and is not sent.
-func TestQtMarker(t *testing.T) {
-	for _, marker := range []string{
-		`<meta name="qrichtext" content="1">`,
-		`<META content='1' NAME='qrichtext' />`,
-		`<meta name=qrichtext content=1>`,
-	} {
-		raw := "From: a@example.com\r\nSubject: s\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" +
-			"<html><body>\r\n  <p>foo</p>\r\n  <blockquote>" + marker + "<p>quoted</p></blockquote>\r\n</body></html>\r\n"
-		m, err := message.Parse([]byte(raw))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(strings.ToLower(m.HTML), "qrichtext") || !strings.Contains(m.HTML, "<p>quoted</p>") {
-			t.Errorf("%s: html = %q", marker, m.HTML)
-		}
-	}
-	// Other tags of the head are left as they are.
-	m, err := message.Parse([]byte("From: a@example.com\r\nContent-Type: text/html\r\n\r\n<meta charset=\"utf-8\"><p>x</p>"))
+// TestHTMLAsItIs checks that the HTML of a message is read, and that of a
+// draft sent, exactly as it is: nothing in it is rewritten, hidden or
+// linked, whatever it holds.
+func TestHTMLAsItIs(t *testing.T) {
+	body := "<!DOCTYPE html>\r\n<html><head><meta name=\"qrichtext\" content=\"1\"><style>.p { display: none }</style></head>\r\n" +
+		"<body><div class=\"p\" style=\"display:none\">Preview</div>" +
+		strings.Repeat(`<table width="100%"><tr><td>`, 8) + "See www.example.com or a@example.com" + strings.Repeat("</td></tr></table>", 8) +
+		`<img src="https://example.com/a.png" width="600px" height="auto"><a href=" www.example.com/b ">b</a></body></html>`
+	m, err := message.Parse([]byte("From: a@example.com\r\nSubject: s\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" + body))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.HTML != `<meta charset="utf-8"><p>x</p>` {
-		t.Errorf("html = %q", m.HTML)
+	if m.HTML != body {
+		t.Errorf("read\n%s\nwant\n%s", m.HTML, body)
 	}
 
-	d := &message.Draft{
-		From: &mail.Address{Address: "a@example.com"}, To: "b@example.com", Subject: "s", Text: "foo",
-		HTML: `<html><head><meta name="qrichtext" content="1" /><meta charset="utf-8" /></head><body><p>foo</p></body></html>`,
-	}
+	html := `<html><head><meta name="qrichtext" content="1" /><meta charset="utf-8" /></head><body><p>foo</p></body></html>`
+	d := &message.Draft{From: &mail.Address{Address: "a@example.com"}, To: "b@example.com", Subject: "s", Text: "foo", HTML: html}
 	raw, err := d.Build(false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw), "qrichtext") || !strings.Contains(string(raw), "<p>foo</p>") {
-		t.Errorf("sent\n%s", raw)
+	sent, err := message.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sent.HTML != html {
+		t.Errorf("sent %q, want %q", sent.HTML, html)
 	}
 }

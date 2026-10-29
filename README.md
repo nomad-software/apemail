@@ -62,36 +62,28 @@ it you have.
   the border between two headings to share the width between them. Above
   it are the folder, with those it is within (as Archive/2026), and how
   many messages it holds.
-- Plain text and HTML messages are shown, with their links (web and mail
-  addresses written out in the text are made links too, and open in your
-  browser or a new message when clicked), the images they carry within
-  them, and their attachments, counted among the headers and saved with a
+- Plain text and HTML messages are shown, with their links, which open in
+  your browser or a new message when clicked (the web and mail addresses
+  written out in a plain text message are made links too), the images they
+  carry within them, and their attachments, counted among the headers and saved with a
   click (they shade as the mouse passes over them), or all at once with **Save
   All…**, into a folder you choose, where a file already there is never
   written over: the attachment is saved beside it as `name (2).pdf`. Many
   attachments wrap onto rows, and scroll beyond three, rather than widening
   the window.
-  An image on the internet is not loaded, and is shown as a small icon where
-  it would be, until you press **Load Remote Images** at the bottom right
-  of the message's header (or the account is set to load them always, when
-  the button shows only if some could not be loaded). Then
-  only the images are fetched: no stylesheets, backgrounds or scripts, no
+  An image on the internet is not loaded until you press **Load Remote
+  Images** at the bottom right of the message's header, which shows once
+  the message asks for one (or the account is set to load them always, when
+  the button shows only if some could not be loaded). Then only images are
+  fetched, those of backgrounds too: no stylesheets, fonts or scripts, no
   cookies, and no more than 100 images of 10 MB each.
-- HTML is shown by Qt, which reads less of HTML than a web browser does, so
-  a message is made fit for it first: what the message hides on a
-  computer's screen (`display: none`, in its style or by its stylesheet, as
-  a newsletter's preview text, what it shows only on a phone and its
-  tracking pixel) is left out, what its stylesheet shows on a computer
-  though Outlook is not to see it is shown, and sizes Qt cannot read
-  (`width="600px"`, `height="auto"`, or a width in the style) are made
-  pixels, as otherwise an image is drawn no height at all and a table
-  squeezed into a narrow column.
-- **View in Browser**, beside Load Remote Images, shows an HTML message in
-  your web browser, as it is meant to look. The browser loads its images
-  from the internet, which tells the sender that it was read, but runs none
-  of its scripts. The message is not written to a file, which would leave
-  it unencrypted on disk: ApeMail serves it to the browser itself, on this
-  computer only, at an address no one can guess, for ten minutes.
+- HTML is shown by Qt WebEngine (Chromium, within ApeMail), as the message
+  has it, so it looks as its sender meant it to: nothing in it is changed.
+  It runs no scripts, and has no network of its own: the message is given
+  to it from memory, and everything else it would load is refused, past
+  what the message carries and the images you ask for, which ApeMail
+  fetches itself. Where a message gives no colours of its own it is shown
+  in those of the theme.
 - New mail in the inbox is seen as it arrives, while ApeMail is running
   (IMAP IDLE). There is no checking every few minutes.
 - Only what you look at is fetched, so a mailbox of many years costs nothing
@@ -198,9 +190,8 @@ it you have.
 - Check the inbox for mail when ApeMail starts.
 - Load the images messages link to on the internet when they are shown,
   rather than only when asked (off unless you turn it on).
-- **Remove Account** (Accounts menu, or the account's menu in the side bar)
-  removes it from ApeMail after asking; the mailbox on the server is not
-  touched.
+- **Remove Account** (Accounts menu) removes the account selected from
+  ApeMail after asking; the mailbox on the server is not touched.
 - **Update Unread Counts** (Accounts menu, or the account's menu in the side
   bar) asks the server how many messages of every folder are unread, in a
   second or two, without opening any.
@@ -293,11 +284,9 @@ Go makes it natural to do many things at once, and ApeMail does:
 
 ### The message
 
-- Newsletters place things with tables inside tables, a dozen deep, and Qt
-  lays out each table again for every pass over the one it is in, so each
-  table deeper doubles the time. Tables more than four deep are shown as
-  blocks, one below the other, keeping their colours: such a
-  newsletter took a minute to show, and now takes a quarter of a second.
+- Messages are shown by Chromium, which lays out a newsletter of tables
+  nested a dozen deep at once, and is given the message from memory rather
+  than through a file or a web server.
 
 ### Measured
 
@@ -358,22 +347,23 @@ Building needs:
 - Go 1.27 or later
 - A C++ compiler (GCC or Clang)
 - `pkg-config`
-- The Qt 6 development files of Qt Widgets and Qt SVG (which draws the icons)
+- The Qt 6 development files of Qt Widgets, Qt SVG (which draws the icons)
+  and Qt WebEngine (which shows messages)
 
 Install them with your distribution's package manager:
 
 ```sh
 # Arch, CachyOS, Manjaro
-sudo pacman -S go gcc pkgconf qt6-base qt6-svg
+sudo pacman -S go gcc pkgconf qt6-base qt6-svg qt6-webengine
 
 # Debian, Ubuntu
-sudo apt install golang-go build-essential pkg-config qt6-base-dev qt6-svg-dev
+sudo apt install golang-go build-essential pkg-config qt6-base-dev qt6-svg-dev qt6-webengine-dev
 
 # Fedora
-sudo dnf install golang gcc-c++ pkgconf-pkg-config qt6-qtbase-devel qt6-qtsvg-devel
+sudo dnf install golang gcc-c++ pkgconf-pkg-config qt6-qtbase-devel qt6-qtsvg-devel qt6-qtwebengine-devel
 
 # openSUSE
-sudo zypper install go gcc-c++ pkgconf-pkg-config qt6-base-devel qt6-svg-devel
+sudo zypper install go gcc-c++ pkgconf-pkg-config qt6-base-devel qt6-svg-devel qt6-webengine-devel
 ```
 
 If your distribution's Go is older than 1.27, install Go from
@@ -382,15 +372,17 @@ If your distribution's Go is older than 1.27, install Go from
 Check that Qt can be found with:
 
 ```sh
-pkg-config --modversion Qt6Widgets Qt6SvgWidgets
+pkg-config --modversion Qt6Widgets Qt6SvgWidgets Qt6WebEngineWidgets
 ```
 
-This should print two versions starting with 6.
+This should print three versions starting with 6.
 
 Running a built binary on another machine only needs the Qt 6 runtime
-libraries (`qt6-base` and `qt6-svg` on Arch, `libqt6widgets6` and
-`libqt6svgwidgets6` on Debian and Ubuntu, `qt6-qtbase` and `qt6-qtsvg` on
-Fedora, `libQt6Widgets6` and `libQt6SvgWidgets6` on openSUSE). The icons
+libraries (`qt6-base`, `qt6-svg` and `qt6-webengine` on Arch,
+`libqt6widgets6`, `libqt6svgwidgets6` and `libqt6webenginewidgets6` on Debian
+and Ubuntu, `qt6-qtbase`, `qt6-qtsvg` and `qt6-qtwebengine` on Fedora,
+`libQt6Widgets6`, `libQt6SvgWidgets6` and `libQt6WebEngineWidgets6` on
+openSUSE). The icons
 are ApeMail's own, built into the binary, so no icon theme is needed.
 
 ## Building
@@ -406,17 +398,19 @@ go build -ldflags "-s -w" -o apemail .
 ```
 
 The `-s -w` flags build without the symbol table and debug information, which
-roughly halves the size of the binary, to about 35 MB.
+roughly halves the size of the binary, to about 40 MB.
 
-The first build compiles the whole Qt binding and takes several minutes,
+The first build compiles the whole Qt binding, Qt WebEngine's with it, and
+takes several minutes,
 printing a lot of compiler warnings from the Qt headers which can be ignored.
 Later builds use the Go build cache and take a few seconds.
 
 ## AppImage
 
 Releases for Linux are an [AppImage](https://appimage.org): one file with
-ApeMail and the Qt libraries it needs inside it, which runs without
-installing anything.
+ApeMail and the Qt libraries it needs inside it, Qt WebEngine and the
+process it shows messages in among them, which runs without installing
+anything.
 
 ```sh
 chmod +x ApeMail-*-x86_64.AppImage
@@ -482,9 +476,10 @@ workflow builds on (macOS 14) or later, which the script works out from what
 is in the app and writes into its `Info.plist`.
 
 `make macos` runs the same script on a Mac with Apple Silicon and
-`brew install go pkgconf qtbase qtsvg`: the base of Qt and Qt SVG alone,
-which is all ApeMail uses, as with the whole of Homebrew's `qt` the plugins
-of its other modules go into the app too, with what they use. The icon of the
+`brew install go pkgconf qtbase qtsvg qtwebengine`: the base of Qt, Qt SVG
+and Qt WebEngine alone, which is all ApeMail uses, as with the whole of
+Homebrew's `qt` the plugins of its other modules go into the app too, with
+what they use. The icon of the
 app is drawn from the program's own, within the margin macOS gives the icons
 of the Dock, by `make icons`.
 
@@ -597,6 +592,12 @@ ApeMail treats your mailbox as yours, not its own:
   the wrong messages.
 - Removing an account removes only what is kept on this computer. The
   mailbox on the server is not touched.
+- A message is shown with its scripts off and nothing loaded from the
+  internet: not its images until you ask, nor its stylesheets, fonts, frames
+  or links fetched ahead. Its page is given every connection to a proxy that
+  is not there, so even what goes past the checks of each request reaches
+  no one. It draws without the graphics card, so nothing in a message
+  reaches the card's driver. A link opens in your web browser, never in the message.
 
 ## Testing
 
@@ -610,7 +611,11 @@ afterwards, including that nothing was changed that should not have been.
 Synchronising with CONDSTORE is tested against a small IMAP server of the
 project's own (`internal/remote/condstoretest`), and sending against an SMTP
 server for tests (`internal/send/sendtest`). The interface tests run Qt
-offscreen, so they do not need a display. The work done at once is tested
+offscreen, so they do not need a display, Qt WebEngine with them: messages
+are shown and clicked as you would, and one that names a server of the
+test's own in every way a page can (images, stylesheets, fonts, frames,
+scripts, preconnecting, prefetching) fails the test if any connection at
+all is made to it. The work done at once is tested
 together under the race detector: accounts stopped while every kind of work
 is under way, mail sent from several windows at once, the server dropping
 every connection, and answers that arrive after the window they were for

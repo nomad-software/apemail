@@ -24,15 +24,17 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       # Qt and the parts of it that are loaded while running, which go into
-      # the AppImage: Wayland, X11's platform plugins, and the GTK theme, by
-      # which a dark GNOME desktop is seen to be dark.
+      # the AppImage: Wayland, X11's platform plugins, the GTK theme, by
+      # which a dark GNOME desktop is seen to be dark, and Qt WebEngine,
+      # which shows messages, with the process it runs pages in.
       - name: Install what building needs
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential pkg-config file \
-            qt6-base-dev qt6-svg-dev qmake6 qt6-wayland qt6-qpa-plugins qt6-gtk-platformtheme libgl-dev
-          pkg-config --modversion Qt6Widgets Qt6SvgWidgets
+            qt6-base-dev qt6-svg-dev qt6-webengine-dev libqt6webenginecore6-bin \
+            qmake6 qt6-wayland qt6-qpa-plugins qt6-gtk-platformtheme libgl-dev
+          pkg-config --modversion Qt6Widgets Qt6SvgWidgets Qt6WebEngineWidgets
 
       - uses: actions/checkout@v4
 

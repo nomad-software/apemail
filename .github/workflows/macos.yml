@@ -27,13 +27,14 @@ jobs:
     runs-on: macos-14
     steps:
       # Homebrew's Qt has the pkg-config files that the bindings are built
-      # with. Only its base and Qt SVG, which draws the icons, are
-      # installed, which is all ApeMail uses, as macdeployqt would put the
-      # plugins of the other modules in the app too (see packaging/macos.sh).
+      # with. Only its base, Qt SVG, which draws the icons, and Qt
+      # WebEngine, which shows messages, are installed, which is all ApeMail
+      # uses, as macdeployqt would put the plugins of the other modules in
+      # the app too (see packaging/macos.sh).
       - name: Install Qt
         run: |
-          brew install pkgconf qtbase qtsvg
-          echo "Qt $(pkg-config --modversion Qt6Widgets Qt6SvgWidgets)"
+          brew install pkgconf qtbase qtsvg qtwebengine
+          echo "Qt $(pkg-config --modversion Qt6Widgets Qt6SvgWidgets Qt6WebEngineWidgets)"
 
       - uses: actions/checkout@v4
 

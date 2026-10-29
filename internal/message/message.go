@@ -10,7 +10,6 @@ import (
 	"io"
 	"mime"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -56,12 +55,10 @@ type Message struct {
 	// RFC 8098). There are none if none is asked for.
 	ReceiptTo []*mail.Address
 
-	// Text and HTML are the plain text and HTML versions of the body. A
-	// message can have either, or both. HTML is made fit for Qt to show,
-	// and SourceHTML is the HTML as the message has it, for a web browser.
-	Text       string
-	HTML       string
-	SourceHTML string
+	// Text and HTML are the plain text and HTML versions of the body, as
+	// the message has them. A message can have either, or both.
+	Text string
+	HTML string
 
 	Attachments []Attachment
 }
@@ -157,22 +154,7 @@ func Parse(raw []byte) (*Message, error) {
 			})
 		}
 	}
-	m.SourceHTML = m.HTML
-	m.HTML = linkedText(flatTables(pixelSizes(withoutHidden(withoutQtMarker(m.HTML)))))
 	return m, nil
-}
-
-// qtMarker is the tag with which Qt marks HTML written by its own editor,
-// as ApeMail's: <meta name="qrichtext" content="1">.
-var qtMarker = regexp.MustCompile(`(?i)<meta\s[^>]*name\s*=\s*["']?qrichtext\b[^>]*>`)
-
-// withoutQtMarker returns the HTML without Qt's marker. Wherever it is,
-// as in a message another client quotes, Qt keeps every space and line
-// break of the HTML, so the indenting of the HTML around it shows as empty
-// lines, at the top of the message and between its paragraphs. It is for
-// Qt alone, so it is left out of what is sent as well as what is shown.
-func withoutQtMarker(html string) string {
-	return qtMarker.ReplaceAllString(html, "")
 }
 
 // addressList returns the addresses of a header, or, if they cannot be
@@ -212,8 +194,9 @@ func partName(h gomessage.Header, params map[string]string, n int) string {
 }
 
 // unixLines returns text with its lines ended by LF alone. Mail ends them
-// with CRLF, and Qt takes the CR and the LF each for the end of a line, which
-// would show every line break twice.
+// with CRLF, and Qt's editor, in which replies quote the text, takes the CR
+// and the LF each for the end of a line, which would double every line
+// break.
 func unixLines(text string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
 }
@@ -534,7 +517,7 @@ func (d *Draft) body() part {
 	text := textPart("text/plain", d.Text)
 	body := text
 	if d.HTML != "" {
-		html := textPart("text/html", withoutQtMarker(d.HTML))
+		html := textPart("text/html", d.HTML)
 		if len(d.Images) > 0 {
 			parts := []part{html}
 			for _, img := range d.Images {

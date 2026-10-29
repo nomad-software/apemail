@@ -4,8 +4,9 @@
 # result is build/ApeMail-<version>-arm64.dmg.
 #
 # It runs on a Mac with Apple Silicon, with Go, the Xcode command line tools
-# and the base of Homebrew's Qt with Qt SVG, which draws the icons (brew
-# install go pkgconf qtbase qtsvg), as the GitHub workflow has. Only those:
+# and the base of Homebrew's Qt with Qt SVG, which draws the icons, and Qt
+# WebEngine, which shows messages (brew install go pkgconf qtbase qtsvg
+# qtwebengine), as the GitHub workflow has. Only those:
 # macdeployqt puts in the app every plugin of the kinds it uses that the Qt
 # it is given has, and with all of Homebrew's qt that is those of other
 # modules too (the virtual keyboard, PDF, WebP), with what they use. The Qt that pkg-config finds is the

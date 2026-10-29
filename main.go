@@ -63,6 +63,9 @@ func main() {
 		files.Accounts = filepath.Join(dir, "accounts")
 	}
 
+	// Messages are shown by Qt WebEngine, which is prepared before the
+	// application is made.
+	ui.PrepareWeb()
 	qt.NewQApplication(os.Args)
 	qt.QCoreApplication_SetApplicationName("apemail")
 	// Under Wayland this is the name a window goes by, which a desktop

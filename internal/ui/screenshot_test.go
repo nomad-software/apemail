@@ -144,6 +144,8 @@ func TestScreenshot(t *testing.T) {
 		w.Start()
 	})
 	t.Cleanup(func() { mainthread.Wait(func() { w.Close() }) })
+	// The message is drawn only where it is seen.
+	mainthread.Wait(w.Show)
 	wait(t, "the inbox", func() bool { return w.folder == "INBOX" && len(w.list.rows) == len(sampleMail) })
 
 	mainthread.Wait(func() {
@@ -151,6 +153,9 @@ func TestScreenshot(t *testing.T) {
 	})
 	wait(t, "the message", func() bool { return w.view.msg != nil && strings.Contains(w.view.msg.Subject, "Difference Engine") })
 	wait(t, "the message to be read", func() bool { return w.list.rows[0].Has(`\Seen`) })
+	loadedWhole(t, w.view)
+	// It is drawn a moment after it has loaded.
+	time.Sleep(time.Second)
 
 	saved := mainthread.Wait2(func() bool { return w.Grab().Save(path) })
 	if !saved {

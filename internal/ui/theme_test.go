@@ -11,7 +11,6 @@ import (
 	"github.com/nomad-software/apemail/internal/account"
 	"github.com/nomad-software/apemail/internal/engine"
 	"github.com/nomad-software/apemail/internal/icons"
-	"github.com/nomad-software/apemail/internal/message"
 	"github.com/nomad-software/apemail/internal/remote/remotetest"
 	"github.com/nomad-software/apemail/internal/settings"
 	"github.com/nomad-software/apemail/internal/store"
@@ -226,27 +225,6 @@ func TestIconModes(t *testing.T) {
 			if !found {
 				t.Errorf("mode %d is not drawn in %s", mode, want)
 			}
-		}
-	})
-}
-
-// TestMessagesInTheme checks that in a dark theme HTML messages are shown in
-// the theme, as plain text is, rather than on a white page.
-func TestMessagesInTheme(t *testing.T) {
-	useTheme(t, settings.ThemeDark)
-	base := func(v *messageView) string {
-		return v.browser.Palette().Color(qt.QPalette__Active, qt.QPalette__Base).Name()
-	}
-	mainthread.Wait(func() {
-		v := newMessageView()
-		defer v.DeleteLater()
-		v.show(&message.Message{HTML: "<p>Hello</p>"}, "INBOX", 1)
-		if got := base(v); got != "#1e1e1e" {
-			t.Errorf("HTML is shown on %s", got)
-		}
-		v.show(&message.Message{Text: "Hello"}, "INBOX", 2)
-		if got := base(v); got != "#1e1e1e" {
-			t.Errorf("text is shown on %s", got)
 		}
 	})
 }

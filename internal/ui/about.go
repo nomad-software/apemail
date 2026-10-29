@@ -24,7 +24,7 @@ func aboutText() string {
 // built with, which carry the notice the LGPL asks of programs that use Qt.
 func licenceText() string {
 	return "<p><b>Third party licences</b></p>" +
-		"<p>This program uses Qt version " + qtVersion() + " (Qt Widgets and Qt SVG).</p>" +
+		"<p>This program uses Qt version " + qtVersion() + " (Qt Widgets, Qt SVG and Qt WebEngine).</p>" +
 		"<p>Qt is a C++ toolkit for cross-platform application development, used here under the " +
 		"terms of the <a href=\"https://www.gnu.org/licenses/lgpl-3.0.html\">GNU Lesser General " +
 		"Public License version 3</a> (LGPLv3). Qt is dynamically linked, so it can be replaced " +
@@ -34,6 +34,10 @@ func licenceText() string {
 		"licensing.</p>" +
 		"<p>Copyright (C) The Qt Company Ltd. and other contributors. Qt and the Qt logo are " +
 		"trademarks of The Qt Company Ltd.</p>" +
+		"<p>Qt WebEngine, which shows messages, is used under the same licence, and contains " +
+		"<a href=\"https://www.chromium.org\">Chromium</a>, under its own BSD licence and those of the " +
+		"third party code within it, listed at " +
+		"<a href=\"https://doc.qt.io/qt-6/qtwebengine-licensing.html\">doc.qt.io/qt-6/qtwebengine-licensing.html</a>.</p>" +
 		"<p>The Go bindings for Qt are provided by <a href=\"https://github.com/mappu/miqt\">miqt</a>, " +
 		"used under the MIT licence.</p>" +
 		"<p>It is also built with the Go libraries " +
@@ -44,8 +48,7 @@ func licenceText() string {
 		"<a href=\"https://age-encryption.org\">age</a> (BSD) for encryption, with " +
 		"<a href=\"https://github.com/FiloSottile/edwards25519\">edwards25519</a> (BSD) and " +
 		"<a href=\"https://github.com/FiloSottile/hpke\">hpke</a> (BSD), " +
-		"<a href=\"https://pkg.go.dev/golang.org/x/crypto\">x/crypto</a> (BSD), " +
-		"<a href=\"https://pkg.go.dev/golang.org/x/net\">x/net</a> (BSD) for reading HTML and " +
+		"<a href=\"https://pkg.go.dev/golang.org/x/crypto\">x/crypto</a> (BSD) and " +
 		"<a href=\"https://pkg.go.dev/golang.org/x/text\">x/text</a> (BSD).</p>"
 }
 

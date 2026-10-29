@@ -27,6 +27,7 @@ import (
 // goroutine. Tests must touch widgets through mainthread.Wait.
 func TestMain(m *testing.M) {
 	os.Setenv("QT_QPA_PLATFORM", "offscreen")
+	PrepareWeb()
 	qt.NewQApplication(os.Args[:1])
 	// Tests close windows, which must not end the event loop.
 	qt.QGuiApplication_SetQuitOnLastWindowClosed(false)
@@ -181,6 +182,9 @@ func TestWindow(t *testing.T) {
 	before := s.Messages(t, "INBOX")
 
 	w := newTestWindow(t, s)
+	// The message is drawn, and its images asked for, only where it is
+	// seen.
+	mainthread.Wait(w.Show)
 	wait(t, "the inbox", func() bool { return len(w.list.rows) == 3 && w.folder == "INBOX" })
 
 	// The newest message is first.
@@ -188,23 +192,24 @@ func TestWindow(t *testing.T) {
 		clickRow(w.list, 0)
 	})
 	wait(t, "the message", func() bool { return w.view.msg != nil })
+	if body := pageText(t, w.view); !strings.Contains(body, "attached") {
+		t.Errorf("body = %q", body)
+	}
 	mainthread.Wait(func() {
 		if w.view.msg.Subject != "Compiler notes" {
 			t.Errorf("shown = %q", w.view.msg.Subject)
-		}
-		if !strings.Contains(w.view.browser.ToPlainText(), "attached") {
-			t.Errorf("body = %q", w.view.browser.ToPlainText())
 		}
 		if !w.reply.IsEnabled() || !w.del.IsEnabled() {
 			t.Error("the actions are not enabled")
 		}
 	})
-	// The image on the internet is not fetched.
-	if got := mainthread.Wait2(func() bool {
-		return w.view.resource(int(qt.QTextDocument__ImageResource), "https://tracker.example.com/pixel.gif").IsValid()
-	}); got {
-		t.Error("a remote image was loaded")
-	}
+	// The image on the internet is not fetched, but kept to be if the
+	// user asks.
+	mainthread.Wait(func() {
+		if len(w.view.images) != 0 || !slices.Equal(w.view.wanted, []string{"https://tracker.example.com/pixel.gif"}) {
+			t.Errorf("loaded %d images, and the page asked for %q", len(w.view.images), w.view.wanted)
+		}
+	})
 
 	// Showing it marks it as read.
 	wait(t, "the message to be read", func() bool { return w.list.rows[0].Has(`\Seen`) })
@@ -514,72 +519,18 @@ func TestTextLines(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mainthread.Wait(func() {
-		v := newMessageView()
-		defer v.DeleteLater()
-		v.show(m, "INBOX", 1)
-		// As in a browser, a line break just inside <pre> is not shown.
-		if got := v.browser.ToPlainText(); got != "Hello,\n\nThe body." {
-			t.Errorf("shown %q", got)
-		}
-	})
-}
-
-// quotingReply is HTML as Thunderbird writes a reply to a message written in
-// ApeMail: the reply indented, and the quote with the head of ApeMail's
-// HTML, Qt's marker of its own HTML among it.
-const quotingReply = `<!DOCTYPE html>
-<html>
-  <head>
-    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
-  </head>
-  <body>
-    <p>foo</p>
-    <div class="moz-signature">Regards,<br>
-      <br>
-      Ada<br>
-    </div>
-    <div class="moz-cite-prefix">On 23/10/2026 19:42, Ada wrote:<br>
-    </div>
-    <blockquote type="cite">
-      <meta http-equiv="content-type" content="text/html; charset=UTF-8">
-      <meta name="qrichtext" content="1">
-      <meta charset="utf-8">
-      <style type="text/css">@scope { p, li { white-space: pre-wrap; } }</style>
-      <p
-style=" margin-top:0px; margin-bottom:0px; -qt-block-indent:0; text-indent:0px;">hello</p>
-    </blockquote>
-  </body>
-</html>
-`
-
-// TestNoGapAtTop checks that a message which quotes HTML written in ApeMail
-// is shown from its first line, without the indenting of its HTML as empty
-// lines above it and spaces within it.
-func TestNoGapAtTop(t *testing.T) {
-	m, err := message.Parse([]byte("From: a@example.com\r\nSubject: Re:\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" + quotingReply))
-	if err != nil {
-		t.Fatal(err)
+	v := newShownView(t, 400, 300)
+	showWhole(t, v, m)
+	// As in a browser, a line break just inside <pre> is not shown.
+	if got := pageText(t, v); got != "Hello,\n\nThe body." {
+		t.Errorf("shown %q", got)
 	}
-	mainthread.Wait(func() {
-		v := newMessageView()
-		defer v.DeleteLater()
-		v.show(m, "INBOX", 1)
-		doc := v.browser.Document()
-		// The line break after the paragraph is a space at its end, as
-		// in a browser.
-		if first := doc.Begin().Text(); strings.TrimRight(first, " ") != "foo" {
-			t.Errorf("the first line is %q", first)
-		}
-		if got := doc.Begin().Next().Text(); strings.HasPrefix(got, " ") || strings.Contains(got, "  ") {
-			t.Errorf("the signature is indented: %q", got)
-		}
-	})
 }
 
 // TestDeepTablesShownQuickly checks that a message which nests tables a
-// dozen deep, as newsletters do to place things, is shown at once: Qt took
-// a minute to lay one out, the program not answering meanwhile.
+// dozen deep, as newsletters do to place things, is shown at once: Qt's own
+// browser took a minute to lay one out, the program not answering
+// meanwhile.
 func TestDeepTablesShownQuickly(t *testing.T) {
 	cell := `<table width="100%" style="min-width: 100%"><tbody><tr><td align="center" style="padding: 10px">`
 	var b strings.Builder
@@ -592,48 +543,44 @@ func TestDeepTablesShownQuickly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mainthread.Wait(func() {
-		v := newMessageView()
-		defer v.DeleteLater()
-		v.Resize(800, 600)
-		start := time.Now()
-		v.show(m, "INBOX", 1)
-		if !drawn(v.QWidget) {
-			t.Fatal("the message was not drawn")
-		}
-		if took := time.Since(start); took > 5*time.Second {
-			t.Errorf("the message took %v to show", took)
-		}
-		if got := v.browser.ToPlainText(); !strings.Contains(got, "Your booking details.") {
-			t.Errorf("shown %q", got)
-		}
-	})
+	v := newShownView(t, 800, 600)
+	start := time.Now()
+	showWhole(t, v, m)
+	if took := time.Since(start); took > 5*time.Second {
+		t.Errorf("the message took %v to show", took)
+	}
+	if got := pageText(t, v); !strings.Contains(got, "Your booking details.") {
+		t.Errorf("shown %q", got)
+	}
 }
 
-// TestRemoteImagesSmall checks that images on the internet, which are never
-// loaded, take no more room than the icon shown in their place, rather than
-// that icon drawn as large as the image would have been.
-func TestRemoteImagesSmall(t *testing.T) {
-	m, err := message.Parse([]byte("From: a@example.com\r\nSubject: s\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" +
-		`<p>Above</p><img src="https://example.com/hero.png" width="620" height="400" style="width: 100%"><p>Below</p>`))
-	if err != nil {
-		t.Fatal(err)
+// TestRemoveAccount checks that Remove Account in the Accounts menu removes
+// the account only once the user agrees, and leaves the server alone.
+func TestRemoveAccount(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Work")
+	s.Append(t, "Work", "d")
+	w := newTestWindow(t, s)
+	wait(t, "the folders", func() bool { return w.folders.folders[w.account]["Work"] != nil })
+	id := mainthread.Wait2(func() string { return w.account })
+
+	questions := asked(t, false)
+	mainthread.Wait(w.removeAccount.Trigger)
+	if len(*questions) != 1 || !strings.Contains((*questions)[0], "not touched") {
+		t.Errorf("asked %q", *questions)
 	}
-	mainthread.Wait(func() {
-		v := newMessageView()
-		defer v.DeleteLater()
-		v.Resize(800, 600)
-		v.show(m, "INBOX", 1)
-		// It is laid out when it is drawn.
-		drawn(v.QWidget)
-		size := v.browser.Document().Size()
-		if h := size.Height(); h > 150 {
-			t.Errorf("the message is %v high", h)
-		}
-		runtime.KeepAlive(size)
-		// What is sent on, in a reply or forward, keeps the size.
-		if !strings.Contains(m.HTML, `width="620"`) {
-			t.Errorf("the message was changed: %s", m.HTML)
-		}
-	})
+	if mainthread.Wait2(func() bool { return w.engines[id] == nil }) {
+		t.Fatal("the account was removed when the user said no")
+	}
+
+	asked(t, true)
+	mainthread.Wait(w.removeAccount.Trigger)
+	if !mainthread.Wait2(func() bool { return w.engines[id] == nil && w.folders.accounts[id] == nil }) {
+		t.Error("the account was not removed")
+	}
+	if got := onServer(t, s); !slices.Equal(got, []string{"INBOX", "Work"}) {
+		t.Errorf("the server has %q", got)
+	}
+	if msgs := s.Messages(t, "Work"); len(msgs) != 1 {
+		t.Errorf("Work = %+v", msgs)
+	}
 }

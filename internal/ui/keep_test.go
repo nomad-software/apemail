@@ -7,9 +7,7 @@ import (
 	"time"
 
 	qt "github.com/mappu/miqt/qt6"
-	"github.com/mappu/miqt/qt6/mainthread"
 
-	"github.com/nomad-software/apemail/internal/message"
 	"github.com/nomad-software/apemail/internal/store"
 )
 
@@ -66,28 +64,6 @@ func TestListWhileCollecting(t *testing.T) {
 		for range 150 {
 			if !drawn(l.QWidget) {
 				t.Fatal("the list was not drawn")
-			}
-		}
-	})
-}
-
-// TestImagesWhileCollecting shows an HTML message with an image in it over
-// and over while the collector runs: the image is a QVariant returned to Qt
-// by the browser's loadResource.
-func TestImagesWhileCollecting(t *testing.T) {
-	m := &message.Message{
-		HTML:        `<p>A picture:</p><img src="cid:pic">`,
-		Attachments: []message.Attachment{{Filename: "pic.png", ContentType: "image/png", ContentID: "pic", Inline: true, Data: pngImage(t, 40)}},
-	}
-	collecting(t)
-	mainthread.Wait(func() {
-		v := newMessageView()
-		defer v.DeleteLater()
-		v.Resize(500, 400)
-		for range 150 {
-			v.show(m, "INBOX", 1)
-			if !drawn(v.browser.QWidget) {
-				t.Fatal("the message was not drawn")
 			}
 		}
 	})

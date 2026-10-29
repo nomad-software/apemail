@@ -8,7 +8,9 @@
 # on older ones. It needs Go, a
 # C++ compiler, pkg-config, the Qt 6 development files with qmake, curl and
 # file. The Qt that pkg-config finds is the one built with, with Qt SVG, which
-# draws the icons, and QMAKE, if set, says which qmake belongs to it.
+# draws the icons, and Qt WebEngine, which shows messages, with the process it
+# runs pages in (QtWebEngineProcess), and QMAKE, if set, says which qmake
+# belongs to it.
 set -eu
 
 cd "$(dirname "$0")/.."
@@ -124,8 +126,8 @@ if [ -e "$THEMES/libqgtk3.so" ]; then
 fi
 
 # Without one of these the AppImage would be made, and then not start under
-# X11 or under Wayland, or not look like a GNOME desktop it is run on, so it
-# is not made at all.
+# X11 or under Wayland, or not look like a GNOME desktop it is run on, or show
+# no message, so it is not made at all.
 missing=0
 for plugin in \
 	platforms/libqxcb.so \
@@ -135,6 +137,14 @@ for plugin in \
 	# The pattern is left to match here, where it is not in quotes.
 	if ! ls "$APPDIR/usr/plugins/"$plugin >/dev/null 2>&1; then
 		echo "Missing from the AppImage: $plugin" >&2
+		missing=1
+	fi
+done
+# Qt WebEngine runs pages in a process of its own, with resources beside it,
+# which the tool puts in with the library.
+for file in QtWebEngineProcess qtwebengine_resources.pak icudtl.dat; do
+	if [ -z "$(find "$APPDIR" -name "$file" | head -n 1)" ]; then
+		echo "Missing from the AppImage: $file" >&2
 		missing=1
 	fi
 done

@@ -74,13 +74,16 @@ func TestSidebarMenus(t *testing.T) {
 	mainthread.Wait(func() {
 		account := w.sidebarMenu(w.account, "", "")
 		defer account.DeleteLater()
-		for _, text := range []string{"New Folder…", "Remove Account…", "Account Settings…"} {
+		for _, text := range []string{"New Folder…", "Account Settings…"} {
 			if menuAction(account, text) == nil {
 				t.Errorf("the account's menu has no %q", text)
 			}
 		}
-		if menuAction(account, "Delete Folder…") != nil {
-			t.Error("the account's menu has Delete Folder")
+		// Removing the account is only in the Accounts menu.
+		for _, text := range []string{"Delete Folder…", "Remove Account…"} {
+			if menuAction(account, text) != nil {
+				t.Errorf("the account's menu has %q", text)
+			}
 		}
 		for folder, enabled := range map[string]bool{"Work": true, "INBOX": false, "Trash": false} {
 			menu := w.sidebarMenu(w.account, folder, folder)
@@ -141,7 +144,12 @@ func TestDeleteFolderConfirmed(t *testing.T) {
 	wait(t, "the folders", func() bool { return w.folders.folders[w.account]["Projects"] != nil })
 	// The folder is open, and goes from the list with it.
 	mainthread.Wait(func() { w.folders.selectFolder(w.account, "Projects/Engine") })
-	wait(t, "the folder to open", func() bool { return w.folder == "Projects/Engine" })
+	// Its sync is done once its message is listed and the account says
+	// nothing more, which it says once the sync has let the folder go: a
+	// folder being synchronised is not deleted, which the program warns of.
+	wait(t, "the folder to open", func() bool {
+		return w.folder == "Projects/Engine" && len(w.list.rows) == 1 && w.statuses[w.account] == ""
+	})
 
 	questions := asked(t, true)
 	trigger(t, w, "Projects", "Delete Folder…")
@@ -192,37 +200,6 @@ func TestNewFolder(t *testing.T) {
 		d.ok()
 	})
 	eventually(t, "the warning", func() bool { return strings.Contains(warnings(), "already") })
-}
-
-// TestRemoveAccountFromMenu checks that the account's menu removes it only
-// once the user agrees, and leaves the server alone.
-func TestRemoveAccountFromMenu(t *testing.T) {
-	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Work")
-	s.Append(t, "Work", "d")
-	w := newTestWindow(t, s)
-	wait(t, "the folders", func() bool { return w.folders.folders[w.account]["Work"] != nil })
-	id := mainthread.Wait2(func() string { return w.account })
-
-	questions := asked(t, false)
-	trigger(t, w, "", "Remove Account…")
-	if len(*questions) != 1 || !strings.Contains((*questions)[0], "not touched") {
-		t.Errorf("asked %q", *questions)
-	}
-	if mainthread.Wait2(func() bool { return w.engines[id] == nil }) {
-		t.Fatal("the account was removed when the user said no")
-	}
-
-	asked(t, true)
-	trigger(t, w, "", "Remove Account…")
-	if !mainthread.Wait2(func() bool { return w.engines[id] == nil && w.folders.accounts[id] == nil }) {
-		t.Error("the account was not removed")
-	}
-	if got := onServer(t, s); !slices.Equal(got, []string{"INBOX", "Work"}) {
-		t.Errorf("the server has %q", got)
-	}
-	if msgs := s.Messages(t, "Work"); len(msgs) != 1 {
-		t.Errorf("Work = %+v", msgs)
-	}
 }
 
 func TestDeleteFolderText(t *testing.T) {
