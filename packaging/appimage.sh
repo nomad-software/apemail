@@ -140,9 +140,13 @@ for plugin in \
 		missing=1
 	fi
 done
-# Qt WebEngine runs pages in a process of its own, with resources beside it,
-# which the tool puts in with the library.
-for file in QtWebEngineProcess qtwebengine_resources.pak icudtl.dat; do
+# Qt WebEngine runs pages in a process of its own, with the resources in
+# Qt's folder of them, which the tool puts in with the library. Which they
+# are depends on how it was built: one built with the system's ICU, as
+# Ubuntu's and Arch's are, has no icudtl.dat, and uses libicudata instead,
+# which goes in as any library does.
+RESOURCES="$("$QMAKE" -query QT_INSTALL_DATA)/resources"
+for file in QtWebEngineProcess qtwebengine_resources.pak $(ls "$RESOURCES" 2>/dev/null); do
 	if [ -z "$(find "$APPDIR" -name "$file" | head -n 1)" ]; then
 		echo "Missing from the AppImage: $file" >&2
 		missing=1
