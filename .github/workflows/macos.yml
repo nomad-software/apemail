@@ -24,7 +24,7 @@ jobs:
     # A Mac with Apple Silicon. The oldest macOS the app runs on is that of
     # this machine, as Homebrew's Qt is built for it, so it is not the
     # newest there is.
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       # Homebrew's Qt has the pkg-config files that the bindings are built
       # with. Only its base, Qt SVG, which draws the icons, and Qt
@@ -45,8 +45,10 @@ jobs:
           cache: false
 
       # The Qt bindings take a long time to compile, so what is compiled is
-      # kept from one run to the next, for one version of Qt, as what was
-      # compiled for another names the place that one was in.
+      # kept from one run to the next, for one version of macOS and of Qt, as
+      # what was compiled for another Qt names the place that one was in, and
+      # a key that is found is not saved again, so what was compiled on another
+      # macOS would be kept in place of what this one compiles.
       - name: Say where compiled code is kept
         run: |
           echo "GOCACHE=$RUNNER_TEMP/go-build" >> "$GITHUB_ENV"
@@ -54,7 +56,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/go-build
-          key: go-build-macos-qt-${{ env.QT_VERSION }}-${{ hashFiles('go.sum') }}
+          key: go-build-macos-15-qt-${{ env.QT_VERSION }}-${{ hashFiles('go.sum') }}
 
       - name: Build the app
         env:

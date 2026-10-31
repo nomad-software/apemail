@@ -117,7 +117,7 @@ fi
 # for, which for Homebrew's Qt is the macOS of the machine it was built on.
 MINIMUM="$(machO | while read -r file; do otool -l "$file"; done |
 	awk '$1 == "minos" { print $2 }' | sort -t . -k1,1n -k2,2n | tail -n 1)"
-MINIMUM="${MINIMUM:-14.0}"
+MINIMUM="${MINIMUM:-15.0}"
 plutil -replace LSMinimumSystemVersion -string "$MINIMUM" "$APP/Contents/Info.plist"
 plutil -lint "$APP/Contents/Info.plist"
 echo "The app needs macOS $MINIMUM or later"
