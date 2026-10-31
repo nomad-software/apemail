@@ -489,8 +489,10 @@ It is built by a GitHub workflow (`.github/workflows/macos.yml`), which runs
 > Run workflow). The script builds the program, makes `ApeMail.app` with its
 icon (from `packaging/macos/apemail.png`) and `Info.plist` (from
 `packaging/macos/Info.plist`), copies Qt into it with Qt's `macdeployqt`,
-checks that nothing in it still uses a library from outside it, signs it,
-checks that it starts, and makes the disk image. It needs the macOS the
+has everything in it find the libraries it uses within it (the helper process
+of Qt WebEngine too, which `macdeployqt` leaves as it was), checks that nothing
+uses a library from outside it, signs it, checks that it and the helper start,
+and makes the disk image. It needs the macOS the
 workflow builds on (macOS 15) or later, which the script works out from what
 is in the app and writes into its `Info.plist`.
 

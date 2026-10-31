@@ -102,13 +102,90 @@ machO | while read -r file; do
 	esac
 done
 
-# Nothing in the app may still look outside it for what macOS does not
-# have itself, or it would only start on a Mac with Homebrew's Qt.
+# dependencies lists the libraries a program or library in the app uses, one
+# to a line, without the name it has itself, which otool lists among them.
+dependencies() {
+	otool -L "$1" | awk -v id="$(otool -D "$1" | sed -n 2p)" 'NR > 1 {
+		sub(/^[ \t]+/, "")
+		sub(/ \(compatibility.*/, "")
+		if ($0 != id) print
+	}'
+}
+
+# inFrameworks says where in Contents/Frameworks a library belongs, however it
+# is named, and nothing for one that macOS has itself.
+inFrameworks() {
+	case "$1" in
+	/System/* | /usr/lib/*) ;;
+	*.framework/*) echo "$1" | sed 's|.*/\([^/]*\.framework/\)|\1|' ;;
+	*) echo "${1##*/}" ;;
+	esac
+}
+
+# macdeployqt can miss a library of Homebrew's that another names through
+# @rpath ("Cannot resolve rpath"), as what it looks for is then in the app's
+# place and not Homebrew's. Those are copied in, and what they use in turn.
+missing=yes
+while [ -n "$missing" ]; do
+	missing="$(machO | while read -r file; do
+		dependencies "$file" | while read -r name; do
+			place="$(inFrameworks "$name")"
+			case "$place" in
+			"" | */*) continue ;;
+			esac
+			if [ ! -e "$APP/Contents/Frameworks/$place" ] && [ -e "$BREW_LIB/$place" ]; then
+				cp -L "$BREW_LIB/$place" "$APP/Contents/Frameworks/$place"
+				chmod u+w "$APP/Contents/Frameworks/$place"
+				echo "$place"
+			fi
+		done
+	done)"
+done
+
+# Everything is made to name what it uses by where that is from itself
+# (@loader_path). macdeployqt does not touch QtWebEngineProcess, which is deep
+# in QtWebEngineCore.framework, so that names Homebrew's folders; and what it
+# gives the rest, @executable_path/../Frameworks, is only right while the
+# running program is the one in Contents/MacOS, so in QtWebEngineProcess the
+# frameworks would not find each other.
+machO | while read -r file; do
+	dir="$(dirname "${file#"$APP"/Contents/}")"
+	case "$dir" in
+	Frameworks) frameworks="@loader_path" ;;
+	Frameworks/*) frameworks="@loader_path/$(echo "${dir#Frameworks/}" | sed 's|[^/][^/]*|..|g')" ;;
+	*) frameworks="@loader_path/$(echo "$dir" | sed 's|[^/][^/]*|..|g')/Frameworks" ;;
+	esac
+	set --
+	# The names have no spaces, and read in a pipe would lose what is set.
+	for name in $(dependencies "$file"); do
+		place="$(inFrameworks "$name")"
+		if [ -n "$place" ] && [ -e "$APP/Contents/Frameworks/$place" ] && [ "$name" != "$frameworks/$place" ]; then
+			set -- "$@" -change "$name" "$frameworks/$place"
+		fi
+	done
+	if [ "$#" -gt 0 ]; then
+		install_name_tool "$@" "$file"
+	fi
+done
+
+# Nothing in the app may still use what is not in it and that macOS does not
+# have itself, or it would only start on a Mac with Homebrew's Qt, or not at
+# all.
 outside="$(machO | while read -r file; do
-	otool -L "$file" | grep -E '^[[:space:]]+/(opt/homebrew|usr/local)/' | sed "s|^[[:space:]]*|${file#"$APP"/}: |"
+	dependencies "$file" | while read -r name; do
+		case "$name" in
+		/System/* | /usr/lib/*) continue ;;
+		@loader_path/*)
+			if [ -e "$(dirname "$file")/${name#@loader_path/}" ]; then
+				continue
+			fi
+			;;
+		esac
+		echo "${file#"$APP"/}: $name"
+	done
 done)"
 if [ -n "$outside" ]; then
-	echo "The app still uses libraries from outside it:" >&2
+	echo "The app uses libraries that are not in it:" >&2
 	echo "$outside" >&2
 	exit 1
 fi
@@ -127,6 +204,26 @@ echo "The app needs macOS $MINIMUM or later"
 # the minimum was put in.
 codesign --force --deep --sign - "$APP"
 codesign --verify --deep --strict "$APP"
+
+# Qt WebEngine shows messages by this program, which is only started once there
+# is a page to show, so starting the app below does not show that it can run.
+# It is started by itself, and whatever else it does, the system must not have
+# stopped it for a library it cannot load.
+HELPER="$APP/Contents/Frameworks/QtWebEngineCore.framework/Versions/A/Helpers/QtWebEngineProcess.app/Contents/MacOS/QtWebEngineProcess"
+codesign --verify --strict "$HELPER"
+helperLog="$(mktemp)"
+"$HELPER" >"$helperLog" 2>&1 &
+pid=$!
+sleep 2
+kill "$pid" 2>/dev/null || true
+wait "$pid" 2>/dev/null || true
+if grep -q 'Library not loaded' "$helperLog"; then
+	cat "$helperLog" >&2
+	rm -f "$helperLog"
+	echo "QtWebEngineProcess cannot find its libraries" >&2
+	exit 1
+fi
+rm -f "$helperLog"
 
 # It is started, with its settings and data in a scratch home, and has to
 # still be running a few seconds later. Anything else is a library that is
