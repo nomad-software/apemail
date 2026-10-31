@@ -89,19 +89,6 @@ machO() {
 	find "$APP/Contents" -type f -exec sh -c 'file -b "$1" | grep -q Mach-O' _ {} \; -print
 }
 
-# A library copied in can keep the name it had as its own, which is where
-# Homebrew has it (macdeployqt leaves QtDBus so). That name only matters to
-# what is linked against it, but it is given its place in the app, as
-# macdeployqt names the others.
-machO | while read -r file; do
-	id="$(otool -D "$file" | sed -n 2p)"
-	case "$id" in
-	/opt/homebrew/* | /usr/local/*)
-		install_name_tool -id "@executable_path/../${file#"$APP"/Contents/}" "$file"
-		;;
-	esac
-done
-
 # dependencies lists the libraries a program or library in the app uses, one
 # to a line, without the name it has itself, which otool lists among them.
 dependencies() {
@@ -124,10 +111,13 @@ inFrameworks() {
 
 # macdeployqt can miss a library of Homebrew's that another names through
 # @rpath ("Cannot resolve rpath"), as what it looks for is then in the app's
-# place and not Homebrew's. Those are copied in, and what they use in turn.
-missing=yes
-while [ -n "$missing" ]; do
-	missing="$(machO | while read -r file; do
+# place and not Homebrew's. copyMissing copies those in, and lists them.
+#
+# It is a function, as is outsideApp below, because a case cannot be within a
+# $(...): the /bin/sh of macOS is bash 3.2, which takes the ) of a pattern for
+# the end of the substitution (TestNoCaseInSubstitution).
+copyMissing() {
+	machO | while read -r file; do
 		dependencies "$file" | while read -r name; do
 			place="$(inFrameworks "$name")"
 			case "$place" in
@@ -139,7 +129,26 @@ while [ -n "$missing" ]; do
 				echo "$place"
 			fi
 		done
-	done)"
+	done
+}
+
+# What those use in turn may be missing too, so it goes on until none is.
+missing=yes
+while [ -n "$missing" ]; do
+	missing="$(copyMissing)"
+done
+
+# A library copied in can keep the name it had as its own, which is where
+# Homebrew has it (macdeployqt leaves QtDBus so). That name only matters to
+# what is linked against it, but it is given its place in the app, as
+# macdeployqt names the others.
+machO | while read -r file; do
+	id="$(otool -D "$file" | sed -n 2p)"
+	case "$id" in
+	/opt/homebrew/* | /usr/local/*)
+		install_name_tool -id "@executable_path/../${file#"$APP"/Contents/}" "$file"
+		;;
+	esac
 done
 
 # Everything is made to name what it uses by where that is from itself
@@ -155,35 +164,41 @@ machO | while read -r file; do
 	Frameworks/*) frameworks="@loader_path/$(echo "${dir#Frameworks/}" | sed 's|[^/][^/]*|..|g')" ;;
 	*) frameworks="@loader_path/$(echo "$dir" | sed 's|[^/][^/]*|..|g')/Frameworks" ;;
 	esac
-	set --
-	# The names have no spaces, and read in a pipe would lose what is set.
+	# The names have no spaces, so they are split again where they are used,
+	# and read in a pipe would lose what is set.
+	changes=""
 	for name in $(dependencies "$file"); do
 		place="$(inFrameworks "$name")"
 		if [ -n "$place" ] && [ -e "$APP/Contents/Frameworks/$place" ] && [ "$name" != "$frameworks/$place" ]; then
-			set -- "$@" -change "$name" "$frameworks/$place"
+			changes="$changes -change $name $frameworks/$place"
 		fi
 	done
-	if [ "$#" -gt 0 ]; then
-		install_name_tool "$@" "$file"
+	if [ -n "$changes" ]; then
+		install_name_tool $changes "$file"
 	fi
 done
 
-# Nothing in the app may still use what is not in it and that macOS does not
-# have itself, or it would only start on a Mac with Homebrew's Qt, or not at
-# all.
-outside="$(machO | while read -r file; do
-	dependencies "$file" | while read -r name; do
-		case "$name" in
-		/System/* | /usr/lib/*) continue ;;
-		@loader_path/*)
-			if [ -e "$(dirname "$file")/${name#@loader_path/}" ]; then
-				continue
-			fi
-			;;
-		esac
-		echo "${file#"$APP"/}: $name"
+# outsideApp lists what the app uses that is not in it and that macOS does not
+# have itself.
+outsideApp() {
+	machO | while read -r file; do
+		dependencies "$file" | while read -r name; do
+			case "$name" in
+			/System/* | /usr/lib/*) continue ;;
+			@loader_path/*)
+				if [ -e "$(dirname "$file")/${name#@loader_path/}" ]; then
+					continue
+				fi
+				;;
+			esac
+			echo "${file#"$APP"/}: $name"
+		done
 	done
-done)"
+}
+
+# There may be none of that, or the app would only start on a Mac with
+# Homebrew's Qt, or not at all.
+outside="$(outsideApp)"
 if [ -n "$outside" ]; then
 	echo "The app uses libraries that are not in it:" >&2
 	echo "$outside" >&2
