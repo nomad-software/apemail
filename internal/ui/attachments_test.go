@@ -281,6 +281,42 @@ func TestAttachmentsRow(t *testing.T) {
 	})
 }
 
+// TestAttachmentsPaneHeight checks that the pane of attachments is only as
+// tall as its rows, however tall the view, and that the body has the rest.
+func TestAttachmentsPaneHeight(t *testing.T) {
+	m, err := message.Parse([]byte("From: a@example.com\r\nSubject: s\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n" +
+		"--b\r\nContent-Type: text/plain\r\n\r\nHello.\r\n" +
+		"--b\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=a.pdf\r\n\r\n%PDF\r\n" +
+		"--b--\r\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mainthread.Wait(func() {
+		v := newMessageView()
+		defer v.DeleteLater()
+		v.show(m, "INBOX", 1)
+		policy := v.attachPane.SizePolicy()
+		if got := policy.VerticalPolicy(); got != qt.QSizePolicy__Fixed {
+			t.Errorf("the pane's height can be %v", got)
+		}
+		runtime.KeepAlive(policy)
+		for _, height := range []int{400, 800, 300} {
+			v.Resize(800, height)
+			v.Show()
+			qt.QCoreApplication_ProcessEvents()
+			hint := v.attachPane.SizeHint()
+			if got, want := v.attachPane.Height(), hint.Height(); got != want {
+				t.Errorf("in a view %d tall the pane is %d, not %d", height, got, want)
+			}
+			runtime.KeepAlive(hint)
+			if got, want := v.web.Height(), height-v.headers.Height()-v.attachPane.Height(); got != want {
+				t.Errorf("in a view %d tall the body is %d, not %d", height, got, want)
+			}
+		}
+		v.Hide()
+	})
+}
+
 // TestSaveAttachment checks that clicking an attachment saves it where the
 // user chooses, offering its own name, and saves nothing if they choose
 // nowhere.

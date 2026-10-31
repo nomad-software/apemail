@@ -113,7 +113,7 @@ func newMessageView() *messageView {
 	layout.AddWidget(v.makeAttachments())
 
 	v.newWebView()
-	layout.AddWidget(v.web.QWidget)
+	layout.AddWidget2(v.web.QWidget, 1)
 	// A change of theme is shown in the message too, once it is seen.
 	v.OnChangeEvent(func(super func(*qt.QEvent), e *qt.QEvent) {
 		super(e)

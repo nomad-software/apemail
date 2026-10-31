@@ -47,8 +47,17 @@ type messageList struct {
 	// account and folder are where the messages listed are, which a drag
 	// of them says.
 	account, folder string
-	// rows are the messages in the order they are shown, and row the row
-	// of each, by UID.
+	// all are the messages of the folder in the order they are sorted in,
+	// and at where each is among them, by UID.
+	all []store.Summary
+	at  map[uint32]int
+	// filter is the words the messages shown must have in their subject,
+	// sender or recipients, in lower case, and none for every message.
+	filter []string
+	// rows are the messages shown, in the order they are shown, and row the
+	// row of each, by UID. They are all and at themselves unless there is a
+	// filter. A message that is filtered out has no row, so it cannot be
+	// selected, and nothing done to a selection touches it.
 	rows []store.Summary
 	row  map[uint32]int
 	// sent says the folder holds mail from the user, whose list shows who
@@ -152,7 +161,7 @@ func newMessageList() *messageList {
 	})
 	l.model.OnSort(func(_ func(int, qt.SortOrder), column int, order qt.SortOrder) {
 		l.sortColumn, l.sortOrder = column, order
-		l.resetKeepingSelection(l.rows)
+		l.resetKeepingSelection(l.all)
 	})
 
 	// Messages are dragged to a folder of the tree to move them there.
@@ -372,26 +381,91 @@ func attachments(m store.Summary) int {
 // worked out on every processor rather than one.
 const parallelRows = 10000
 
-// sortKeys returns the sort key of each row, which a large folder has
-// worked out on every processor at once, each taking a part of the rows.
+// sortKeys returns the sort key of each row.
 func sortKeys(rows []store.Summary, key func(store.Summary) string) []string {
 	keys := make([]string, len(rows))
+	eachRow(len(rows), func(i int) { keys[i] = key(rows[i]) })
+	return keys
+}
+
+// eachRow calls f with the number of each of n rows, which a large folder has
+// done on every processor at once, each taking a part of the rows.
+func eachRow(n int, f func(i int)) {
 	parts := 1
-	if len(rows) >= parallelRows {
+	if n >= parallelRows {
 		parts = runtime.GOMAXPROCS(0)
 	}
-	size := (len(rows) + parts - 1) / parts
+	size := (n + parts - 1) / parts
 	var wg sync.WaitGroup
-	for start := 0; start < len(rows); start += size {
-		end := min(start+size, len(rows))
+	for start := 0; start < n; start += size {
+		end := min(start+size, n)
 		wg.Go(func() {
 			for i := start; i < end; i++ {
-				keys[i] = key(rows[i])
+				f(i)
 			}
 		})
 	}
 	wg.Wait()
-	return keys
+}
+
+// rowNumbers returns where each of the messages is among them, by UID.
+func rowNumbers(rows []store.Summary) map[uint32]int {
+	numbers := make(map[uint32]int, len(rows))
+	for i, r := range rows {
+		numbers[r.UID] = i
+	}
+	return numbers
+}
+
+// matchesFilter reports whether every word of the filter, which is in lower
+// case, is in the message's subject, sender or recipients, in any order and
+// each in any of them. Nothing else of it is looked at, so that filtering a
+// large folder is quick.
+func matchesFilter(m store.Summary, filter []string) bool {
+	subject, from, to := strings.ToLower(m.Subject), strings.ToLower(m.From), strings.ToLower(m.To)
+	for _, word := range filter {
+		if !strings.Contains(subject, word) && !strings.Contains(from, word) && !strings.Contains(to, word) {
+			return false
+		}
+	}
+	return true
+}
+
+// setFilter shows only the messages with every word of the text in their
+// subject, sender or recipients, whatever its case, or every message if it has
+// no words. The messages are sorted already, so they are not sorted again, and
+// the current one, if it is still shown, is kept in sight.
+func (l *messageList) setFilter(text string) {
+	filter := strings.Fields(strings.ToLower(text))
+	if slices.Equal(filter, l.filter) {
+		return
+	}
+	l.filter = filter
+	l.relist(l.applyFilter)
+	cur := l.CurrentIndex()
+	if cur.IsValid() {
+		l.ScrollTo(cur, qt.QAbstractItemView__EnsureVisible)
+	}
+	runtime.KeepAlive(cur)
+	l.announce()
+}
+
+// applyFilter makes the rows those of the messages that the filter lets
+// through.
+func (l *messageList) applyFilter() {
+	if len(l.filter) == 0 {
+		l.rows, l.row = l.all, l.at
+		return
+	}
+	matches := make([]bool, len(l.all))
+	eachRow(len(l.all), func(i int) { matches[i] = matchesFilter(l.all[i], l.filter) })
+	l.rows = nil
+	for i, m := range l.all {
+		if matches[i] {
+			l.rows = append(l.rows, m)
+		}
+	}
+	l.row = rowNumbers(l.rows)
 }
 
 // setIndex lists the messages of the index, keeping those that are
@@ -406,9 +480,10 @@ func (l *messageList) setIndex(ix *store.Index, sent bool) {
 	l.resetKeepingSelection(ix.Messages)
 }
 
-// listed reports whether the messages of a folder are listed, and how many.
-func (l *messageList) listed() (int, bool) {
-	return len(l.rows), l.uidValidity != 0
+// listed reports whether the messages of a folder are listed, how many of
+// them are shown, and how many the folder has.
+func (l *messageList) listed() (shown, total int, ok bool) {
+	return len(l.rows), len(l.all), l.uidValidity != 0
 }
 
 // announce says that what is listed has changed.
@@ -423,26 +498,32 @@ func (l *messageList) announce() {
 // they were. That is so when only their flags have changed, which is most
 // changes, or whether they have attachments, which an index saved before it
 // said learns, and then nothing moves: a message's subject, sender and date
-// never change. A list sorted by attachments is sorted again if they have. Only the rows that have changed are drawn again.
+// never change, so neither does whether the filter lets it through. A list
+// sorted by attachments is sorted again if they have. Only the rows that have
+// changed are drawn again.
 func (l *messageList) update(ix *store.Index) bool {
-	if len(ix.Messages) != len(l.rows) {
+	if len(ix.Messages) != len(l.all) {
 		return false
 	}
-	// The UIDs are told apart, so the same number of them all shown is the
+	// The UIDs are told apart, so the same number of them, all known, is the
 	// same messages.
 	for _, m := range ix.Messages {
-		i, ok := l.row[m.UID]
-		if !ok || l.sortColumn == colAttachment && l.rows[i].Attachments != m.Attachments {
+		i, ok := l.at[m.UID]
+		if !ok || l.sortColumn == colAttachment && l.all[i].Attachments != m.Attachments {
 			return false
 		}
 	}
 	first, last := len(l.rows), -1
 	for _, m := range ix.Messages {
-		i := l.row[m.UID]
-		if !slices.Equal(l.rows[i].Flags, m.Flags) || l.rows[i].Attachments != m.Attachments {
-			first, last = min(first, i), max(last, i)
+		i := l.at[m.UID]
+		changed := !slices.Equal(l.all[i].Flags, m.Flags) || l.all[i].Attachments != m.Attachments
+		l.all[i] = m
+		if r, ok := l.row[m.UID]; ok {
+			l.rows[r] = m
+			if changed {
+				first, last = min(first, r), max(last, r)
+			}
 		}
-		l.rows[i] = m
 	}
 	if last >= 0 {
 		from, to := l.model.Index(first, 0, noParent), l.model.Index(last, colCount-1, noParent)
@@ -453,9 +534,19 @@ func (l *messageList) update(ix *store.Index) bool {
 	return true
 }
 
-// resetKeepingSelection shows the rows, sorted, selecting again the messages
+// resetKeepingSelection lists the messages, sorted, selecting again those
 // that were selected, and the current one.
-func (l *messageList) resetKeepingSelection(rows []store.Summary) {
+func (l *messageList) resetKeepingSelection(messages []store.Summary) {
+	l.relist(func() {
+		l.all = l.sorted(messages)
+		l.at = rowNumbers(l.all)
+		l.applyFilter()
+	})
+}
+
+// relist makes the change to the rows, selecting again the messages that were
+// selected and are still shown, and the current one.
+func (l *messageList) relist(change func()) {
 	selected := map[uint32]bool{}
 	for _, uid := range l.selectedUIDs() {
 		selected[uid] = true
@@ -472,11 +563,7 @@ func (l *messageList) resetKeepingSelection(rows []store.Summary) {
 	blocked := l.selected
 	l.selected = nil
 	l.model.BeginResetModel()
-	l.rows = l.sorted(rows)
-	l.row = make(map[uint32]int, len(l.rows))
-	for i, r := range l.rows {
-		l.row[r.UID] = i
-	}
+	change()
 	l.model.EndResetModel()
 	// A reset empties the selection without saying so.
 	l.selectionKnown = false
@@ -575,11 +662,12 @@ func (l *messageList) draggedSelection() draggedMessages {
 // noParent is the parent of the rows of the list, which have none.
 var noParent = qt.NewQModelIndex()
 
-// clear empties the list.
+// clear empties the list. The filter stays, as the field it comes from does.
 func (l *messageList) clear() {
 	blocked := l.selected
 	l.selected = nil
 	l.model.BeginResetModel()
+	l.all, l.at = nil, nil
 	l.rows, l.row = nil, nil
 	l.uidValidity = 0
 	l.next = 0
@@ -610,10 +698,11 @@ func (l *messageList) selectedUIDs() []uint32 {
 	return slices.Clone(l.selection)
 }
 
-// summary returns what the list shows of the message with the UID.
+// summary returns what the list knows of the message with the UID, whether
+// or not the filter lets it be shown.
 func (l *messageList) summary(uid uint32) (store.Summary, bool) {
-	if i, ok := l.row[uid]; ok {
-		return l.rows[i], true
+	if i, ok := l.at[uid]; ok {
+		return l.all[i], true
 	}
 	return store.Summary{}, false
 }

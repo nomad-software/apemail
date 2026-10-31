@@ -62,6 +62,14 @@ it you have.
   the border between two headings to share the width between them. Above
   it are the folder, with those it is within (as Archive/2026), and how
   many messages it holds.
+- **Message > Filter** (Ctrl+F) opens a field in half of the row beside the
+  folder's name, which is hidden until then, and which shows only the messages with every word you type in their
+  subject, sender or recipients, in any order and whatever its case, as you
+  type, and the title says how many of the folder's it shows (3 of 100
+  messages). The bodies are not searched, so it is quick. Anything done to a
+  selection, such as **Delete**, only touches the messages you can see.
+  Escape, its clear button or choosing another folder closes it, and every
+  message is shown again.
 - Plain text and HTML messages are shown, with their links, which open in
   your browser or a new message when clicked (the web and mail addresses
   written out in a plain text message are made links too), the images they
@@ -284,6 +292,9 @@ Go makes it natural to do many things at once, and ApeMail does:
   100,000 messages shows at once.
 - When only flags change, as when a message is marked read, just those rows
   are updated; nothing is sorted again.
+- The filter only looks at the headers the list already holds, on every
+  processor for a large folder, and as they are sorted already, does not sort
+  them again.
 - A large selection, such as every message of a folder, is kept a run of
   rows at a time rather than a row at a time.
 
@@ -300,8 +311,9 @@ At 100,000 messages, on an ordinary laptop:
 
 | | Before | Now |
 |---|---|---|
-| Marking a message read (the list) | 125–750 ms | 8.5 ms |
+| Marking a message read (the list) | 125–750 ms | 12 ms |
 | Sorting the list by date / by sender | 125 ms / 756 ms | 33 ms / 42 ms |
+| Filtering the list, at each key typed | — | 35 ms at most |
 | Saving the folder's index | 235 ms, on every change | 130 ms, at most every 2 s, in the background |
 | The folder's index on disk | 44 MB | under 8 MB |
 | Checking an unchanged folder | the flags of every message | one command |
@@ -323,6 +335,7 @@ Measure it yourself with `make bench`.
 | Delete | Move the selected messages to the trash, or, in the trash, delete them for good after asking. |
 | Ctrl+A | Select every message in the list. |
 | Ctrl+U | Show the source of the message: the message as the server has it, as text. |
+| Ctrl+F | Open the filter above the message list. Escape closes it. |
 | Ctrl+Shift+B | Open the address book. |
 | Ctrl+, | Open the settings. |
 | Ctrl+I | Show the about box. |
@@ -584,6 +597,9 @@ ApeMail treats your mailbox as yours, not its own:
   `EXAMINE`), and messages are downloaded without being marked read.
 - Deleting moves mail to the trash. Only deleting from the trash removes mail
   for good, and you are asked first.
+- A message the filter hides cannot be selected, so nothing done to a selection,
+  Select All and Delete among them, touches it, and Delete in the filter's field
+  only edits what is typed.
 - Deleting a folder asks first, saying how many messages it and every folder
   within it hold. If anything has changed by the time it is done, as mail
   arriving, a message moved out, or a folder made within it, nothing is

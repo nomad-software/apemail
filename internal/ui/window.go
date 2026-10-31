@@ -59,6 +59,7 @@ type Window struct {
 	split, right *qt.QSplitter
 	folders      *folderTree
 	folderTitle  *qt.QLabel
+	filter       *qt.QLineEdit
 	list         *messageList
 	view         *messageView
 	statusText   *qt.QLabel
@@ -78,6 +79,7 @@ type Window struct {
 	// The actions of the menus and the button bar.
 	getMail, write, reply, replyAll, forward, archive, del *qt.QAction
 	markRead, markUnread, viewSource, addressBook          *qt.QAction
+	filterMessages                                         *qt.QAction
 	editAccount, removeAccount, updateCounts, syncAll      *qt.QAction
 }
 
@@ -111,7 +113,7 @@ func NewWindow(files Files) *Window {
 	w.view = newMessageView()
 
 	// Above the list is the name of the folder and how many messages it
-	// has.
+	// has, and beside them the field that filters the list.
 	listPane := qt.NewQWidget2()
 	listLayout := qt.NewQVBoxLayout(listPane)
 	listLayout.SetContentsMargins(0, 0, 0, 0)
@@ -119,7 +121,14 @@ func NewWindow(files Files) *Window {
 	w.folderTitle = qt.NewQLabel2()
 	w.folderTitle.SetContentsMargins(titlePadding, titlePadding, titlePadding, titlePadding)
 	w.folderTitle.SetTextFormat(qt.RichText)
-	listLayout.AddWidget(w.folderTitle.QWidget)
+	w.makeFilter()
+	titleRow := qt.NewQHBoxLayout2()
+	titleRow.SetContentsMargins(0, 0, titlePadding, 0)
+	// They share the row equally, but for a title too long for its half,
+	// which the field gives way to.
+	titleRow.AddWidget3(w.folderTitle.QWidget, 1, 0)
+	titleRow.AddWidget3(w.filter.QWidget, 1, 0)
+	listLayout.AddLayout(titleRow.QLayout)
 	listLayout.AddWidget(w.list.QWidget)
 	w.list.changed = w.showFolderTitle
 	w.showFolderTitle()
@@ -273,6 +282,7 @@ func (w *Window) makeActions() {
 	w.markRead = action("Mark as Read", "", nil, func() { w.markSeen(true) })
 	w.markUnread = action("Mark as Unread", "", nil, func() { w.markSeen(false) })
 	w.viewSource = action("View &Source", "Ctrl+U", nil, w.showMessageSource)
+	w.filterMessages = action("F&ilter", "Ctrl+F", nil, w.openFilter)
 	w.addressBook = action("Address Book", "Ctrl+Shift+B", icon(icons.AddressBook), w.showAddressBook)
 	w.addressBook.SetEnabled(false)
 	w.editAccount = action("Account &Settings…", "", nil, w.editCurrentAccount)
@@ -312,6 +322,7 @@ func (w *Window) makeMenus() {
 	msg.AddAction(w.del)
 	msg.AddSeparator()
 	msg.AddAction(w.viewSource)
+	msg.AddAction(w.filterMessages)
 
 	accounts := bar.AddMenuWithTitle("&Accounts")
 	add := accounts.AddActionWithText("&New Account…")
@@ -438,16 +449,67 @@ func (w *Window) FoldersChanged(id string, folders []store.Folder) {
 // pixels.
 const titlePadding = 6
 
+// makeFilter makes the field that filters the list, hidden until it is asked
+// for. Its clear button is an action of our own, as the field's own has an icon
+// from the style. That button and Escape close it.
+func (w *Window) makeFilter() {
+	w.filter = qt.NewQLineEdit2()
+	w.filter.SetVisible(false)
+	w.filter.SetPlaceholderText("Filter")
+	w.filter.SetToolTip("Show only the messages with all of these words in their subject, sender or recipients (Ctrl+F)")
+	clearFilter := w.filter.AddAction2(icon(icons.Clear), qt.QLineEdit__TrailingPosition)
+	clearFilter.SetToolTip("Clear the filter")
+	clearFilter.SetVisible(false)
+	clearFilter.OnTriggered(w.closeFilter)
+	w.filter.OnKeyPressEvent(func(super func(*qt.QKeyEvent), e *qt.QKeyEvent) {
+		if e.Key() == int(qt.Key_Escape) {
+			w.closeFilter()
+			return
+		}
+		super(e)
+	})
+	w.filter.OnTextChanged(func(text string) {
+		clearFilter.SetVisible(text != "")
+		w.list.setFilter(text)
+	})
+}
+
+// openFilter shows the filter and puts the keyboard in it, with what is there
+// selected, to be typed over.
+func (w *Window) openFilter() {
+	w.filter.SetVisible(true)
+	w.filter.SetFocus()
+	w.filter.SelectAll()
+}
+
+// closeFilter empties the filter, so that every message is shown again, and
+// hides it, leaving the keyboard in the list if it was in the field.
+func (w *Window) closeFilter() {
+	if w.filter.HasFocus() {
+		w.list.SetFocus()
+	}
+	w.filter.Clear()
+	w.filter.SetVisible(false)
+}
+
 // showFolderTitle shows the path of the folder listed, and how many
-// messages it has once they are listed. Nothing is shown where no folder is.
+// messages it has once they are listed, with how many of them the filter lets
+// through if it hides some. Nothing is shown where no folder is, and the filter
+// is closed there.
 func (w *Window) showFolderTitle() {
+	w.filterMessages.SetEnabled(w.folder != "")
 	if w.folder == "" {
+		w.closeFilter()
 		w.folderTitle.SetVisible(false)
 		return
 	}
 	text := "<span style=\"font-size: large; font-weight: bold\">" + html.EscapeString(w.folders.folderPath(w.account, w.folder)) + "</span>"
-	if n, ok := w.list.listed(); ok {
-		text += "&nbsp;&nbsp;" + messageCount(n)
+	if shown, total, ok := w.list.listed(); ok {
+		text += "&nbsp;&nbsp;"
+		if shown != total {
+			text += fmt.Sprintf("%d of ", shown)
+		}
+		text += messageCount(total)
 	}
 	w.folderTitle.SetText(text)
 	w.folderTitle.SetVisible(true)
@@ -593,6 +655,8 @@ func (w *Window) selectFolder(id, folder string) {
 	}
 	w.account, w.folder = id, folder
 	w.list.clear()
+	// What was looked for in one folder is not wanted in the next.
+	w.closeFilter()
 	w.list.account, w.list.folder = id, folder
 	w.view.clear()
 	w.updateActions()

@@ -37,6 +37,9 @@ func (v *messageView) makeAttachments() *qt.QWidget {
 	v.saveAll = qt.NewQPushButton3("Save All…")
 	v.saveAll.OnClicked(func() { v.saveFiles() })
 	v.attachPane = qt.NewQWidget2()
+	// It is only as tall as its rows, so that the height the view has to
+	// spare goes to the body.
+	v.attachPane.SetSizePolicy2(qt.QSizePolicy__Preferred, qt.QSizePolicy__Fixed)
 	attachRow := qt.NewQHBoxLayout(v.attachPane)
 	attachRow.SetContentsMargins(0, 2, 8, 0)
 	attachRow.SetSpacing(0)
