@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
-	"runtime"
 
 	"github.com/nomad-software/apemail/internal/jsonfile"
 )
@@ -113,18 +112,8 @@ func Path() (string, error) {
 // folder for the program in the place the system has for the data of
 // programs, which is ~/.local/share on Linux (or $XDG_DATA_HOME).
 func DataDir() (string, error) {
-	switch runtime.GOOS {
-	case "darwin", "ios", "windows", "plan9":
-		// These keep data where they keep configuration.
-		dir, err := os.UserConfigDir()
-		if err != nil {
-			return "", err
-		}
-		return filepath.Join(dir, appName), nil
-	}
-
-	// The rest follow the XDG base directory specification, in which a
-	// path that is not absolute is to be ignored.
+	// By the XDG base directory specification, a path that is not absolute
+	// is to be ignored.
 	if dir := os.Getenv("XDG_DATA_HOME"); filepath.IsAbs(dir) {
 		return filepath.Join(dir, appName), nil
 	}

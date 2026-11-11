@@ -6,19 +6,21 @@ import (
 	"fmt"
 	"html"
 	"os"
-	"runtime"
 	"slices"
 	"strings"
 
 	"github.com/emersion/go-message/mail"
-	qt "github.com/mappu/miqt/qt6"
-	"github.com/mappu/miqt/qt6/mainthread"
+	"github.com/nomad-software/qute"
+	"github.com/nomad-software/qute/qtcore"
+	"github.com/nomad-software/qute/qtgui"
+	"github.com/nomad-software/qute/qtwidgets"
 
 	"github.com/nomad-software/apemail/internal/account"
 	"github.com/nomad-software/apemail/internal/crypt"
 	"github.com/nomad-software/apemail/internal/engine"
 	"github.com/nomad-software/apemail/internal/icons"
 	"github.com/nomad-software/apemail/internal/message"
+	"github.com/nomad-software/apemail/internal/remote"
 	"github.com/nomad-software/apemail/internal/settings"
 	"github.com/nomad-software/apemail/internal/store"
 )
@@ -44,7 +46,7 @@ const (
 
 // Window is the main application window.
 type Window struct {
-	*qt.QMainWindow
+	qtwidgets.QMainWindowBase
 
 	files  Files
 	config settings.Settings
@@ -55,14 +57,14 @@ type Window struct {
 	engines map[string]*engine.Engine
 	order   []string
 
-	buttons      *qt.QToolBar
-	split, right *qt.QSplitter
+	buttons      *qtwidgets.QToolBar
+	split, right *qtwidgets.QSplitter
 	folders      *folderTree
-	folderTitle  *qt.QLabel
-	filter       *qt.QLineEdit
+	folderTitle  *qtwidgets.QLabel
+	filter       *filterField
 	list         *messageList
 	view         *messageView
-	statusText   *qt.QLabel
+	statusText   *qtwidgets.QLabel
 
 	// account and folder are those whose messages are listed.
 	account, folder string
@@ -77,21 +79,21 @@ type Window struct {
 	bookDialog *bookWindow
 
 	// The actions of the menus and the button bar.
-	getMail, write, reply, replyAll, forward, archive, del *qt.QAction
-	markRead, markUnread, viewSource, addressBook          *qt.QAction
-	filterMessages                                         *qt.QAction
-	editAccount, removeAccount, updateCounts, syncAll      *qt.QAction
+	getMail, write, reply, replyAll, forward, archive, del *qtgui.QAction
+	markRead, markUnread, viewSource, addressBook          *qtgui.QAction
+	filterMessages                                         *qtgui.QAction
+	editAccount, removeAccount, updateCounts, syncAll      *qtgui.QAction
 }
 
 // NewWindow makes the main window.
 func NewWindow(files Files) *Window {
 	w := &Window{
-		QMainWindow: qt.NewQMainWindow2(),
-		files:       files,
-		config:      settings.Load(files.Settings),
-		engines:     map[string]*engine.Engine{},
-		statuses:    map[string]string{},
+		files:    files,
+		config:   settings.Load(files.Settings),
+		engines:  map[string]*engine.Engine{},
+		statuses: map[string]string{},
 	}
+	qtwidgets.NewQMainWindowWith(w, nil)
 	rememberSystemStyle()
 	if w.config.Theme != "" {
 		applyTheme(w.config.Theme)
@@ -99,9 +101,9 @@ func NewWindow(files Files) *Window {
 	w.SetWindowTitle("ApeMail")
 	w.SetWindowIcon(appIcon())
 	// Dialogs and the compose window take their icon from the application.
-	qt.QGuiApplication_SetWindowIcon(appIcon())
+	qtgui.QGuiApplicationSetWindowIcon(appIcon())
 	w.Resize(w.config.Width, w.config.Height)
-	w.contacts.model = qt.NewQStringListModel3(w.QObject)
+	w.contacts.model = qtcore.NewQStringListModel(w)
 
 	w.makeActions()
 	w.makeMenus()
@@ -114,46 +116,46 @@ func NewWindow(files Files) *Window {
 
 	// Above the list is the name of the folder and how many messages it
 	// has, and beside them the field that filters the list.
-	listPane := qt.NewQWidget2()
-	listLayout := qt.NewQVBoxLayout(listPane)
-	listLayout.SetContentsMargins(0, 0, 0, 0)
+	listPane := qtwidgets.NewQWidget(nil)
+	listLayout := qtwidgets.NewQVBoxLayout(listPane)
+	listLayout.SetContentsMargins(qtcore.QMargins{Left: 0, Top: 0, Right: 0, Bottom: 0})
 	listLayout.SetSpacing(0)
-	w.folderTitle = qt.NewQLabel2()
-	w.folderTitle.SetContentsMargins(titlePadding, titlePadding, titlePadding, titlePadding)
-	w.folderTitle.SetTextFormat(qt.RichText)
-	w.makeFilter()
-	titleRow := qt.NewQHBoxLayout2()
-	titleRow.SetContentsMargins(0, 0, titlePadding, 0)
+	w.folderTitle = qtwidgets.NewQLabel(nil)
+	w.folderTitle.SetContentsMargins(qtcore.QMargins{Left: titlePadding, Top: titlePadding, Right: titlePadding, Bottom: titlePadding})
+	w.folderTitle.SetTextFormat(qtcore.RichText)
+	w.makeFilter(listPane)
+	titleRow := qtwidgets.NewQHBoxLayout(nil)
+	titleRow.SetContentsMargins(qtcore.QMargins{Left: 0, Top: 0, Right: titlePadding, Bottom: 0})
 	// They share the row equally, but for a title too long for its half,
 	// which the field gives way to.
-	titleRow.AddWidget3(w.folderTitle.QWidget, 1, 0)
-	titleRow.AddWidget3(w.filter.QWidget, 1, 0)
-	listLayout.AddLayout(titleRow.QLayout)
-	listLayout.AddWidget(w.list.QWidget)
+	titleRow.AddWidgetFull(w.folderTitle, 1, 0)
+	titleRow.AddWidgetFull(w.filter, 1, 0)
+	listLayout.AddLayout(titleRow)
+	listLayout.AddWidget(w.list)
 	w.list.changed = w.showFolderTitle
 	w.showFolderTitle()
 
-	w.right = qt.NewQSplitter3(qt.Vertical)
+	w.right = qtwidgets.NewQSplitterWithOrientation(qtcore.Vertical, nil)
 	w.right.AddWidget(listPane)
-	w.right.AddWidget(w.view.QWidget)
+	w.right.AddWidget(w.view)
 	w.right.SetStretchFactor(1, 1)
 	w.right.SetChildrenCollapsible(false)
 
-	w.split = qt.NewQSplitter3(qt.Horizontal)
-	w.split.AddWidget(w.folders.QWidget)
-	w.split.AddWidget(w.right.QWidget)
+	w.split = qtwidgets.NewQSplitterWithOrientation(qtcore.Horizontal, nil)
+	w.split.AddWidget(w.folders)
+	w.split.AddWidget(w.right)
 	w.split.SetStretchFactor(1, 1)
 	w.split.SetChildrenCollapsible(false)
-	w.SetCentralWidget(w.split.QWidget)
+	w.SetCentralWidget(w.split)
 
 	// What the accounts are doing is on the left of the status bar, taking
 	// the width there is, and the grip to resize the window by is on the
 	// right. A message that is shown for a while, as an error, takes the
 	// place of the status until it goes.
-	w.statusText = qt.NewQLabel2()
-	w.statusText.SetAlignment(qt.AlignLeft | qt.AlignVCenter)
-	w.statusText.SetContentsMargins(statusPadding, 0, 0, 0)
-	w.StatusBar().AddWidget2(w.statusText.QWidget, 1)
+	w.statusText = qtwidgets.NewQLabel(nil)
+	w.statusText.SetAlignment(qtcore.AlignLeft | qtcore.AlignVCenter)
+	w.statusText.SetContentsMargins(qtcore.QMargins{Left: statusPadding, Top: 0, Right: 0, Bottom: 0})
+	w.StatusBar().AddWidgetFull(w.statusText, 1)
 	w.StatusBar().SetSizeGripEnabled(true)
 
 	w.folders.selected = w.selectFolder
@@ -170,21 +172,23 @@ func NewWindow(files Files) *Window {
 	}
 	w.view.addContacts = func(addrs []*mail.Address) { w.showError(w.addContacts(addrs)) }
 
-	w.OnCloseEvent(func(super func(event *qt.QCloseEvent), event *qt.QCloseEvent) {
-		if !w.closeComposers() {
-			event.Ignore()
-			return
-		}
-		w.saveSettings()
-		for _, e := range w.engines {
-			e.Close()
-		}
-		w.closeAddressBook()
-		super(event)
-	})
-
 	w.updateActions()
 	return w
+}
+
+// CloseEvent closes the window, and with it the windows messages are
+// written in, unless the user would keep one of those open.
+func (w *Window) CloseEvent(event *qtgui.QCloseEvent) {
+	if !w.closeComposers() {
+		event.Ignore()
+		return
+	}
+	w.saveSettings()
+	for _, e := range w.engines {
+		e.Close()
+	}
+	w.closeAddressBook()
+	w.Super().CloseEvent(event)
 }
 
 // Start lays the window out, which it can only be once it is shown, and opens
@@ -195,7 +199,7 @@ func (w *Window) Start() {
 	} else {
 		w.Show()
 	}
-	mainthread.Start(func() {
+	qute.Post(func() {
 		w.restoreLayout()
 		w.openKeys()
 	})
@@ -209,7 +213,7 @@ func (w *Window) Activate(token string) {
 	if token != "" {
 		os.Setenv("XDG_ACTIVATION_TOKEN", token)
 	}
-	w.SetWindowState(w.WindowState() &^ qt.WindowMinimized)
+	w.SetWindowState(w.WindowState() &^ qtcore.WindowMinimized)
 	w.Show()
 	w.Raise()
 	w.ActivateWindow()
@@ -261,15 +265,15 @@ func (w *Window) saveConfig() {
 // easily pressed by mistake; it needs a modifier. Function keys and special
 // keys, as F5 and Delete, can be used alone.
 func (w *Window) makeActions() {
-	action := func(text, shortcut string, icon *qt.QIcon, triggered func()) *qt.QAction {
-		a := qt.NewQAction2(text)
+	action := func(text, shortcut string, icon *qtgui.QIcon, triggered func()) *qtgui.QAction {
+		a := qtgui.NewQActionWithText(text, w)
 		if icon != nil {
 			a.SetIcon(icon)
 		}
 		if shortcut != "" {
-			a.SetShortcut(qt.NewQKeySequence2(shortcut))
+			a.SetShortcut(qtgui.NewQKeySequenceWithKey(shortcut))
 		}
-		a.OnTriggered(triggered)
+		a.OnTriggered(func(bool) { triggered() })
 		return a
 	}
 	w.getMail = action("Get Mail", "F5", icon(icons.GetMail), w.refresh)
@@ -295,22 +299,20 @@ func (w *Window) makeActions() {
 func (w *Window) makeMenus() {
 	bar := w.MenuBar()
 
-	file := bar.AddMenuWithTitle("&File")
+	file := bar.AddMenuTitle("&File")
 	file.AddAction(w.write)
 	file.AddAction(w.getMail)
 	file.AddAction(w.addressBook)
 	file.AddSeparator()
-	settingsAction := file.AddActionWithText("&Settings…")
-	settingsAction.SetMenuRole(qt.QAction__PreferencesRole)
-	settingsAction.SetShortcut(qt.NewQKeySequence2("Ctrl+,"))
-	settingsAction.OnTriggered(w.editSettings)
+	settingsAction := file.AddActionText("&Settings…")
+	settingsAction.SetShortcut(qtgui.NewQKeySequenceWithKey("Ctrl+,"))
+	settingsAction.OnTriggered(func(bool) { w.editSettings() })
 	file.AddSeparator()
-	quit := file.AddActionWithText("&Quit")
-	quit.SetShortcut(qt.NewQKeySequence2("Ctrl+Q"))
-	quit.SetMenuRole(qt.QAction__QuitRole)
-	quit.OnTriggered(func() { w.Close() })
+	quit := file.AddActionText("&Quit")
+	quit.SetShortcut(qtgui.NewQKeySequenceWithKey("Ctrl+Q"))
+	quit.OnTriggered(func(bool) { w.Close() })
 
-	msg := bar.AddMenuWithTitle("&Message")
+	msg := bar.AddMenuTitle("&Message")
 	msg.AddAction(w.reply)
 	msg.AddAction(w.replyAll)
 	msg.AddAction(w.forward)
@@ -324,9 +326,9 @@ func (w *Window) makeMenus() {
 	msg.AddAction(w.viewSource)
 	msg.AddAction(w.filterMessages)
 
-	accounts := bar.AddMenuWithTitle("&Accounts")
-	add := accounts.AddActionWithText("&New Account…")
-	add.OnTriggered(func() { w.editAccountDialog(account.New(), true) })
+	accounts := bar.AddMenuTitle("&Accounts")
+	add := accounts.AddActionText("&New Account…")
+	add.OnTriggered(func(bool) { w.editAccountDialog(account.New(), true) })
 	accounts.AddAction(w.editAccount)
 	accounts.AddSeparator()
 	accounts.AddAction(w.updateCounts)
@@ -334,28 +336,27 @@ func (w *Window) makeMenus() {
 	accounts.AddSeparator()
 	accounts.AddAction(w.removeAccount)
 
-	help := bar.AddMenuWithTitle("&Help")
-	about := help.AddActionWithText("&About")
-	about.SetMenuRole(qt.QAction__AboutRole)
-	about.SetShortcut(qt.NewQKeySequence2("Ctrl+I"))
-	about.OnTriggered(func() { showAbout(w.QWidget) })
+	help := bar.AddMenuTitle("&Help")
+	about := help.AddActionText("&About")
+	about.SetShortcut(qtgui.NewQKeySequenceWithKey("Ctrl+I"))
+	about.OnTriggered(func(bool) { showAbout(w) })
 }
 
 // makeButtonBar makes the bar of large buttons under the menus.
 func (w *Window) makeButtonBar() {
-	bar := qt.NewQToolBar4("Buttons", w.QWidget)
+	bar := qtwidgets.NewQToolBarWithTitle("Buttons", w)
 	w.buttons = bar
 	bar.SetMovable(false)
-	bar.SetToolButtonStyle(qt.ToolButtonTextUnderIcon)
-	bar.SetIconSize(qt.NewQSize2(32, 32))
-	for _, a := range []*qt.QAction{w.getMail, w.write, nil, w.reply, w.replyAll, w.forward, nil, w.archive, nil, w.addressBook, nil, w.del} {
+	bar.SetToolButtonStyle(qtcore.ToolButtonTextUnderIcon)
+	bar.SetIconSize(qtcore.QSize{Width: 32, Height: 32})
+	for _, a := range []*qtgui.QAction{w.getMail, w.write, nil, w.reply, w.replyAll, w.forward, nil, w.archive, nil, w.addressBook, nil, w.del} {
 		if a == nil {
 			bar.AddSeparator()
 			continue
 		}
-		bar.QWidget.AddAction(a)
+		bar.AddAction(a)
 	}
-	w.AddToolBar(qt.TopToolBarArea, bar)
+	w.AddToolBarArea(qtcore.TopToolBarArea, bar)
 }
 
 // updateActions enables the actions that can be used on what is selected.
@@ -405,25 +406,39 @@ func (w *Window) showError(err error) {
 		return
 	}
 	fmt.Fprintln(os.Stderr, "apemail:", err)
-	w.StatusBar().ShowMessage2(err.Error(), 15000)
+	w.StatusBar().ShowMessageFull(err.Error(), 15000)
 }
 
 // warn shows what went wrong in a dialog.
 func (w *Window) warn(title string, err error) {
-	warning(w.QWidget, title, err.Error())
+	warning(w, title, err.Error())
 }
 
 // warning shows what went wrong in a dialog. Tests replace it, so that what
 // went wrong is told, rather than left in a dialog no one closes while the
 // test waits for what did not happen.
-var warning = func(parent *qt.QWidget, title, text string) {
-	qt.QMessageBox_Warning(parent, title, text)
+var warning = func(parent qtwidgets.QWidgetLike, title, text string) {
+	qtwidgets.QMessageBoxWarning(parent, title, text)
+}
+
+// information tells the user something in a dialog. Tests replace it, as
+// they do warning.
+var information = func(parent qtwidgets.QWidgetLike, title, text string) {
+	qtwidgets.QMessageBoxInformation(parent, title, text)
+}
+
+// askSave asks the user whether what they have written is to be saved, and
+// returns the button they chose: qtwidgets.QMessageBoxSave, Discard or
+// Cancel. Tests replace it rather than let the dialog open.
+var askSave = func(parent qtwidgets.QWidgetLike, title, text string) qtwidgets.QMessageBoxStandardButtons {
+	return qtwidgets.QMessageBoxQuestionFull(parent, title, text,
+		qtwidgets.QMessageBoxSave|qtwidgets.QMessageBoxDiscard|qtwidgets.QMessageBoxCancel, qtwidgets.QMessageBoxNoButton)
 }
 
 // confirm asks the user a question, and reports if they said yes. Tests
 // replace it rather than let the dialog open.
-var confirm = func(parent *qt.QWidget, title, text string) bool {
-	return qt.QMessageBox_Question5(parent, title, text, qt.QMessageBox__Yes|qt.QMessageBox__No) == qt.QMessageBox__Yes
+var confirm = func(parent qtwidgets.QWidgetLike, title, text string) bool {
+	return qtwidgets.QMessageBoxQuestionFull(parent, title, text, qtwidgets.QMessageBoxYes|qtwidgets.QMessageBoxNo, qtwidgets.QMessageBoxNoButton) == qtwidgets.QMessageBoxYes
 }
 
 // FoldersChanged shows the folders of an account.
@@ -437,7 +452,7 @@ func (w *Window) FoldersChanged(id string, folders []store.Folder) {
 		// The inbox of the first account is shown when the client
 		// starts.
 		for _, f := range folders {
-			if strings.EqualFold(f.Name, "INBOX") {
+			if remote.IsInbox(f.Name) {
 				w.folders.selectFolder(id, f.Name)
 				break
 			}
@@ -450,28 +465,36 @@ func (w *Window) FoldersChanged(id string, folders []store.Folder) {
 const titlePadding = 6
 
 // makeFilter makes the field that filters the list, hidden until it is asked
-// for. Its clear button is an action of our own, as the field's own has an icon
-// from the style. That button and Escape close it.
-func (w *Window) makeFilter() {
-	w.filter = qt.NewQLineEdit2()
+// for, within the parent. Its clear button is an action of our own, as the
+// field's own has an icon from the style. That button and Escape close it.
+func (w *Window) makeFilter(parent qtwidgets.QWidgetLike) {
+	w.filter = &filterField{escaped: w.closeFilter}
+	qtwidgets.NewQLineEditWith(w.filter, parent)
 	w.filter.SetVisible(false)
 	w.filter.SetPlaceholderText("Filter")
 	w.filter.SetToolTip("Show only the messages with all of these words in their subject, sender or recipients (Ctrl+F)")
-	clearFilter := w.filter.AddAction2(icon(icons.Clear), qt.QLineEdit__TrailingPosition)
+	clearFilter := w.filter.AddActionIcon(icon(icons.Clear), qtwidgets.QLineEditTrailingPosition)
 	clearFilter.SetToolTip("Clear the filter")
 	clearFilter.SetVisible(false)
-	clearFilter.OnTriggered(w.closeFilter)
-	w.filter.OnKeyPressEvent(func(super func(*qt.QKeyEvent), e *qt.QKeyEvent) {
-		if e.Key() == int(qt.Key_Escape) {
-			w.closeFilter()
-			return
-		}
-		super(e)
-	})
+	clearFilter.OnTriggered(func(bool) { w.closeFilter() })
 	w.filter.OnTextChanged(func(text string) {
 		clearFilter.SetVisible(text != "")
 		w.list.setFilter(text)
 	})
+}
+
+// filterField is the field that filters the list, which Escape closes.
+type filterField struct {
+	qtwidgets.QLineEditBase
+	escaped func()
+}
+
+func (f *filterField) KeyPressEvent(e *qtgui.QKeyEvent) {
+	if e.Key() == int(qtcore.Key_Escape) {
+		f.escaped()
+		return
+	}
+	f.Super().KeyPressEvent(e)
 }
 
 // openFilter shows the filter and puts the keyboard in it, with what is there
@@ -493,9 +516,9 @@ func (w *Window) closeFilter() {
 }
 
 // showFolderTitle shows the path of the folder listed, and how many
-// messages it has once they are listed, with how many of them the filter lets
-// through if it hides some. Nothing is shown where no folder is, and the filter
-// is closed there.
+// messages it has once they are listed, with how many of them the filter
+// lets through if it hides some. Nothing is shown where no folder is, and
+// the filter is closed there.
 func (w *Window) showFolderTitle() {
 	w.filterMessages.SetEnabled(w.folder != "")
 	if w.folder == "" {
@@ -572,11 +595,11 @@ func (w *Window) syncAllFolders(e *engine.Engine) {
 	e.SyncAll(func(err error) {
 		switch {
 		case errors.Is(err, engine.ErrStopped):
-			w.StatusBar().ShowMessage2("Stopped synchronising the folders of "+title+".", 5000)
+			w.StatusBar().ShowMessageFull("Stopped synchronising the folders of "+title+".", 5000)
 		case err != nil:
 			w.showError(err)
 		default:
-			w.StatusBar().ShowMessage2("Every folder of "+title+" is synchronised.", 5000)
+			w.StatusBar().ShowMessageFull("Every folder of "+title+" is synchronised.", 5000)
 		}
 		w.updateActions()
 	})
@@ -692,11 +715,15 @@ func (w *Window) showMessage(uid uint32) {
 	if e == nil {
 		return
 	}
-	id, folder := w.account, w.folder
+	id, folder, validity := w.account, w.folder, w.list.uidValidity
+	// What arrives after another message was chosen, or the folder
+	// numbered anew, is not shown.
+	current := func() bool {
+		return id == w.account && folder == w.folder && validity == w.list.uidValidity && slices.Equal(w.list.selectedUIDs(), []uint32{uid})
+	}
 	w.view.loading()
-	e.Message(folder, uid, func(raw []byte, err error) {
-		// What arrives after another message was chosen is not shown.
-		if id != w.account || folder != w.folder || !slices.Equal(w.list.selectedUIDs(), []uint32{uid}) {
+	e.Message(folder, validity, uid, func(raw []byte, err error) {
+		if !current() {
 			return
 		}
 		if err != nil {
@@ -708,14 +735,14 @@ func (w *Window) showMessage(uid uint32) {
 		// one takes a while.
 		go func() {
 			m, err := message.Parse(raw)
-			mainthread.Start(func() {
-				if id != w.account || folder != w.folder || !slices.Equal(w.list.selectedUIDs(), []uint32{uid}) {
+			qute.Post(func() {
+				if !current() {
 					return
 				}
 				if err != nil {
 					w.view.failed(err)
 				} else {
-					w.view.show(m, folder, uid)
+					w.view.show(m, folder, validity, uid)
 					w.markShownRead(uid)
 					w.askReceipt(m, uid)
 				}
@@ -732,7 +759,7 @@ func (w *Window) markShownRead(uid uint32) {
 		return
 	}
 	if e := w.engines[w.account]; e != nil {
-		e.SetFlag(w.folder, []uint32{uid}, `\Seen`, true, w.showError)
+		e.SetFlag(w.folder, w.list.uidValidity, []uint32{uid}, `\Seen`, true, w.showError)
 	}
 }
 
@@ -742,7 +769,7 @@ func (w *Window) openMessage(uid uint32) {
 	if e == nil || w.folder != e.SpecialFolder(engine.Drafts) || w.view.msg == nil || w.view.uid != uid {
 		return
 	}
-	w.composeDraft(e, w.view.msg, w.folder, uid)
+	w.composeDraft(e, w.view.msg, engine.Saved{Folder: w.view.folder, UID: uid, UIDValidity: w.view.validity})
 }
 
 // markSeen marks the messages that are selected as read or unread.
@@ -752,7 +779,7 @@ func (w *Window) markSeen(read bool) {
 	if e == nil || len(uids) == 0 {
 		return
 	}
-	e.SetFlag(w.folder, uids, `\Seen`, read, func(err error) {
+	e.SetFlag(w.folder, w.list.uidValidity, uids, `\Seen`, read, func(err error) {
 		if err != nil {
 			w.warn("Marking Messages", err)
 		}
@@ -768,7 +795,7 @@ func (w *Window) archiveMessages() {
 		return
 	}
 	w.list.selectNextLater()
-	e.Archive(w.folder, uids, func(err error) {
+	e.Archive(w.folder, w.list.uidValidity, uids, func(err error) {
 		if err != nil {
 			w.list.next = 0
 			w.warn("Archive", err)
@@ -786,6 +813,10 @@ func (w *Window) deleteMessages() {
 	if e == nil || len(uids) == 0 {
 		return
 	}
+	// The folder is kept, and how it is numbered, as another may be
+	// listed, or it numbered anew, by the time the user has answered, and
+	// the messages are those that were selected in this one.
+	folder, validity := w.folder, w.list.uidValidity
 	done := func(err error) {
 		if err != nil {
 			w.list.next = 0
@@ -794,19 +825,21 @@ func (w *Window) deleteMessages() {
 	}
 	// The message after those deleted is selected once they have gone,
 	// so that it can be deleted too with another press.
-	if w.folder != e.SpecialFolder(engine.Trash) {
+	if folder != e.SpecialFolder(engine.Trash) {
 		w.list.selectNextLater()
-		e.Trash(w.folder, uids, done)
+		e.Trash(folder, validity, uids, done)
 		return
 	}
 	what := "this message"
 	if len(uids) > 1 {
 		what = fmt.Sprintf("these %d messages", len(uids))
 	}
-	if confirm(w.QWidget, "Delete for Good",
-		fmt.Sprintf("Delete %s from %s for good?\n\nThey will be removed from the server, and this cannot be undone.", what, w.folder)) {
-		w.list.selectNextLater()
-		e.Delete(w.folder, uids, done)
+	if confirm(w, "Delete for Good",
+		fmt.Sprintf("Delete %s from %s for good?\n\nThey will be removed from the server, and this cannot be undone.", what, folder)) {
+		if folder == w.folder {
+			w.list.selectNextLater()
+		}
+		e.Delete(folder, validity, uids, done)
 	}
 }
 
@@ -820,53 +853,52 @@ func (w *Window) folderMenu(id, name, folder string) {
 // sidebarMenu returns the menu of the account, if name is empty, or of the
 // folder with the name, which is opened as folder (empty for one that only
 // holds others). It is nil if the account has gone.
-func (w *Window) sidebarMenu(id, name, folder string) *qt.QMenu {
+func (w *Window) sidebarMenu(id, name, folder string) *qtwidgets.QMenu {
 	e := w.engines[id]
 	if e == nil {
 		return nil
 	}
-	menu := qt.NewQMenu2()
+	menu := qtwidgets.NewQMenu(nil)
 	// Get Mail checks the folder, or the inbox of the account.
 	if name == "" {
-		menu.AddActionWithText("Get Mail for " + e.Account().Title()).OnTriggered(func() { e.Refresh("") })
+		menu.AddActionText("Get Mail for " + e.Account().Title()).OnTriggered(func(bool) { e.Refresh("") })
 	} else if folder != "" {
-		menu.AddActionWithText("Get Mail in " + folder).OnTriggered(func() { e.Refresh(folder) })
+		menu.AddActionText("Get Mail in " + folder).OnTriggered(func(bool) { e.Refresh(folder) })
 	}
-	menu.AddActionWithText("Update Unread Counts").OnTriggered(func() { w.updateUnreadCounts(e) })
-	menu.AddActionWithText(syncAllLabel(e)).OnTriggered(func() { w.syncAllFolders(e) })
+	menu.AddActionText("Update Unread Counts").OnTriggered(func(bool) { w.updateUnreadCounts(e) })
+	menu.AddActionText(syncAllLabel(e)).OnTriggered(func(bool) { w.syncAllFolders(e) })
 	menu.AddSeparator()
 	if name == "" {
-		menu.AddActionWithText("New Folder…").OnTriggered(func() { w.newFolderDialog(e) })
+		menu.AddActionText("New Folder…").OnTriggered(func(bool) { w.newFolderDialog(e) })
 	} else {
-		del := menu.AddActionWithText("Delete Folder…")
-		del.OnTriggered(func() { w.deleteFolder(e, name) })
+		del := menu.AddActionText("Delete Folder…")
+		del.OnTriggered(func(bool) { w.deleteFolder(e, name) })
 		// The inbox, and the folders the account uses, are kept.
 		if err := e.Deletable(name); err != nil {
 			del.SetEnabled(false)
 		}
 	}
 	menu.AddSeparator()
-	menu.AddActionWithText("Account Settings…").OnTriggered(func() { w.editAccountDialog(e.Account(), false) })
+	menu.AddActionText("Account Settings…").OnTriggered(func(bool) { w.editAccountDialog(e.Account(), false) })
 	return menu
 }
 
 // messageMenu shows the menu of the messages that are selected.
 func (w *Window) messageMenu() {
-	menu := qt.NewQMenu2()
-	for _, a := range []*qt.QAction{w.reply, w.replyAll, w.forward, nil, w.markRead, w.markUnread, nil, w.archive, w.del} {
+	menu := qtwidgets.NewQMenu(nil)
+	for _, a := range []*qtgui.QAction{w.reply, w.replyAll, w.forward, nil, w.markRead, w.markUnread, nil, w.archive, w.del} {
 		if a == nil {
 			menu.AddSeparator()
 		} else {
-			menu.QWidget.AddAction(a)
+			menu.AddAction(a)
 		}
 	}
 	popUp(menu)
 }
 
 // popUp shows the menu where the mouse is, and deletes it once it is closed.
-func popUp(menu *qt.QMenu) {
-	at := qt.QCursor_Pos()
-	menu.Exec3(at, nil)
-	runtime.KeepAlive(at)
+func popUp(menu *qtwidgets.QMenu) {
+	at := qtgui.QCursorPos()
+	menu.ExecAt(at)
 	menu.DeleteLater()
 }

@@ -5,7 +5,8 @@ import (
 	"slices"
 	"strings"
 
-	qt "github.com/mappu/miqt/qt6"
+	"github.com/nomad-software/qute/qtcore"
+	"github.com/nomad-software/qute/qtwidgets"
 
 	"github.com/nomad-software/apemail/internal/engine"
 	"github.com/nomad-software/apemail/internal/remote"
@@ -18,9 +19,9 @@ const topLevel = "(Top level)"
 // folderDialog asks for the name of a new folder, and what folder it goes
 // within.
 type folderDialog struct {
-	*qt.QDialog
-	name   *qt.QLineEdit
-	within *qt.QComboBox
+	*qtwidgets.QDialog
+	name   *qtwidgets.QLineEdit
+	within *qtwidgets.QComboBox
 	ok     func()
 }
 
@@ -28,26 +29,26 @@ type folderDialog struct {
 // and makes it when OK is pressed. What goes wrong is warned of once the
 // server answers.
 func (w *Window) newFolderDialog(e *engine.Engine) *folderDialog {
-	d := &folderDialog{QDialog: qt.NewQDialog(w.QWidget)}
+	d := &folderDialog{QDialog: qtwidgets.NewQDialog(w)}
 	d.SetWindowTitle("New Folder")
-	layout := qt.NewQVBoxLayout(d.QWidget)
-	form := qt.NewQFormLayout2()
-	d.name = qt.NewQLineEdit2()
-	d.within = qt.NewQComboBox2()
-	d.within.AddItem3(topLevel, qt.NewQVariant11(""))
+	layout := qtwidgets.NewQVBoxLayout(d)
+	form := qtwidgets.NewQFormLayout(nil)
+	d.name = qtwidgets.NewQLineEdit(nil)
+	d.within = qtwidgets.NewQComboBox(nil)
+	d.within.AddItemFull(topLevel, qtcore.NewQVariantWithString(""))
 	for _, f := range e.Folders() {
-		d.within.AddItem3(f.Name, qt.NewQVariant11(f.Name))
+		d.within.AddItemFull(f.Name, qtcore.NewQVariantWithString(f.Name))
 	}
-	form.AddRow3("Name:", d.name.QWidget)
-	form.AddRow3("Within:", d.within.QWidget)
-	layout.AddLayout(form.QLayout)
+	form.AddRowText("Name:", d.name)
+	form.AddRowText("Within:", d.within)
+	layout.AddLayout(form)
 
-	buttons := qt.NewQDialogButtonBox5(qt.QDialogButtonBox__Ok|qt.QDialogButtonBox__Cancel, qt.Horizontal)
-	layout.AddWidget(buttons.QWidget)
+	buttons := qtwidgets.NewQDialogButtonBoxWithButtonsOriented(qtwidgets.QDialogButtonBoxOk|qtwidgets.QDialogButtonBoxCancel, qtcore.Horizontal, nil)
+	layout.AddWidget(buttons)
 	buttons.OnRejected(d.Reject)
 	d.ok = func() {
 		if strings.TrimSpace(d.name.Text()) == "" {
-			warning(d.QWidget, "New Folder", "The folder has no name.")
+			warning(d, "New Folder", "The folder has no name.")
 			return
 		}
 		e.CreateFolder(currentData(d.within), d.name.Text(), func(err error) {
@@ -58,8 +59,8 @@ func (w *Window) newFolderDialog(e *engine.Engine) *folderDialog {
 		d.Accept()
 	}
 	buttons.OnAccepted(d.ok)
-	fitDialog(d.QDialog, 400)
-	openDialog(d.QDialog)
+	fitDialog(d, 400)
+	openDialog(d)
 	return d
 }
 
@@ -72,7 +73,7 @@ func (w *Window) deleteFolder(e *engine.Engine, folder string) {
 			w.warn("Delete Folder", err)
 			return
 		}
-		if !confirm(w.QWidget, "Delete Folder", deleteFolderText(contents)) {
+		if !confirm(w, "Delete Folder", deleteFolderText(contents)) {
 			return
 		}
 		e.DeleteFolder(contents, func(err error) {

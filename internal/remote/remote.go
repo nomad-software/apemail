@@ -44,8 +44,12 @@ var ErrReadOnly = errors.New("this connection only reads the mailbox, and cannot
 // dialTimeout limits how long a server is given to answer a connection.
 const dialTimeout = 30 * time.Second
 
-// fetchChunk is how many messages are asked for at once.
-const fetchChunk = 250
+// fetchChunk is how many messages have their headers asked for at once, and
+// downloadChunk how many are downloaded at once.
+const (
+	fetchChunk    = 250
+	downloadChunk = 50
+)
 
 // Conn is a connection to an IMAP server, logged in. It is not safe to use
 // from more than one goroutine at once.
@@ -173,6 +177,15 @@ func (c *Conn) Close() error {
 // waiting on it.
 func (c *Conn) Abort() {
 	c.c.Close()
+}
+
+// Check asks the server to answer (NOOP), which changes nothing, and returns
+// an error if it does not: the connection has gone.
+func (c *Conn) Check() error {
+	if err := c.c.Noop().Wait(); err != nil {
+		return fmt.Errorf("the connection to the server has gone: %w", err)
+	}
+	return nil
 }
 
 // Closed is closed once the connection is.
@@ -629,12 +642,8 @@ func (c *Conn) Fetch(folder string, uidValidity uint32, uids []uint32, got func(
 		return fmt.Errorf("the messages of %s have been numbered anew; it needs to be synchronised", folder)
 	}
 	section := &imap.FetchItemBodySection{Peek: true}
-	for chunk := range slices.Chunk(uids, 50) {
-		set := imap.UIDSet{}
-		for _, uid := range chunk {
-			set.AddNum(imap.UID(uid))
-		}
-		cmd := c.c.Fetch(set, &imap.FetchOptions{UID: true, BodySection: []*imap.FetchItemBodySection{section}})
+	for chunk := range slices.Chunk(uids, downloadChunk) {
+		cmd := c.c.Fetch(uidSet(chunk), &imap.FetchOptions{UID: true, BodySection: []*imap.FetchItemBodySection{section}})
 		for {
 			msg := cmd.Next()
 			if msg == nil {

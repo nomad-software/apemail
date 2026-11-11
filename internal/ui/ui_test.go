@@ -3,7 +3,6 @@ package ui
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -11,8 +10,11 @@ import (
 	"time"
 
 	"github.com/emersion/go-imap/v2"
-	qt "github.com/mappu/miqt/qt6"
-	"github.com/mappu/miqt/qt6/mainthread"
+	"github.com/nomad-software/qute"
+	"github.com/nomad-software/qute/qtcore"
+	"github.com/nomad-software/qute/qtgui"
+	"github.com/nomad-software/qute/qtwidgets"
+	"github.com/nomad-software/qute/qutetest"
 
 	"github.com/nomad-software/apemail/internal/account"
 	"github.com/nomad-software/apemail/internal/crypt"
@@ -24,44 +26,39 @@ import (
 )
 
 // TestMain runs the Qt event loop on the main thread and the tests on another
-// goroutine. Tests must touch widgets through mainthread.Wait.
+// goroutine. Tests must touch widgets on the UI's thread, through
+// qutetest.Run, or qute.PostSync where there is no test to fail.
 func TestMain(m *testing.M) {
 	os.Setenv("QT_QPA_PLATFORM", "offscreen")
 	PrepareWeb()
-	qt.NewQApplication(os.Args[:1])
-	// Tests close windows, which must not end the event loop.
-	qt.QGuiApplication_SetQuitOnLastWindowClosed(false)
 	// A warning is kept, to be told if a test then waits in vain, rather
 	// than shown in a dialog no one closes.
-	warning = func(_ *qt.QWidget, title, text string) {
+	warning = func(_ qtwidgets.QWidgetLike, title, text string) {
 		warned.Lock()
 		defer warned.Unlock()
 		warned.list = append(warned.list, title+": "+text)
 	}
-
-	code := 0
-	go func() {
-		code = m.Run()
-		mainthread.Start(qt.QCoreApplication_Quit)
-	}()
-	qt.QApplication_Exec()
-	os.Exit(code)
+	// So is what the program tells the user, and a question about saving
+	// what is written, which a test that expects one answers with
+	// answerSave: it is not saved, and the window stays.
+	information = warning
+	askSave = func(_ qtwidgets.QWidgetLike, title, text string) qtwidgets.QMessageBoxStandardButtons {
+		warning(nil, title, text)
+		return qtwidgets.QMessageBoxCancel
+	}
+	// Tests close windows, which does not end the event loop here.
+	qutetest.TestMain(m)
 }
 
 // clickRow makes the row of the list the current one and the only one
-// selected, as clicking it does. The index is a value miqt frees itself, so
-// it is kept while it is used.
+// selected, as clicking it does.
 func clickRow(l *messageList, row int) {
-	index := l.model.Index(row, 0, noParent)
-	l.SetCurrentIndex(index)
-	runtime.KeepAlive(index)
+	l.SetCurrentIndex(l.model.Index(row, 0))
 }
 
 // addRow adds the row of the list to those selected, as Ctrl+click does.
 func addRow(l *messageList, row int) {
-	index := l.model.Index(row, 0, noParent)
-	l.SelectionModel().Select(index, qt.QItemSelectionModel__Select|qt.QItemSelectionModel__Rows)
-	runtime.KeepAlive(index)
+	l.SelectionModel().Select(l.model.Index(row, 0), qtcore.QItemSelectionModelSelect|qtcore.QItemSelectionModelRows)
 }
 
 // warned are the warnings the program has given, which a wait that times out
@@ -94,7 +91,7 @@ func forgetWarnings() {
 func answer(t *testing.T, yes bool) *int {
 	asked := 0
 	old := confirm
-	confirm = func(_ *qt.QWidget, _, _ string) bool {
+	confirm = func(_ qtwidgets.QWidgetLike, _, _ string) bool {
 		asked++
 		return yes
 	}
@@ -102,11 +99,24 @@ func answer(t *testing.T, yes bool) *int {
 	return &asked
 }
 
+// answerSave has askSave answer with the button until the test ends, without
+// a dialog being shown, and returns the count of the questions it is asked.
+func answerSave(t *testing.T, button qtwidgets.QMessageBoxStandardButtons) *int {
+	asked := 0
+	old := askSave
+	askSave = func(_ qtwidgets.QWidgetLike, _, _ string) qtwidgets.QMessageBoxStandardButtons {
+		asked++
+		return button
+	}
+	t.Cleanup(func() { askSave = old })
+	return &asked
+}
+
 // wait waits for the condition, which is checked on the UI's thread, to
 // hold, failing the test if it does not within a few seconds.
 func wait(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	eventually(t, what, func() bool { return mainthread.Wait2(cond) })
+	eventually(t, what, func() bool { return onUI(cond) })
 }
 
 // eventually waits for the condition, which is checked on the test's own
@@ -158,12 +168,12 @@ func newTestWindow(t *testing.T, s *remotetest.Server, change ...func(*account.A
 	}
 
 	var w *Window
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		w = NewWindow(files)
 		w.Start()
 	})
 	t.Cleanup(func() {
-		mainthread.Wait(func() { w.Close() })
+		qutetest.Run(t, func() { w.Close() })
 	})
 	return w
 }
@@ -184,18 +194,18 @@ func TestWindow(t *testing.T) {
 	w := newTestWindow(t, s)
 	// The message is drawn, and its images asked for, only where it is
 	// seen.
-	mainthread.Wait(w.Show)
+	qute.PostSync(w.Show)
 	wait(t, "the inbox", func() bool { return len(w.list.rows) == 3 && w.folder == "INBOX" })
 
 	// The newest message is first.
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		clickRow(w.list, 0)
 	})
 	wait(t, "the message", func() bool { return w.view.msg != nil })
 	if body := pageText(t, w.view); !strings.Contains(body, "attached") {
 		t.Errorf("body = %q", body)
 	}
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if w.view.msg.Subject != "Compiler notes" {
 			t.Errorf("shown = %q", w.view.msg.Subject)
 		}
@@ -205,7 +215,7 @@ func TestWindow(t *testing.T) {
 	})
 	// The image on the internet is not fetched, but kept to be if the
 	// user asks.
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if len(w.view.images) != 0 || !slices.Equal(w.view.wanted, []string{"https://tracker.example.com/pixel.gif"}) {
 			t.Errorf("loaded %d images, and the page asked for %q", len(w.view.images), w.view.wanted)
 		}
@@ -224,7 +234,7 @@ func TestDeleteMovesToTrash(t *testing.T) {
 	s.Append(t, "INBOX", "Unwanted")
 	w := newTestWindow(t, s)
 	wait(t, "the inbox", func() bool { return len(w.list.rows) == 1 && w.folder == "INBOX" })
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		clickRow(w.list, 0)
 	})
 	wait(t, "the message", func() bool { return w.view.msg != nil })
@@ -233,7 +243,7 @@ func TestDeleteMovesToTrash(t *testing.T) {
 
 	// Moving it to the trash loses nothing, so the user is not asked.
 	asked := answer(t, false)
-	mainthread.Wait(w.deleteMessages)
+	qute.PostSync(w.deleteMessages)
 	wait(t, "the message to go", func() bool { return len(w.list.rows) == 0 })
 	if *asked != 0 {
 		t.Errorf("asked %d times", *asked)
@@ -244,13 +254,13 @@ func TestDeleteMovesToTrash(t *testing.T) {
 
 	// Deleting it from the trash deletes it for good, so the user is
 	// asked, and nothing is done if they say no.
-	mainthread.Wait(func() { w.folders.selectFolder(w.account, "Trash") })
+	qutetest.Run(t, func() { w.folders.selectFolder(w.account, "Trash") })
 	wait(t, "the trash", func() bool { return w.folder == "Trash" && len(w.list.rows) == 1 })
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		clickRow(w.list, 0)
 	})
 	wait(t, "the selection", func() bool { return len(w.list.selectedUIDs()) == 1 })
-	mainthread.Wait(w.deleteMessages)
+	qute.PostSync(w.deleteMessages)
 	if *asked != 1 {
 		t.Errorf("asked %d times", *asked)
 	}
@@ -259,7 +269,7 @@ func TestDeleteMovesToTrash(t *testing.T) {
 	}
 
 	asked = answer(t, true)
-	mainthread.Wait(w.deleteMessages)
+	qute.PostSync(w.deleteMessages)
 	wait(t, "the message to go for good", func() bool { return len(w.list.rows) == 0 })
 	if *asked != 1 {
 		t.Errorf("asked %d times", *asked)
@@ -269,17 +279,50 @@ func TestDeleteMovesToTrash(t *testing.T) {
 	}
 }
 
+// TestDeleteForGoodFromFolderAsked checks that the messages the user agrees
+// to delete for good are deleted from the folder they were asked about,
+// though another is listed by the time they answer.
+func TestDeleteForGoodFromFolderAsked(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Trash")
+	s.Append(t, "INBOX", "Kept")
+	s.Append(t, "Trash", "Unwanted")
+	w := newTestWindow(t, s)
+	wait(t, "the inbox", func() bool { return w.folder == "INBOX" && len(w.list.rows) == 1 })
+	qutetest.Run(t, func() { w.folders.selectFolder(w.account, "Trash") })
+	wait(t, "the trash", func() bool { return w.folder == "Trash" && len(w.list.rows) == 1 })
+	qutetest.Run(t, func() { clickRow(w.list, 0) })
+	wait(t, "the selection", func() bool { return len(w.list.selectedUIDs()) == 1 })
+
+	old := confirm
+	t.Cleanup(func() { confirm = old })
+	confirm = func(_ qtwidgets.QWidgetLike, _, text string) bool {
+		if !strings.Contains(text, "from Trash") {
+			t.Errorf("asked %q", text)
+		}
+		w.folders.selectFolder(w.account, "INBOX")
+		return true
+	}
+	qute.PostSync(w.deleteMessages)
+	eventually(t, "the message to go for good", func() bool { return len(s.Messages(t, "Trash")) == 0 })
+	if msgs := s.Messages(t, "INBOX"); len(msgs) != 1 || msgs[0].Subject != "Kept" {
+		t.Errorf("the inbox = %+v", msgs)
+	}
+	if warned := warnings(); warned != "" {
+		t.Error(warned)
+	}
+}
+
 func TestArchiveMakesFolder(t *testing.T) {
 	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove))
 	s.Append(t, "INBOX", "Keep this")
 	w := newTestWindow(t, s)
 	wait(t, "the inbox", func() bool { return len(w.list.rows) == 1 && w.folder == "INBOX" })
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		clickRow(w.list, 0)
 	})
 	wait(t, "the selection", func() bool { return len(w.list.selectedUIDs()) == 1 })
 
-	mainthread.Wait(w.archiveMessages)
+	qute.PostSync(w.archiveMessages)
 	wait(t, "the message to go", func() bool { return len(w.list.rows) == 0 })
 	// It goes in the folder for the year it was sent in, within the
 	// archive, as other clients do.
@@ -324,7 +367,7 @@ const askingReceipt = "From: Alice <alice@example.com>\r\n" +
 func showFirst(t *testing.T, w *Window) {
 	t.Helper()
 	wait(t, "the messages", func() bool { return len(w.list.rows) > 0 })
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		clickRow(w.list, 0)
 	})
 	wait(t, "the message", func() bool { return w.view.msg != nil })
@@ -362,7 +405,7 @@ func TestReturnReceiptSent(t *testing.T) {
 		sum, ok := w.list.summary(w.view.uid)
 		return ok && sum.Has(mdnSent)
 	})
-	mainthread.Wait(func() { w.showMessage(w.view.uid) })
+	qutetest.Run(t, func() { w.showMessage(w.view.uid) })
 	wait(t, "the message again", func() bool { return w.view.msg != nil })
 	if *asked != 1 || len(smtp.Messages()) != 1 {
 		t.Errorf("asked %d times, sent %d receipts", *asked, len(smtp.Messages()))
@@ -416,9 +459,9 @@ func TestReturnReceiptNotAsked(t *testing.T) {
 	asked := answer(t, true)
 	showFirst(t, w)
 
-	mainthread.Wait(func() { w.folders.selectFolder(w.account, "Sent") })
+	qutetest.Run(t, func() { w.folders.selectFolder(w.account, "Sent") })
 	wait(t, "the sent folder", func() bool { return w.folder == "Sent" })
-	mainthread.Wait(func() { w.view.clear() })
+	qutetest.Run(t, func() { w.view.clear() })
 	showFirst(t, w)
 	if *asked != 0 {
 		t.Errorf("asked %d times", *asked)
@@ -435,18 +478,18 @@ func TestGetMailSelected(t *testing.T) {
 	s.Append(t, "Trash", "old")
 	w := newTestWindow(t, s)
 	wait(t, "the trash listed", func() bool { return w.folders.folders[w.account]["Trash"] != nil })
-	mainthread.Wait(func() { w.folders.selectFolder(w.account, "Trash") })
+	qutetest.Run(t, func() { w.folders.selectFolder(w.account, "Trash") })
 	wait(t, "the trash", func() bool { return w.folder == "Trash" && len(w.list.rows) == 1 })
 
 	s.Append(t, "Trash", "newer")
-	mainthread.Wait(func() { w.getMail.Trigger() })
+	qutetest.Run(t, func() { w.getMail.Trigger() })
 	wait(t, "the new message in the trash", func() bool { return len(w.list.rows) == 2 })
 }
 
 // folderText returns what the tree shows of a folder of the account that is
 // shown.
 func folderText(w *Window, folder string) string {
-	return mainthread.Wait2(func() string {
+	return onUI(func() string {
 		item := w.folders.folders[w.account][folder]
 		if item == nil {
 			return ""
@@ -465,13 +508,13 @@ func TestSyncAllFromMenu(t *testing.T) {
 
 	// The inbox is empty, so the first headers asked for are the trash's.
 	held, release := s.Hold(t, "ENVELOPE")
-	mainthread.Wait(func() { w.syncAll.Trigger() })
+	qutetest.Run(t, func() { w.syncAll.Trigger() })
 	select {
 	case <-held:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the trash was not reached")
 	}
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if got := w.syncAll.Text(); got != stopSyncAllText {
 			t.Errorf("while synchronising the item says %q", got)
 		}
@@ -496,10 +539,10 @@ func TestUpdateCountsFromMenu(t *testing.T) {
 		t.Fatalf("before counting the trash shows %q", got)
 	}
 
-	mainthread.Wait(func() { w.updateCounts.Trigger() })
+	qutetest.Run(t, func() { w.updateCounts.Trigger() })
 	wait(t, "the count", func() bool { return folderText(w, "Trash") == "Trash (1)" })
 
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		before := w.folders.folders[w.account]["Trash"]
 		w.FoldersChanged(w.account, w.engines[w.account].Folders())
 		if w.folders.folders[w.account]["Trash"] == before {
@@ -561,20 +604,20 @@ func TestRemoveAccount(t *testing.T) {
 	s.Append(t, "Work", "d")
 	w := newTestWindow(t, s)
 	wait(t, "the folders", func() bool { return w.folders.folders[w.account]["Work"] != nil })
-	id := mainthread.Wait2(func() string { return w.account })
+	id := onUI(func() string { return w.account })
 
 	questions := asked(t, false)
-	mainthread.Wait(w.removeAccount.Trigger)
+	qute.PostSync(w.removeAccount.Trigger)
 	if len(*questions) != 1 || !strings.Contains((*questions)[0], "not touched") {
 		t.Errorf("asked %q", *questions)
 	}
-	if mainthread.Wait2(func() bool { return w.engines[id] == nil }) {
+	if onUI(func() bool { return w.engines[id] == nil }) {
 		t.Fatal("the account was removed when the user said no")
 	}
 
 	asked(t, true)
-	mainthread.Wait(w.removeAccount.Trigger)
-	if !mainthread.Wait2(func() bool { return w.engines[id] == nil && w.folders.accounts[id] == nil }) {
+	qute.PostSync(w.removeAccount.Trigger)
+	if !onUI(func() bool { return w.engines[id] == nil && w.folders.accounts[id] == nil }) {
 		t.Error("the account was not removed")
 	}
 	if got := onServer(t, s); !slices.Equal(got, []string{"INBOX", "Work"}) {
@@ -583,4 +626,21 @@ func TestRemoveAccount(t *testing.T) {
 	if msgs := s.Messages(t, "Work"); len(msgs) != 1 {
 		t.Errorf("Work = %+v", msgs)
 	}
+}
+
+// onUI returns what f does, which it runs on the UI's thread.
+func onUI[T any](f func() T) T {
+	var v T
+	qute.PostSync(func() { v = f() })
+	return v
+}
+
+// rgb returns the colour as a pixel of an image has it, wholly opaque.
+func rgb(c qtgui.QColor) uint {
+	return 0xff000000 | uint(c.R)<<16 | uint(c.G)<<8 | uint(c.B)
+}
+
+// colourOf returns the colour of a pixel of an image, whatever its opacity.
+func colourOf(pixel uint) qtgui.QColor {
+	return qtgui.RGB(uint8(pixel>>16), uint8(pixel>>8), uint8(pixel))
 }

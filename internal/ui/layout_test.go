@@ -7,8 +7,10 @@ import (
 	"testing"
 
 	"github.com/emersion/go-imap/v2"
-	qt "github.com/mappu/miqt/qt6"
-	"github.com/mappu/miqt/qt6/mainthread"
+	"github.com/nomad-software/qute/qtcore"
+	"github.com/nomad-software/qute/qtgui"
+	"github.com/nomad-software/qute/qtwidgets"
+	"github.com/nomad-software/qute/qutetest"
 
 	"github.com/nomad-software/apemail/internal/account"
 	"github.com/nomad-software/apemail/internal/remote/remotetest"
@@ -20,7 +22,7 @@ func TestLayoutIsKept(t *testing.T) {
 	w := newTestWindow(t, s)
 	wait(t, "the account", func() bool { return len(w.engines) == 1 })
 
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		w.Resize(900, 640)
 		w.split.SetSizes([]int{310, 590})
 		w.right.SetSizes([]int{220, 330})
@@ -35,15 +37,15 @@ func TestLayoutIsKept(t *testing.T) {
 
 	// A new window starts as the last one was left.
 	var again *Window
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		again = NewWindow(w.files)
 		again.Start()
 	})
-	t.Cleanup(func() { mainthread.Wait(func() { again.Close() }) })
+	t.Cleanup(func() { qutetest.Run(t, func() { again.Close() }) })
 	wait(t, "the layout", func() bool {
 		return len(again.split.Sizes()) == 2 && again.split.Sizes()[0] == 310 && again.right.Sizes()[0] == 220
 	})
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if again.Width() != 900 || again.Height() != 640 {
 			t.Errorf("size = %dx%d", again.Width(), again.Height())
 		}
@@ -53,9 +55,9 @@ func TestLayoutIsKept(t *testing.T) {
 	// which shows who messages are to, as much as the inbox.
 	for _, folder := range []string{"INBOX", "Sent"} {
 		wait(t, folder, func() bool { return len(again.engines) == 1 && again.account != "" })
-		mainthread.Wait(func() { again.folders.selectFolder(again.account, folder) })
+		qutetest.Run(t, func() { again.folders.selectFolder(again.account, folder) })
 		wait(t, folder+" listed", func() bool { return again.folder == folder })
-		mainthread.Wait(func() {
+		qutetest.Run(t, func() {
 			if correspondent, date := again.list.columnWidths(); correspondent != 180 || date != 130 {
 				t.Errorf("%s columns = %d, %d", folder, correspondent, date)
 			}
@@ -68,15 +70,15 @@ func TestMoveAccounts(t *testing.T) {
 	s.Append(t, "INBOX", "Kept")
 	w := newTestWindow(t, s)
 	wait(t, "the inbox", func() bool { return len(w.list.rows) == 1 })
-	from := mainthread.Wait2(w.accountsDir)
+	from := onUI(w.accountsDir)
 
 	to := filepath.Join(t.TempDir(), "elsewhere")
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		changed := w.config
 		changed.DataDir = to
 		w.applySettings(changed, nil, from, to, true)
 	})
-	wait(t, "the account to start again", func() bool { return len(w.engines) == 1 && mainthread.Wait2(w.accountsDir) == to })
+	wait(t, "the account to start again", func() bool { return len(w.engines) == 1 && onUI(w.accountsDir) == to })
 
 	// The account and its mail are in the new folder, and not the old.
 	ids, _ := filepath.Glob(filepath.Join(to, "*.json"))
@@ -100,30 +102,30 @@ func TestMoveAccounts(t *testing.T) {
 // TestSettingsFit checks that the settings dialog is tall enough for its
 // notes, which wrap onto more lines in a larger font.
 func TestSettingsFit(t *testing.T) {
-	mainthread.Wait(func() {
-		old := qt.QApplication_Font()
-		big := qt.NewQFont5(old)
+	qutetest.Run(t, func() {
+		old := qtwidgets.QApplicationFont()
+		big := qtwidgets.QApplicationFont()
 		big.SetPointSize(16)
-		qt.QApplication_SetFont(big)
-		defer qt.QApplication_SetFont(old)
+		qtwidgets.QApplicationSetFont(big)
+		defer qtwidgets.QApplicationSetFont(old)
 
-		parent := qt.NewQWidget2()
+		parent := qtwidgets.NewQWidget(nil)
 		defer parent.DeleteLater()
-		dialogs := map[string]*qt.QDialog{
+		dialogs := map[string]*qtwidgets.QDialog{
 			"settings": newSettingsDialog(parent, settings.Settings{}, "/home/user/.local/share/apemail/accounts", func(settings.Settings) {}),
 			"account":  newAccountDialog(parent, account.New(), true, nil, func(account.Account) {}),
 		}
 		for name, d := range dialogs {
 			d.Layout().Activate()
-			if need := d.Layout().HeightForWidth(d.Width()); d.Height() < need {
+			if need := d.Layout().AsQLayoutItem().HeightForWidth(d.Width()); d.Height() < need {
 				t.Errorf("%s: the dialog is %d high, and needs %d at a width of %d", name, d.Height(), need, d.Width())
 			}
 			// Each is wide enough not to be cramped.
 			if want := map[string]int{"settings": settingsDialogWidth, "account": accountDialogWidth}[name]; d.Width() < want {
 				t.Errorf("%s: the dialog is %d wide, not %d", name, d.Width(), want)
 			}
-			if need := d.MinimumSizeHint(); d.Height() < need.Height() || d.Width() < need.Width() {
-				t.Errorf("%s: the dialog is %dx%d, and needs %dx%d", name, d.Width(), d.Height(), need.Width(), need.Height())
+			if need := d.MinimumSizeHint(); d.Height() < need.Height || d.Width() < need.Width {
+				t.Errorf("%s: the dialog is %dx%d, and needs %dx%d", name, d.Width(), d.Height(), need.Width, need.Height)
 			}
 			d.Reject()
 		}
@@ -147,33 +149,68 @@ func TestPlainVersion(t *testing.T) {
 }
 
 func TestAbout(t *testing.T) {
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		d := newAboutDialog(nil)
 		defer d.DeleteLater()
 		if d.version.Text() != appVersion() {
 			t.Errorf("the version shown is %q", d.version.Text())
 		}
 		licences := licenceText()
-		for _, want := range []string{qt.QLibraryInfo_Version().ToString(), "LGPLv3", "Qt WebEngine", "Chromium", "qtwebengine-licensing", "miqt", "go-imap", "go-smtp", "go-sasl", "go-message", "age", "x/crypto", "x/text"} {
+		for _, want := range []string{qtcore.QLibraryInfoVersion().ToString(), "LGPLv3", "Qt WebEngine", "Chromium", "qtwebengine-licensing", "qute", "GNU General Public License", "go-imap", "go-smtp", "go-sasl", "go-message", "age", "x/crypto", "x/text"} {
 			if !strings.Contains(licences, want) {
 				t.Errorf("the licences do not mention %s", want)
 			}
 		}
 		d.Layout().Activate()
-		if need := d.Layout().HeightForWidth(d.Width()); d.Height() < need {
+		if need := d.Layout().AsQLayoutItem().HeightForWidth(d.Width()); d.Height() < need {
 			t.Errorf("the about box is %d high, and needs %d", d.Height(), need)
 		}
 	})
 }
 
+// TestAboutNamesEveryLibrary checks that the licences name every module the
+// program is built with, as go.mod lists them, so that one added is not
+// left out.
+func TestAboutNamesEveryLibrary(t *testing.T) {
+	mod, err := os.ReadFile(filepath.Join("..", "..", "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The text has the version of Qt, which is asked on the UI's thread.
+	licences := onUI(licenceText)
+	modules := 0
+	for _, line := range strings.Split(string(mod), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || !strings.HasPrefix(fields[1], "v") || !strings.Contains(fields[0], ".") {
+			continue
+		}
+		modules++
+		// A module is named as it is known: x/crypto, age, go-imap.
+		name := strings.TrimPrefix(fields[0], "golang.org/")
+		if !strings.HasPrefix(name, "x/") {
+			parts := strings.Split(name, "/")
+			name = parts[len(parts)-1]
+			if strings.HasPrefix(name, "v") && len(parts) > 1 && strings.Trim(name[1:], "0123456789") == "" {
+				name = parts[len(parts)-2]
+			}
+		}
+		if !strings.Contains(licences, ">"+name+"</a>") {
+			t.Errorf("the licences do not name %s (%s)", name, fields[0])
+		}
+	}
+	if modules < 8 {
+		t.Errorf("only %d modules were read from go.mod", modules)
+	}
+}
+
 func TestFolderTreeIsKept(t *testing.T) {
 	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Projects", "Projects/Engine", "Secret", "Secret/Plans")
 	w := newTestWindow(t, s)
-	item := func(w *Window, folder string) *qt.QTreeWidgetItem { return w.folders.folders[w.account][folder] }
+	item := func(w *Window, folder string) *qtwidgets.QTreeWidgetItem { return w.folders.folders[w.account][folder] }
 	wait(t, "the folders", func() bool { return item(w, "Projects") != nil && item(w, "Secret") != nil })
 
-	var before *qt.QTreeWidgetItem
-	mainthread.Wait(func() {
+	var before *qtwidgets.QTreeWidgetItem
+	qutetest.Run(t, func() {
 		// Folders start closed, and accounts open.
 		if item(w, "Projects").IsExpanded() || !w.folders.accounts[w.account].IsExpanded() {
 			t.Error("the tree does not start as it should")
@@ -184,11 +221,11 @@ func TestFolderTreeIsKept(t *testing.T) {
 		w.engines[w.account].Refresh("")
 	})
 	wait(t, "the tree to be made again", func() bool { return item(w, "Projects") != nil && item(w, "Projects") != before })
-	if !mainthread.Wait2(func() bool { return item(w, "Projects").IsExpanded() }) {
+	if !onUI(func() bool { return item(w, "Projects").IsExpanded() }) {
 		t.Error("Projects was closed when the folders were listed again")
 	}
 
-	mainthread.Wait(func() { w.Close() })
+	qutetest.Run(t, func() { w.Close() })
 	data, err := os.ReadFile(w.files.Settings)
 	if err != nil {
 		t.Fatal(err)
@@ -200,15 +237,15 @@ func TestFolderTreeIsKept(t *testing.T) {
 
 	// A new window opens the tree as it was left.
 	var again *Window
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		again = NewWindow(w.files)
 		again.Start()
 	})
-	t.Cleanup(func() { mainthread.Wait(func() { again.Close() }) })
+	t.Cleanup(func() { qutetest.Run(t, func() { again.Close() }) })
 	wait(t, "the folders", func() bool {
 		return again.account != "" && item(again, "Projects") != nil && item(again, "Secret") != nil
 	})
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if !item(again, "Projects").IsExpanded() {
 			t.Error("Projects was not opened again")
 		}
@@ -222,24 +259,24 @@ func TestStatusBar(t *testing.T) {
 	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove))
 	w := newTestWindow(t, s)
 	wait(t, "the account", func() bool { return len(w.engines) == 1 })
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		bar := w.StatusBar()
 		if !bar.IsSizeGripEnabled() {
 			t.Error("the status bar has no grip to resize the window by")
 		}
 		// The status starts at the left, and takes the width of the bar.
 		w.Status(w.account, "Checking Inbox…")
-		if x := w.statusText.Geometry().X(); x > 20 {
+		if x := w.statusText.Geometry().X; x > 20 {
 			t.Errorf("the status starts %d from the left", x)
 		}
 		if w.statusText.Width() < bar.Width()/2 {
 			t.Errorf("the status is %d wide, of %d", w.statusText.Width(), bar.Width())
 		}
-		if w.statusText.Alignment()&qt.AlignLeft == 0 {
+		if w.statusText.Alignment()&qtcore.AlignLeft == 0 {
 			t.Error("the status is not left aligned")
 		}
 		// The text is not tight against the edge of the window.
-		if left := w.statusText.Geometry().X() + w.statusText.ContentsMargins().Left(); left < statusPadding {
+		if left := w.statusText.Geometry().X + w.statusText.ContentsMargins().Left; left < statusPadding {
 			t.Errorf("the status text is %d from the edge", left)
 		}
 	})
@@ -247,20 +284,19 @@ func TestStatusBar(t *testing.T) {
 
 // dragBorder drags the right border of a column of the header by dx pixels,
 // with the mouse.
-func dragBorder(h *qt.QHeaderView, col, dx int) {
+func dragBorder(h *listHeader, col, dx int) {
 	vp := h.Viewport()
 	x := h.SectionViewportPosition(col) + h.SectionSize(col) - 1
-	y := float64(h.Height() / 2)
-	mouse := func(typ qt.QEvent__Type, x int, button, buttons qt.MouseButton) {
-		p := qt.NewQPointF3(float64(x), y)
-		e := qt.NewQMouseEvent2(typ, p, vp.MapToGlobal(p), button, buttons, qt.NoModifier)
-		defer e.Delete()
-		qt.QCoreApplication_SendEvent(vp.QObject, e.QEvent)
+	y := h.Height() / 2
+	mouse := func(typ qtcore.QEventType, x int, button, buttons qtcore.MouseButton) {
+		p := qtcore.QPoint{X: x, Y: y}
+		e := qtgui.NewQMouseEvent(typ, p.ToF(), vp.MapToGlobal(p).ToF(), button, buttons, qtcore.NoModifier)
+		qtcore.QCoreApplicationSendEvent(vp, e)
 	}
-	mouse(qt.QEvent__MouseMove, x, qt.NoButton, qt.NoButton)
-	mouse(qt.QEvent__MouseButtonPress, x, qt.LeftButton, qt.LeftButton)
-	mouse(qt.QEvent__MouseMove, x+dx, qt.NoButton, qt.LeftButton)
-	mouse(qt.QEvent__MouseButtonRelease, x+dx, qt.LeftButton, qt.NoButton)
+	mouse(qtcore.QEventMouseMove, x, qtcore.NoButton, qtcore.NoButton)
+	mouse(qtcore.QEventMouseButtonPress, x, qtcore.LeftButton, qtcore.LeftButton)
+	mouse(qtcore.QEventMouseMove, x+dx, qtcore.NoButton, qtcore.LeftButton)
+	mouse(qtcore.QEventMouseButtonRelease, x+dx, qtcore.LeftButton, qtcore.NoButton)
 }
 
 // TestColumnBorders checks that dragging the border between two columns of
@@ -272,7 +308,7 @@ func TestColumnBorders(t *testing.T) {
 	w := newTestWindow(t, s)
 	wait(t, "the account", func() bool { return len(w.engines) == 1 })
 
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		h := w.list.header
 		widths := func() [3]int {
 			return [3]int{h.SectionSize(colSubject), h.SectionSize(colCorrespondent), h.SectionSize(colDate)}
@@ -326,16 +362,16 @@ func TestColumnBorders(t *testing.T) {
 
 	// The subject takes what the window gains or loses.
 	var before [3]int
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		h := w.list.header
 		before = [3]int{h.Width(), h.SectionSize(colCorrespondent), h.SectionSize(colDate)}
 		w.Resize(w.Width()+120, w.Height())
 	})
 	wait(t, "the list wider", func() bool {
-		return mainthread.Wait2(func() int { return w.list.header.Width() }) != before[0]
+		return onUI(func() int { return w.list.header.Width() }) != before[0]
 	})
 	var dragged [2]int
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		h := w.list.header
 		if got := attachmentWidth + h.SectionSize(colSubject) + h.SectionSize(colCorrespondent) + h.SectionSize(colDate); got != h.Width() {
 			t.Errorf("after resizing, columns %d do not fill %d", got, h.Width())

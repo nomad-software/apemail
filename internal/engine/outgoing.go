@@ -47,9 +47,9 @@ func (e *Engine) SaveDraft(raw []byte, done func(saved Saved, err error)) {
 }
 
 // TrashSaved moves messages that were saved, as drafts that have been
-// replaced, to the trash, which is made if there is none. The UI asks the
-// user first. Those whose folder has been numbered anew since are left
-// alone.
+// replaced, to the trash, which is made if there is none. The user is not
+// asked, as nothing is lost. Those whose folder has been numbered anew since
+// are left alone.
 func (e *Engine) TrashSaved(saved []Saved, done func(error)) {
 	e.do(func(c *remote.Conn) error {
 		if c == nil {
@@ -75,7 +75,7 @@ func (e *Engine) TrashSaved(saved []Saved, done func(error)) {
 				failed = append(failed, err)
 				continue
 			}
-			e.removed(key.Folder, uids)
+			e.removed(key.Folder, key.UIDValidity, uids)
 		}
 		if len(byFolder) > 0 {
 			e.requestSync(trash)
@@ -111,7 +111,10 @@ func (e *Engine) send(raw []byte, rcpts []string, dsn, keep bool, done func(erro
 				p.Use = useNames[Sent]
 			}
 			if _, perr := e.store.AddPending(p); perr != nil {
-				e.reply(done, errors.Join(err, perr))
+				// It is not said to be unreachable (%v, not %w), which
+				// would have it taken for kept, and the window it was
+				// written in closed.
+				e.reply(done, fmt.Errorf("%v; and the message could not be kept to be sent later: %w", err, perr))
 				return
 			}
 			e.reply(done, fmt.Errorf("%w; the message will be sent when it can be", err))
@@ -132,25 +135,38 @@ func (e *Engine) send(raw []byte, rcpts []string, dsn, keep bool, done func(erro
 var sentFlags = []string{`\Seen`}
 
 // keepSent puts a copy of mail that was sent in the sent folder, or keeps it
-// to be put there when there is a connection.
+// to be put there later if it cannot be now, for want of a connection or
+// because the server would not take it.
 func (e *Engine) keepSent(raw []byte) {
 	e.do(func(c *remote.Conn) error {
-		if c == nil {
-			_, err := e.store.AddPending(store.Pending{Kind: store.PendingAppend, Use: useNames[Sent], Flags: sentFlags, Raw: raw})
-			e.failed(err)
+		return e.appendSent(c, store.Pending{Use: useNames[Sent], Raw: raw})
+	})
+}
+
+// appendSent puts a copy of mail that was sent in the folder p names, with
+// the connection of the op worker. One that cannot be put there is kept as
+// pending work, to be when Get Mail next does what was put off, so that the
+// copy of mail that has gone is never lost. With no connection that is all
+// it does.
+func (e *Engine) appendSent(c *remote.Conn, p store.Pending) error {
+	var err error
+	if c != nil {
+		var folder string
+		folder, err = e.pendingFolder(c, p)
+		if err == nil {
+			_, _, err = c.Append(folder, p.Raw, sentFlags)
+		}
+		if err == nil {
+			e.requestSync(folder)
 			return nil
 		}
-		folder, err := e.ensureFolder(c, Sent)
-		if err == nil {
-			_, _, err = c.Append(folder, raw, sentFlags)
-		}
-		if err != nil {
-			e.failed(fmt.Errorf("the sent message was not put in the sent folder: %w", err))
-			return err
-		}
-		e.requestSync(folder)
-		return nil
-	})
+		e.failed(fmt.Errorf("the sent message was not put in the sent folder, and will be when it can be: %w", err))
+	}
+	later := store.Pending{Kind: store.PendingAppend, Folder: p.Folder, Use: p.Use, Flags: sentFlags, Raw: p.Raw}
+	if _, perr := e.store.AddPending(later); perr != nil {
+		e.failed(fmt.Errorf("the copy of the sent message could not be kept: %w", perr))
+	}
+	return err
 }
 
 // pendingFolder returns the folder pending work is for: the one it names,
@@ -191,14 +207,12 @@ func (e *Engine) flushPending(c *remote.Conn) error {
 			if err := e.store.RemovePending(p.ID); err != nil {
 				e.failed(err)
 			}
-			folder, err := e.pendingFolder(c, p)
-			if err == nil && folder != "" {
-				_, _, err = c.Append(folder, p.Raw, sentFlags)
+			// A receipt names no folder, and no copy of it is kept.
+			if p.Folder == "" && p.Use == "" {
+				continue
 			}
-			if err != nil {
-				e.failed(fmt.Errorf("the sent message was not put in the sent folder: %w", err))
-			} else if folder != "" {
-				e.requestSync(folder)
+			if err := e.appendSent(c, p); err != nil && isConnErr(err) {
+				return err
 			}
 		case store.PendingAppend:
 			folder, err := e.pendingFolder(c, p)

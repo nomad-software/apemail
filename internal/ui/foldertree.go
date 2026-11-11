@@ -2,11 +2,12 @@ package ui
 
 import (
 	"fmt"
-	"runtime"
 	"slices"
 	"strings"
 
-	qt "github.com/mappu/miqt/qt6"
+	"github.com/nomad-software/qute/qtcore"
+	"github.com/nomad-software/qute/qtgui"
+	"github.com/nomad-software/qute/qtwidgets"
 
 	"github.com/nomad-software/apemail/internal/account"
 	"github.com/nomad-software/apemail/internal/engine"
@@ -18,7 +19,7 @@ import (
 
 // Roles of the data of the items of the tree.
 const (
-	roleAccount = int(qt.UserRole) + iota
+	roleAccount = int(qtcore.UserRole) + iota
 	// roleFolder is the name of a folder that holds messages, and is empty
 	// for an account or a folder that does not.
 	roleFolder
@@ -29,15 +30,15 @@ const (
 // folderTree is the sidebar, which lists each account and the folders of its
 // mailbox below it.
 type folderTree struct {
-	*qt.QTreeWidget
+	qtwidgets.QTreeWidgetBase
 
 	// accounts are the items of the accounts, by ID, and folders those of
 	// their folders, by ID and then name.
-	accounts map[string]*qt.QTreeWidgetItem
-	folders  map[string]map[string]*qt.QTreeWidgetItem
+	accounts map[string]*qtwidgets.QTreeWidgetItem
+	folders  map[string]map[string]*qtwidgets.QTreeWidgetItem
 	// names are the names the folders are shown by, without the number of
 	// unread messages.
-	names map[*qt.QTreeWidgetItem]string
+	names map[*qtwidgets.QTreeWidgetItem]string
 	// unread are the numbers of unread messages of the folders, by ID and
 	// then name, which are shown again when the tree is made again.
 	unread map[string]map[string]int
@@ -62,17 +63,17 @@ type folderTree struct {
 // expanded.
 func newFolderTree(expanded map[string]map[string]bool) *folderTree {
 	t := &folderTree{
-		QTreeWidget: qt.NewQTreeWidget2(),
-		accounts:    map[string]*qt.QTreeWidgetItem{},
-		folders:     map[string]map[string]*qt.QTreeWidgetItem{},
-		names:       map[*qt.QTreeWidgetItem]string{},
-		unread:      map[string]map[string]int{},
-		expanded:    expanded,
+		accounts: map[string]*qtwidgets.QTreeWidgetItem{},
+		folders:  map[string]map[string]*qtwidgets.QTreeWidgetItem{},
+		names:    map[*qtwidgets.QTreeWidgetItem]string{},
+		unread:   map[string]map[string]int{},
+		expanded: expanded,
 	}
+	qtwidgets.NewQTreeWidgetWith(t, nil)
 	t.SetHeaderHidden(true)
 	t.SetColumnCount(1)
 	t.SetMinimumWidth(150)
-	t.OnCurrentItemChanged(func(current, _ *qt.QTreeWidgetItem) {
+	t.OnCurrentItemChanged(func(current, _ *qtwidgets.QTreeWidgetItem) {
 		if current == nil || t.selected == nil {
 			return
 		}
@@ -80,37 +81,15 @@ func newFolderTree(expanded map[string]map[string]bool) *folderTree {
 	})
 	// Messages from the message list are dropped on a folder to move them
 	// there. A drop is always on a folder, never between two.
-	t.SetDragDropMode(qt.QAbstractItemView__DropOnly)
+	t.SetDragDropMode(qtwidgets.QAbstractItemViewDropOnly)
 	t.SetDragDropOverwriteMode(true)
 	t.SetDropIndicatorShown(true)
-	t.OnMimeTypes(func(func() []string) []string { return []string{messagesMime} })
-	t.OnSupportedDropActions(func(func() qt.DropAction) qt.DropAction { return qt.MoveAction })
-	t.OnDragMoveEvent(func(super func(*qt.QDragMoveEvent), event *qt.QDragMoveEvent) {
-		super(event)
-		// A folder the messages cannot go to is shown as refusing them.
-		d, ok := decodeDragged(event.MimeData())
-		at := event.Position()
-		point := at.ToPoint()
-		item := t.ItemAt(point)
-		runtime.KeepAlive(at)
-		runtime.KeepAlive(point)
-		if !ok || item == nil || canDrop(d, itemData(item, roleAccount), itemData(item, roleFolder)) != nil {
-			event.Ignore()
-		}
-	})
-	t.OnDropMimeData(func(_ func(*qt.QTreeWidgetItem, int, *qt.QMimeData, qt.DropAction) bool, parent *qt.QTreeWidgetItem, _ int, data *qt.QMimeData, _ qt.DropAction) bool {
-		d, ok := decodeDragged(data)
-		if !ok || parent == nil || t.dropped == nil {
-			return false
-		}
-		return t.dropped(d, itemData(parent, roleAccount), itemData(parent, roleFolder))
-	})
 
-	t.OnItemExpanded(func(item *qt.QTreeWidgetItem) { t.remember(item, true) })
-	t.OnItemCollapsed(func(item *qt.QTreeWidgetItem) { t.remember(item, false) })
+	t.OnItemExpanded(func(item *qtwidgets.QTreeWidgetItem) { t.remember(item, true) })
+	t.OnItemCollapsed(func(item *qtwidgets.QTreeWidgetItem) { t.remember(item, false) })
 
-	t.SetContextMenuPolicy(qt.CustomContextMenu)
-	t.OnCustomContextMenuRequested(func(pos *qt.QPoint) {
+	t.SetContextMenuPolicy(qtcore.CustomContextMenu)
+	t.OnCustomContextMenuRequested(func(pos qtcore.QPoint) {
 		item := t.ItemAt(pos)
 		if item == nil || t.contextMenu == nil {
 			return
@@ -120,8 +99,37 @@ func newFolderTree(expanded map[string]map[string]bool) *folderTree {
 	return t
 }
 
+// What Qt asks of the tree while messages are dragged over it and dropped.
+
+func (t *folderTree) MimeTypes() []string { return []string{messagesMime} }
+
+func (t *folderTree) SupportedDropActions() qtcore.DropActions { return qtcore.MoveAction }
+
+func (t *folderTree) DragMoveEvent(event *qtgui.QDragMoveEvent) {
+	t.Super().DragMoveEvent(event)
+	// A folder the messages cannot go to is shown as refusing them.
+	d, ok := decodeDragged(event.MimeData())
+	item := t.ItemAt(event.Position().ToPoint())
+	if !ok || item == nil || canDrop(d, itemData(item, roleAccount), itemData(item, roleFolder)) != nil {
+		event.QEvent.Ignore()
+	}
+}
+
+func (t *folderTree) DropMimeData(parent *qtwidgets.QTreeWidgetItem, _ int, data *qtcore.QMimeData, _ qtcore.DropActions) bool {
+	d, ok := decodeDragged(data)
+	if !ok || parent == nil || t.dropped == nil {
+		return false
+	}
+	return t.dropped(d, itemData(parent, roleAccount), itemData(parent, roleFolder))
+}
+
+// itemData returns the text of the item's data in the role.
+func itemData(item *qtwidgets.QTreeWidgetItem, role int) string {
+	return item.Data(0, role).ToString()
+}
+
 // remember keeps whether the item is open.
-func (t *folderTree) remember(item *qt.QTreeWidgetItem, open bool) {
+func (t *folderTree) remember(item *qtwidgets.QTreeWidgetItem, open bool) {
 	id := itemData(item, roleAccount)
 	if t.expanded[id] == nil {
 		t.expanded[id] = map[string]bool{}
@@ -131,7 +139,7 @@ func (t *folderTree) remember(item *qt.QTreeWidgetItem, open bool) {
 
 // restore opens or closes the item as it was left, or as it starts if it
 // never was: an account open, and a folder closed.
-func (t *folderTree) restore(item *qt.QTreeWidgetItem) {
+func (t *folderTree) restore(item *qtwidgets.QTreeWidgetItem) {
 	id, name := itemData(item, roleAccount), itemData(item, roleName)
 	open, ok := t.expanded[id][settings.FolderKey(name)]
 	if !ok {
@@ -144,16 +152,15 @@ func (t *folderTree) restore(item *qt.QTreeWidgetItem) {
 func (t *folderTree) setAccount(a account.Account) {
 	item, ok := t.accounts[a.ID]
 	if !ok {
-		item = qt.NewQTreeWidgetItem()
-		item.SetData(0, roleAccount, qt.NewQVariant11(a.ID))
-		item.SetData(0, roleFolder, qt.NewQVariant11(""))
-		item.SetData(0, roleName, qt.NewQVariant11(""))
-		item.SetFlags(qt.ItemIsSelectable | qt.ItemIsEnabled)
+		item = qtwidgets.NewQTreeWidgetItem()
+		item.SetData(0, roleAccount, qtcore.NewQVariantWithString(a.ID))
+		item.SetData(0, roleFolder, qtcore.NewQVariantWithString(""))
+		item.SetData(0, roleName, qtcore.NewQVariantWithString(""))
+		item.SetFlags(qtcore.ItemIsSelectable | qtcore.ItemIsEnabled)
 		item.SetIcon(0, sidebarIcon(icons.Account))
 		font := item.Font(0)
 		font.SetBold(true)
 		item.SetFont(0, font)
-		runtime.KeepAlive(font)
 		t.AddTopLevelItem(item)
 		t.restore(item)
 		t.accounts[a.ID] = item
@@ -178,14 +185,14 @@ func (t *folderTree) removeAccount(id string) {
 // clear takes every account out.
 func (t *folderTree) clear() {
 	t.Clear()
-	t.accounts = map[string]*qt.QTreeWidgetItem{}
-	t.folders = map[string]map[string]*qt.QTreeWidgetItem{}
-	t.names = map[*qt.QTreeWidgetItem]string{}
+	t.accounts = map[string]*qtwidgets.QTreeWidgetItem{}
+	t.folders = map[string]map[string]*qtwidgets.QTreeWidgetItem{}
+	t.names = map[*qtwidgets.QTreeWidgetItem]string{}
 	t.unread = map[string]map[string]int{}
 }
 
 // forgetChildren forgets the items below an item, which are being removed.
-func (t *folderTree) forgetChildren(item *qt.QTreeWidgetItem) {
+func (t *folderTree) forgetChildren(item *qtwidgets.QTreeWidgetItem) {
 	for i := range item.ChildCount() {
 		child := item.Child(i)
 		t.forgetChildren(child)
@@ -213,7 +220,7 @@ func (t *folderTree) setFolders(a account.Account, folders []store.Folder) {
 	for _, child := range parent.TakeChildren() {
 		child.Delete()
 	}
-	items := map[string]*qt.QTreeWidgetItem{}
+	items := map[string]*qtwidgets.QTreeWidgetItem{}
 	t.folders[a.ID] = items
 
 	uses := folderUses(a.Folders, folders)
@@ -223,15 +230,15 @@ func (t *folderTree) setFolders(a account.Account, folders []store.Folder) {
 	// its name is within, if that is listed, so that a folder comes out
 	// below its parent whatever order they are listed in.
 	for _, f := range ordered {
-		item := qt.NewQTreeWidgetItem()
-		item.SetData(0, roleAccount, qt.NewQVariant11(a.ID))
-		item.SetData(0, roleName, qt.NewQVariant11(f.Name))
+		item := qtwidgets.NewQTreeWidgetItem()
+		item.SetData(0, roleAccount, qtcore.NewQVariantWithString(a.ID))
+		item.SetData(0, roleName, qtcore.NewQVariantWithString(f.Name))
 		if f.Selectable() {
-			item.SetData(0, roleFolder, qt.NewQVariant11(f.Name))
-			item.SetFlags(qt.ItemIsSelectable | qt.ItemIsEnabled | qt.ItemIsDropEnabled)
+			item.SetData(0, roleFolder, qtcore.NewQVariantWithString(f.Name))
+			item.SetFlags(qtcore.ItemIsSelectable | qtcore.ItemIsEnabled | qtcore.ItemIsDropEnabled)
 		} else {
-			item.SetData(0, roleFolder, qt.NewQVariant11(""))
-			item.SetFlags(qt.ItemIsSelectable | qt.ItemIsEnabled)
+			item.SetData(0, roleFolder, qtcore.NewQVariantWithString(""))
+			item.SetFlags(qtcore.ItemIsSelectable | qtcore.ItemIsEnabled)
 		}
 		item.SetToolTip(0, f.Name)
 		item.SetIcon(0, folderIcon(f, uses))
@@ -294,12 +301,16 @@ func (t *folderTree) setFolders(a account.Account, folders []store.Folder) {
 	}
 }
 
+// sidebarUses are the uses a folder can have, in the order the side bar has
+// the folders for them, after the inbox, as other clients do.
+var sidebarUses = []engine.Special{engine.Drafts, engine.Sent, engine.Archive, engine.Trash}
+
 // folderUses returns the special use of each folder that has one, by name:
 // the folders the account's settings choose, or else those found as the
 // engine finds them.
 func folderUses(chosen account.Folders, folders []store.Folder) map[string]engine.Special {
 	uses := map[string]engine.Special{}
-	for _, use := range []engine.Special{engine.Drafts, engine.Sent, engine.Archive, engine.Trash} {
+	for _, use := range sidebarUses {
 		if name := engine.SpecialIn(chosen, folders, use); name != "" {
 			uses[name] = use
 		}
@@ -316,9 +327,9 @@ func orderFolders(folders []store.Folder, uses map[string]engine.Special) []stor
 			return 0
 		}
 		if use, ok := uses[f.Name]; ok {
-			return 1 + slices.Index([]engine.Special{engine.Drafts, engine.Sent, engine.Archive, engine.Trash}, use)
+			return 1 + slices.Index(sidebarUses, use)
 		}
-		return 5
+		return 1 + len(sidebarUses)
 	}
 	ordered := slices.Clone(folders)
 	slices.SortStableFunc(ordered, func(a, b store.Folder) int { return rank(a) - rank(b) })
@@ -339,7 +350,7 @@ var sidebarTints = map[string]tint{
 
 // sidebarIcon returns the icon with the name as the side bar shows it, in
 // its colour if it has one.
-func sidebarIcon(name string) *qt.QIcon {
+func sidebarIcon(name string) *qtgui.QIcon {
 	if t, ok := sidebarTints[name]; ok {
 		return tintedIcon(name, t)
 	}
@@ -347,7 +358,7 @@ func sidebarIcon(name string) *qt.QIcon {
 }
 
 // folderIcon returns the icon of a folder, by its use.
-func folderIcon(f store.Folder, uses map[string]engine.Special) *qt.QIcon {
+func folderIcon(f store.Folder, uses map[string]engine.Special) *qtgui.QIcon {
 	if remote.IsInbox(f.Name) {
 		return sidebarIcon(icons.Inbox)
 	}
@@ -375,14 +386,13 @@ func (t *folderTree) folderPath(id, folder string) string {
 		return folder
 	}
 	path := t.names[item]
-	// Parent is a new wrapper of the item, not the one names is kept by,
-	// so the folder is found by its name, which the account has none of.
+	// The account, above them all, has no name.
 	for parent := item.Parent(); parent != nil; parent = parent.Parent() {
-		above, ok := t.folders[id][itemData(parent, roleName)]
+		name, ok := t.names[parent]
 		if !ok {
 			break
 		}
-		path = t.names[above] + "/" + path
+		path = name + "/" + path
 	}
 	return path
 }
@@ -403,7 +413,7 @@ func (t *folderTree) setUnread(id, folder string, unread int) {
 
 // showUnread shows the item of a folder, of the name, with how many of its
 // messages are unread: in bold and counted, if any is.
-func showUnread(item *qt.QTreeWidgetItem, name string, unread int) {
+func showUnread(item *qtwidgets.QTreeWidgetItem, name string, unread int) {
 	text := name
 	if unread > 0 {
 		text = fmt.Sprintf("%s (%d)", name, unread)
@@ -412,7 +422,6 @@ func showUnread(item *qt.QTreeWidgetItem, name string, unread int) {
 	font := item.Font(0)
 	font.SetBold(unread > 0)
 	item.SetFont(0, font)
-	runtime.KeepAlive(font)
 }
 
 // selectFolder selects the folder of the account.

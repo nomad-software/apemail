@@ -7,8 +7,8 @@ import (
 	"sync/atomic"
 
 	"github.com/emersion/go-message/mail"
-	qt "github.com/mappu/miqt/qt6"
-	"github.com/mappu/miqt/qt6/mainthread"
+	"github.com/nomad-software/qute"
+	"github.com/nomad-software/qute/qtcore"
 
 	"github.com/nomad-software/apemail/internal/addressbook"
 	"github.com/nomad-software/apemail/internal/message"
@@ -22,7 +22,7 @@ type contacts struct {
 	book *addressbook.Book
 	// model has each contact as it is written in a field of addresses,
 	// which the compose windows complete what is typed from.
-	model *qt.QStringListModel
+	model *qtcore.QStringListModel
 
 	// saving is held while the book is saved, so that one save does not
 	// overtake another, and saves is the count of them, so that a save
@@ -44,7 +44,7 @@ func (w *Window) loadAddressBook() {
 	}
 	go func() {
 		b, err := addressbook.Load(path, keys)
-		mainthread.Start(func() {
+		qute.Post(func() {
 			// What was read with keys or from a folder since changed is
 			// not used.
 			if keys != w.keys || path != addressbook.Path(w.accountsDir()) {
@@ -88,7 +88,7 @@ func (w *Window) saveAddressBook() {
 			return
 		}
 		if err := b.Save(path, keys); err != nil {
-			mainthread.Start(func() { w.showError(fmt.Errorf("the address book could not be saved: %w", err)) })
+			qute.Post(func() { w.showError(fmt.Errorf("the address book could not be saved: %w", err)) })
 		}
 	}()
 }

@@ -4,8 +4,9 @@ import (
 	"runtime"
 	"testing"
 
-	qt "github.com/mappu/miqt/qt6"
-	"github.com/mappu/miqt/qt6/mainthread"
+	"github.com/nomad-software/qute/qtcore"
+	"github.com/nomad-software/qute/qtgui"
+	"github.com/nomad-software/qute/qutetest"
 
 	"github.com/nomad-software/apemail/internal/icons"
 )
@@ -14,17 +15,16 @@ import (
 // lasts once the garbage collector has run, which frees the pixmaps drawn
 // for it.
 func TestIcons(t *testing.T) {
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		for _, name := range icons.Names {
 			icon(name)
 		}
 	})
 	runtime.GC()
 	runtime.GC()
-	mainthread.Wait(func() {
-		palette := qt.QGuiApplication_Palette()
-		text := palette.Color(qt.QPalette__Active, qt.QPalette__WindowText).Rgb()
-		runtime.KeepAlive(palette)
+	qutetest.Run(t, func() {
+		palette := qtgui.QGuiApplicationPalette()
+		text := rgb(palette.GroupColor(qtgui.QPaletteActive, qtgui.QPaletteWindowText))
 		for _, name := range icons.Names {
 			ic := icon(name)
 			if ic.IsNull() {
@@ -32,9 +32,8 @@ func TestIcons(t *testing.T) {
 				continue
 			}
 			for _, size := range []int{16, 32} {
-				pixmap := ic.Pixmap2(size, size)
+				pixmap := ic.Pixmap(qtcore.QSize{Width: size, Height: size})
 				img := pixmap.ToImage()
-				runtime.KeepAlive(pixmap)
 				drawn, other := 0, 0
 				for y := range img.Height() {
 					for x := range img.Width() {
@@ -80,16 +79,14 @@ func TestIconsWhileCollecting(t *testing.T) {
 			}
 		}
 	}()
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		ic := icon(icons.Archive)
 		for i := range 3000 {
 			size := 16 + i%48
-			// The pixmap is a Go value too, kept while it is used.
-			pixmap := ic.Pixmap2(size, size)
+			pixmap := ic.Pixmap(qtcore.QSize{Width: size, Height: size})
 			if pixmap.IsNull() {
 				t.Fatalf("no pixmap at %d", size)
 			}
-			runtime.KeepAlive(pixmap)
 		}
 	})
 	close(stop)

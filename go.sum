@@ -14,8 +14,8 @@ github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6 h1:oP4q0fw+fOSWn3
 github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6/go.mod h1:iL2twTeMvZnrg54ZoPDNfJaJaqy0xIQFuBdrLsmspwQ=
 github.com/emersion/go-smtp v0.25.0 h1:krfiHrme2JbJYDh0DGuSRbvPpbnQTH/v9CIfPincl1I=
 github.com/emersion/go-smtp v0.25.0/go.mod h1:ZtRRkbTyp2XTHCA+BmyTFTrj8xY4I+b4McvHxCU2gsQ=
-github.com/mappu/miqt v0.15.0 h1:J49IgpaMEYRy5pWKCLzZ0XWjlG70I8BKBNAuXMaGOGY=
-github.com/mappu/miqt v0.15.0/go.mod h1:xFg7ADaO1QSkmXPsPODoKe/bydJpRG9fgCYyIDl/h1U=
+github.com/nomad-software/qute v1.0.12 h1:KbG3j14e9uggFTPpKcM+7ZdjT4xYA5cGZB5TBfAYe3s=
+github.com/nomad-software/qute v1.0.12/go.mod h1:Vsy2uriyTev4IGHlJ0XkjGW4pYxuojecJZSxFNY0nDA=
 github.com/yuin/goldmark v1.4.13/go.mod h1:6yULJ656Px+3vBD8DxQVa3kxgyrAnzto9xy5taEt/CY=
 golang.org/x/crypto v0.0.0-20190308221718-c2843e01d9a2/go.mod h1:djNgcEr1/C05ACkg1iLfiJU5Ep61QUkGW8qpdssI0+w=
 golang.org/x/crypto v0.0.0-20210921155107-089bfa567519/go.mod h1:GvvjBRRGRdwPK5ydBHafDWAxML/pGHZbMvKqRZ5+Abc=

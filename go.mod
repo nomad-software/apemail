@@ -8,7 +8,7 @@ require (
 	github.com/emersion/go-message v0.18.2
 	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6
 	github.com/emersion/go-smtp v0.25.0
-	github.com/mappu/miqt v0.15.0
+	github.com/nomad-software/qute v1.0.12
 	golang.org/x/crypto v0.58.0
 )
 

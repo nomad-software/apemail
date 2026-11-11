@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 
-	qt "github.com/mappu/miqt/qt6"
-	"github.com/mappu/miqt/qt6/mainthread"
+	"github.com/nomad-software/qute"
+	"github.com/nomad-software/qute/qtcore"
+	"github.com/nomad-software/qute/qtgui"
 
 	"github.com/nomad-software/apemail/internal/appicon"
 	"github.com/nomad-software/apemail/internal/desktop"
@@ -18,6 +18,11 @@ import (
 )
 
 func main() {
+	os.Exit(run())
+}
+
+// run runs the program, and returns what it exits with.
+func run() int {
 	// One copy runs at a time: one started while another runs, as from the
 	// desktop, has that one's window shown and leaves, passing on the
 	// desktop's leave to take the focus. Nothing else is done before, so
@@ -27,17 +32,17 @@ func main() {
 		claim, err = instance.Claim(dir, os.Getenv("XDG_ACTIVATION_TOKEN"))
 		switch {
 		case errors.Is(err, instance.ErrRunning):
-			return
+			return 0
 		case errors.Is(err, instance.ErrNoAnswer):
 			fmt.Fprintln(os.Stderr, "apemail:", err)
-			os.Exit(1)
+			return 1
 		case err != nil:
 			// The program runs, as it would without the check.
 			fmt.Fprintln(os.Stderr, "apemail: another copy could be started beside this one:", err)
 		default:
 			defer claim.Close()
 		}
-	} else if !errors.Is(err, errors.ErrUnsupported) {
+	} else {
 		fmt.Fprintln(os.Stderr, "apemail: another copy could be started beside this one:", err)
 	}
 
@@ -66,30 +71,27 @@ func main() {
 	// Messages are shown by Qt WebEngine, which is prepared before the
 	// application is made.
 	ui.PrepareWeb()
-	qt.NewQApplication(os.Args)
-	qt.QCoreApplication_SetApplicationName("apemail")
-	// Under Wayland this is the name a window goes by, which a desktop
-	// matches to the desktop entry of that name for its icon and its place
-	// in the task bar.
-	qt.QGuiApplication_SetDesktopFileName(desktop.Name)
+	return qute.Main(func() {
+		qtcore.QCoreApplicationSetApplicationName("apemail")
+		// Under Wayland this is the name a window goes by, which a desktop
+		// matches to the desktop entry of that name for its icon and its
+		// place in the task bar.
+		qtgui.QGuiApplicationSetDesktopFileName(desktop.Name)
 
-	// On Linux the desktop is given an entry for the program, which starts
-	// the copy that is running now, wherever it is and whatever it is
-	// called, so that it can be started from the desktop's own menus and
-	// kept in a dock or sidebar.
-	if runtime.GOOS == "linux" {
+		// The desktop is given an entry for the program, which starts the
+		// copy that is running now, wherever it is and whatever it is
+		// called, so that it can be started from the desktop's own menus
+		// and kept in a dock or sidebar.
 		if err := desktop.Install(appicon.PNG); err != nil {
 			fmt.Fprintln(os.Stderr, "apemail: the desktop entry could not be written:", err)
 		}
-	}
 
-	window := ui.NewWindow(files)
-	window.Start()
-	if claim != nil {
-		claim.Serve(func(token string) {
-			mainthread.Start(func() { window.Activate(token) })
-		})
-	}
-
-	qt.QApplication_Exec()
+		window := ui.NewWindow(files)
+		window.Start()
+		if claim != nil {
+			claim.Serve(func(token string) {
+				qute.Post(func() { window.Activate(token) })
+			})
+		}
+	})
 }

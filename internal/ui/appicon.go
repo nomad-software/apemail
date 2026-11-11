@@ -1,21 +1,19 @@
 package ui
 
 import (
-	qt "github.com/mappu/miqt/qt6"
+	"github.com/nomad-software/qute/qtgui"
 
 	"github.com/nomad-software/apemail/internal/appicon"
 )
 
-var appIconCache *qt.QIcon
+var appIconCache *qtgui.QIcon
 
 // appIcon returns the icon of the program.
-func appIcon() *qt.QIcon {
+func appIcon() *qtgui.QIcon {
 	if appIconCache == nil {
-		pixmap := qt.NewQPixmap()
-		// The icon keeps a copy of the picture.
-		defer pixmap.Delete()
-		pixmap.LoadFromDataWithData(appicon.PNG)
-		appIconCache = qt.NewQIcon2(pixmap)
+		pixmap := qtgui.NewQPixmap()
+		pixmap.LoadFromData(appicon.PNG)
+		appIconCache = qtgui.NewQIconWithPixmap(pixmap)
 	}
 	return appIconCache
 }

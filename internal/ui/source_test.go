@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/emersion/go-imap/v2"
-	qt "github.com/mappu/miqt/qt6"
-	"github.com/mappu/miqt/qt6/mainthread"
+	"github.com/nomad-software/qute/qtgui"
+	"github.com/nomad-software/qute/qutetest"
 
 	"github.com/nomad-software/apemail/internal/remote/remotetest"
 )
@@ -19,7 +19,7 @@ func TestViewSource(t *testing.T) {
 	w := newTestWindow(t, s)
 	wait(t, "the inbox", func() bool { return len(w.list.rows) == 1 })
 
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if w.viewSource.IsEnabled() {
 			t.Error("view source is enabled with no message shown")
 		}
@@ -28,7 +28,7 @@ func TestViewSource(t *testing.T) {
 		}
 	})
 	showFirst(t, w)
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if !w.viewSource.IsEnabled() {
 			t.Fatal("view source is not enabled with a message shown")
 		}
@@ -36,7 +36,7 @@ func TestViewSource(t *testing.T) {
 	})
 	wait(t, "the source", func() bool { return len(sources) == 1 })
 
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		var src *sourceWindow
 		for src = range sources {
 		}
@@ -50,10 +50,10 @@ func TestViewSource(t *testing.T) {
 			t.Errorf("read only %v, title %q, window %v", src.IsReadOnly(), src.WindowTitle(), src.IsWindow())
 		}
 		// It belongs to the main window, which closes it.
-		if src.ParentWidget() == nil || src.ParentWidget().UnsafePointer() != w.QWidget.UnsafePointer() {
+		if src.ParentWidget() == nil || src.ParentWidget().Ptr() != w.QWidget.Ptr() {
 			t.Error("the source does not belong to the main window")
 		}
-		var escape *qt.QAction
+		var escape *qtgui.QAction
 		for _, a := range src.QWidget.Actions() {
 			if a.Shortcut().ToString() == "Esc" {
 				escape = a
@@ -73,7 +73,7 @@ func TestSourceNotUTF8(t *testing.T) {
 	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove))
 	w := newTestWindow(t, s)
 	wait(t, "the account", func() bool { return len(w.engines) == 1 })
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		src := w.showSource("Grüße", []byte("Subject: Gr\xfc\xdfe\r\n\r\nBody\r\n"))
 		defer src.Close()
 		if got := src.ToPlainText(); got != "Subject: Gr\uFFFDe\n\nBody\n" {

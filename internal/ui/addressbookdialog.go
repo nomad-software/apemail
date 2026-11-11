@@ -5,7 +5,9 @@ import (
 	"slices"
 	"strings"
 
-	qt "github.com/mappu/miqt/qt6"
+	"github.com/nomad-software/qute/qtcore"
+	"github.com/nomad-software/qute/qtgui"
+	"github.com/nomad-software/qute/qtwidgets"
 
 	"github.com/nomad-software/apemail/internal/addressbook"
 )
@@ -13,17 +15,17 @@ import (
 // bookWindow is the window of the address book, which lists the contacts
 // and adds, changes and removes them.
 type bookWindow struct {
-	*qt.QWidget
+	*qtwidgets.QWidget
 	w *Window
 
-	list                  *qt.QTreeWidget
-	edit, remove, writeTo *qt.QPushButton
+	list                  *qtwidgets.QTreeWidget
+	edit, remove, writeTo *qtwidgets.QPushButton
 	// contacts are those listed, in the order of the rows.
 	contacts []addressbook.Contact
 	// sortColumn and sortOrder are how the rows are sorted, which a click
 	// on a column's header changes.
 	sortColumn int
-	sortOrder  qt.SortOrder
+	sortOrder  qtcore.SortOrder
 	// dialog is the contact dialog opened last, which tests answer.
 	dialog *contactDialog
 }
@@ -40,45 +42,45 @@ func (w *Window) showAddressBook() {
 	if w.contacts.book == nil {
 		return
 	}
-	b := &bookWindow{QWidget: qt.NewQWidget(w.QWidget), w: w}
-	b.SetWindowFlags(qt.Window)
-	b.SetAttribute(qt.WA_DeleteOnClose)
+	b := &bookWindow{QWidget: qtwidgets.NewQWidget(w), w: w}
+	b.SetWindowFlags(qtcore.Window)
+	b.SetAttribute(qtcore.WA_DeleteOnClose)
 	b.SetWindowTitle("Address Book")
-	layout := qt.NewQHBoxLayout(b.QWidget)
+	layout := qtwidgets.NewQHBoxLayout(b)
 
 	// A list as the messages are, without a grid, sorted by a click on a
 	// column's header. The rows are sorted here rather than by the view,
 	// so that they stay in the order of contacts.
-	b.list = qt.NewQTreeWidget2()
+	b.list = qtwidgets.NewQTreeWidget(nil)
 	b.list.SetColumnCount(2)
 	b.list.SetHeaderLabels([]string{"Name", "Email"})
 	b.list.SetRootIsDecorated(false)
 	b.list.SetUniformRowHeights(true)
 	b.list.SetAllColumnsShowFocus(true)
-	b.list.SetSelectionBehavior(qt.QAbstractItemView__SelectRows)
-	b.list.SetSelectionMode(qt.QAbstractItemView__SingleSelection)
-	b.list.SetEditTriggers(qt.QAbstractItemView__NoEditTriggers)
+	b.list.SetSelectionBehavior(qtwidgets.QAbstractItemViewSelectRows)
+	b.list.SetSelectionMode(qtwidgets.QAbstractItemViewSingleSelection)
+	b.list.SetEditTriggers(qtwidgets.QAbstractItemViewNoEditTriggers)
 	b.list.SetColumnWidth(0, 220)
 	header := b.list.Header()
 	header.SetSectionsMovable(false)
 	header.SetSectionsClickable(true)
 	header.SetSortIndicatorShown(true)
 	header.SetSortIndicator(b.sortColumn, b.sortOrder)
-	header.OnSortIndicatorChanged(func(column int, order qt.SortOrder) {
+	header.OnSortIndicatorChanged(func(column int, order qtcore.SortOrder) {
 		b.sortColumn, b.sortOrder = column, order
 		b.show(w.contacts.book.Contacts)
 	})
 	b.list.OnItemSelectionChanged(b.updateButtons)
-	b.list.OnItemDoubleClicked(func(item *qt.QTreeWidgetItem, _ int) {
+	b.list.OnItemDoubleClicked(func(item *qtwidgets.QTreeWidgetItem, _ int) {
 		b.writeAndClose(b.list.IndexOfTopLevelItem(item))
 	})
-	layout.AddWidget(b.list.QWidget)
+	layout.AddWidget(b.list)
 
-	buttons := qt.NewQVBoxLayout2()
-	button := func(text string, clicked func()) *qt.QPushButton {
-		p := qt.NewQPushButton3(text)
-		p.OnClicked(clicked)
-		buttons.AddWidget(p.QWidget)
+	buttons := qtwidgets.NewQVBoxLayout(nil)
+	button := func(text string, clicked func()) *qtwidgets.QPushButton {
+		p := qtwidgets.NewQPushButtonWithText(text, nil)
+		p.OnClicked(func(bool) { clicked() })
+		buttons.AddWidget(p)
 		return p
 	}
 	button("New…", b.newContact)
@@ -87,21 +89,21 @@ func (w *Window) showAddressBook() {
 	b.writeTo = button("Write", b.writeSelected)
 	buttons.AddStretch()
 	button("Close", func() { b.Close() })
-	layout.AddLayout(buttons.QLayout)
+	layout.AddLayout(buttons)
 
 	// Delete removes the contact selected, as it deletes a message in the
 	// main window.
-	del := qt.NewQAction2("Remove")
-	del.SetShortcut(qt.NewQKeySequence2("Del"))
-	del.SetShortcutContext(qt.WidgetShortcut)
-	del.OnTriggered(b.removeSelected)
-	b.list.QWidget.AddAction(del)
-	escape := qt.NewQAction2("Close")
-	escape.SetShortcut(qt.NewQKeySequence2("Esc"))
-	escape.OnTriggered(func() { b.Close() })
-	b.QWidget.AddAction(escape)
+	del := qtgui.NewQActionWithText("Remove", b)
+	del.SetShortcut(qtgui.NewQKeySequenceWithKey("Del"))
+	del.SetShortcutContext(qtcore.WidgetShortcut)
+	del.OnTriggered(func(bool) { b.removeSelected() })
+	b.list.AddAction(del)
+	escape := qtgui.NewQActionWithText("Close", b)
+	escape.SetShortcut(qtgui.NewQKeySequenceWithKey("Esc"))
+	escape.OnTriggered(func(bool) { b.Close() })
+	b.AddAction(escape)
 
-	b.OnDestroyed(func() {
+	b.OnDestroyed(func(*qtcore.QObject) {
 		if w.bookDialog == b {
 			w.bookDialog = nil
 		}
@@ -121,9 +123,9 @@ func (b *bookWindow) show(contacts []addressbook.Contact) {
 	// of rows that are not there yet.
 	b.list.BlockSignals(true)
 	b.list.Clear()
-	var current *qt.QTreeWidgetItem
+	var current *qtwidgets.QTreeWidgetItem
 	for _, c := range b.contacts {
-		item := qt.NewQTreeWidgetItem2([]string{c.Name, c.Email})
+		item := qtwidgets.NewQTreeWidgetItemWithStrings([]string{c.Name, c.Email})
 		b.list.AddTopLevelItem(item)
 		if selected.Email != "" && strings.EqualFold(c.Email, selected.Email) {
 			current = item
@@ -148,7 +150,7 @@ func (b *bookWindow) sorted(contacts []addressbook.Contact) []addressbook.Contac
 			return strings.Compare(strings.ToLower(x.Email), strings.ToLower(y.Email))
 		})
 	}
-	if b.sortOrder == qt.DescendingOrder {
+	if b.sortOrder == qtcore.DescendingOrder {
 		slices.Reverse(out)
 	}
 	return out
@@ -178,7 +180,7 @@ func (b *bookWindow) updateButtons() {
 
 // newContact asks for a contact to add.
 func (b *bookWindow) newContact() {
-	b.dialog = newContactDialog(b.QWidget, "New Contact", addressbook.Contact{}, func(c addressbook.Contact) error {
+	b.dialog = newContactDialog(b, "New Contact", addressbook.Contact{}, func(c addressbook.Contact) error {
 		return b.w.changeAddressBook(func(book *addressbook.Book) (bool, error) {
 			if book.Has(c.Email) {
 				return false, errors.New(c.Email + " is in the address book already")
@@ -194,7 +196,7 @@ func (b *bookWindow) editSelected() {
 	if !ok {
 		return
 	}
-	b.dialog = newContactDialog(b.QWidget, "Edit Contact", old, func(c addressbook.Contact) error {
+	b.dialog = newContactDialog(b, "Edit Contact", old, func(c addressbook.Contact) error {
 		return b.w.changeAddressBook(func(book *addressbook.Book) (bool, error) {
 			if err := book.Change(old.Email, c); err != nil {
 				return false, err
@@ -208,11 +210,11 @@ func (b *bookWindow) editSelected() {
 // the user agrees, as it cannot be undone.
 func (b *bookWindow) removeSelected() {
 	c, ok := b.selected()
-	if !ok || !confirm(b.QWidget, "Remove Contact", "Remove "+contactText(c)+" from the address book?") {
+	if !ok || !confirm(b, "Remove Contact", "Remove "+contactText(c)+" from the address book?") {
 		return
 	}
 	if err := b.w.changeAddressBook(func(book *addressbook.Book) (bool, error) { return book.Remove(c.Email), nil }); err != nil {
-		warning(b.QWidget, "Remove Contact", err.Error())
+		warning(b, "Remove Contact", err.Error())
 	}
 }
 
@@ -236,38 +238,38 @@ func (b *bookWindow) writeAndClose(row int) {
 
 // contactDialog asks for the name and address of a contact.
 type contactDialog struct {
-	*qt.QDialog
-	name, email *qt.QLineEdit
+	*qtwidgets.QDialog
+	name, email *qtwidgets.QLineEdit
 	ok          func()
 }
 
 // newContactDialog asks for a contact, starting with c, and calls accepted
 // with it when OK is pressed. The dialog stays open, saying what is wrong,
 // if accepted returns an error.
-func newContactDialog(parent *qt.QWidget, title string, c addressbook.Contact, accepted func(addressbook.Contact) error) *contactDialog {
-	d := &contactDialog{QDialog: qt.NewQDialog(parent)}
+func newContactDialog(parent qtwidgets.QWidgetLike, title string, c addressbook.Contact, accepted func(addressbook.Contact) error) *contactDialog {
+	d := &contactDialog{QDialog: qtwidgets.NewQDialog(parent)}
 	d.SetWindowTitle(title)
-	layout := qt.NewQVBoxLayout(d.QWidget)
-	form := qt.NewQFormLayout2()
-	d.name = qt.NewQLineEdit3(c.Name)
-	d.email = qt.NewQLineEdit3(c.Email)
+	layout := qtwidgets.NewQVBoxLayout(d)
+	form := qtwidgets.NewQFormLayout(nil)
+	d.name = qtwidgets.NewQLineEditWithText(c.Name, nil)
+	d.email = qtwidgets.NewQLineEditWithText(c.Email, nil)
 	d.email.SetPlaceholderText("name@example.com")
-	form.AddRow3("Name:", d.name.QWidget)
-	form.AddRow3("Email:", d.email.QWidget)
-	layout.AddLayout(form.QLayout)
+	form.AddRowText("Name:", d.name)
+	form.AddRowText("Email:", d.email)
+	layout.AddLayout(form)
 
-	buttons := qt.NewQDialogButtonBox5(qt.QDialogButtonBox__Ok|qt.QDialogButtonBox__Cancel, qt.Horizontal)
-	layout.AddWidget(buttons.QWidget)
+	buttons := qtwidgets.NewQDialogButtonBoxWithButtonsOriented(qtwidgets.QDialogButtonBoxOk|qtwidgets.QDialogButtonBoxCancel, qtcore.Horizontal, nil)
+	layout.AddWidget(buttons)
 	buttons.OnRejected(d.Reject)
 	d.ok = func() {
 		if err := accepted(addressbook.Contact{Name: d.name.Text(), Email: d.email.Text()}); err != nil {
-			warning(d.QWidget, title, err.Error())
+			warning(d, title, err.Error())
 			return
 		}
 		d.Accept()
 	}
 	buttons.OnAccepted(d.ok)
-	fitDialog(d.QDialog, 400)
-	openDialog(d.QDialog)
+	fitDialog(d, 400)
+	openDialog(d)
 	return d
 }

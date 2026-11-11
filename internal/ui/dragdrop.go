@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 
-	qt "github.com/mappu/miqt/qt6"
+	"github.com/nomad-software/qute/qtcore"
 )
 
 // messagesMime is the type of the data of messages dragged from the message
@@ -12,23 +12,25 @@ import (
 const messagesMime = "application/x-apemail-messages"
 
 // draggedMessages are messages dragged from the message list: where they
-// are, and their UIDs.
+// are, and their UIDs, with the UIDVALIDITY the folder had when they were
+// listed.
 type draggedMessages struct {
-	Account string   `json:"account"`
-	Folder  string   `json:"folder"`
-	UIDs    []uint32 `json:"uids"`
+	Account     string   `json:"account"`
+	Folder      string   `json:"folder"`
+	UIDValidity uint32   `json:"uidValidity"`
+	UIDs        []uint32 `json:"uids"`
 }
 
 // encode returns the messages as the data of a drag.
-func (d draggedMessages) encode() *qt.QMimeData {
+func (d draggedMessages) encode() *qtcore.QMimeData {
 	data, _ := json.Marshal(d)
-	m := qt.NewQMimeData()
+	m := qtcore.NewQMimeData()
 	m.SetData(messagesMime, data)
 	return m
 }
 
 // decodeDragged returns the messages a drag carries, if it carries any.
-func decodeDragged(m *qt.QMimeData) (draggedMessages, bool) {
+func decodeDragged(m *qtcore.QMimeData) (draggedMessages, bool) {
 	var d draggedMessages
 	if m == nil || !m.HasFormat(messagesMime) {
 		return d, false
@@ -64,7 +66,7 @@ func (w *Window) dropMessages(d draggedMessages, id, folder string) bool {
 	if e == nil {
 		return false
 	}
-	e.Move(d.Folder, d.UIDs, folder, func(err error) {
+	e.Move(d.Folder, d.UIDValidity, d.UIDs, folder, func(err error) {
 		if err != nil {
 			w.warn("Move", err)
 		}

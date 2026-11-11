@@ -316,7 +316,11 @@ func HTMLToText(s string) string {
 			tag.Reset()
 		case r == '>' && inTag:
 			inTag = false
-			name := strings.ToLower(strings.Fields(tag.String() + " ")[0])
+			// A tag with nothing in it, as <>, has no name.
+			name := ""
+			if fields := strings.Fields(tag.String()); len(fields) > 0 {
+				name = strings.ToLower(fields[0])
+			}
 			switch {
 			case inSkip != "":
 				if name == "/"+inSkip {

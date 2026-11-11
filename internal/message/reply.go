@@ -100,7 +100,7 @@ func (m *Message) Attribution() string {
 
 // QuoteText returns the text with each line quoted.
 func QuoteText(text string) string {
-	lines := strings.Split(strings.TrimRight(strings.ReplaceAll(text, "\r\n", "\n"), "\n"), "\n")
+	lines := strings.Split(strings.TrimRight(unixLines(text), "\n"), "\n")
 	for i, l := range lines {
 		if strings.HasPrefix(l, ">") {
 			lines[i] = ">" + l

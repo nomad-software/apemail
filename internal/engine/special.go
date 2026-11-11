@@ -11,6 +11,14 @@ import (
 // Special is a use a folder can have.
 type Special int
 
+// The uses a folder can have.
+const (
+	Sent Special = iota
+	Drafts
+	Trash
+	Archive
+)
+
 // specialUses are the attribute RFC 6154 gives each use, which a server
 // marks the folder for it with, and the usual names of the folder, which it
 // is found by on a server that marks none: the names other clients and
@@ -49,8 +57,22 @@ func (e *Engine) FolderFor(use Special) string {
 // it is not there: the folder the account names, or the one found by its
 // use, or one with the preset name in the user's own namespace. It is run by
 // the op worker, with its connection.
+//
+// The folders are listed again before one is made, so that one is never made
+// beside the folder the mailbox has for the use already: the folders may not
+// have been listed yet, as when mail is sent from an account that has not
+// been looked at, or the folder may have been made elsewhere since.
 func (e *Engine) ensureFolder(c *remote.Conn, use Special) (string, error) {
 	name := e.SpecialFolder(use)
+	if name != "" && e.hasFolder(name) {
+		return name, nil
+	}
+	list, err := c.Folders()
+	if err != nil {
+		return "", err
+	}
+	e.listed(list)
+	name = e.SpecialFolder(use)
 	if name != "" && e.hasFolder(name) {
 		return name, nil
 	}

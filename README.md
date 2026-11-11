@@ -2,7 +2,7 @@
 
 A simple IMAP email client, in the spirit of the desktop email clients of
 years ago. It is written in Go with a Qt 6 interface using the
-[miqt](https://github.com/mappu/miqt) bindings.
+[qute](https://github.com/nomad-software/qute) bindings, and runs on Linux.
 
 ![ApeMail showing an account with its Inbox, Drafts, Sent, Archive with a folder for each year, Trash and Projects folders, the messages of the inbox with the unread ones in bold and a flagged one in red, and an HTML message with a list, a table and an attachment](docs/screenshot.png)
 
@@ -148,9 +148,12 @@ it you have.
 - The To, Cc and Bcc fields complete what you type from the address book:
   any part of a name or address finds a contact.
 - Attach files, and save drafts to the server to finish later. Double-click a
-  draft to carry on with it; the drafts it replaces go to the trash.
+  draft to carry on with it; the drafts it replaces go to the trash. Closing
+  a window without saving what was written since leaves the draft as it was
+  last saved.
 - Mail that cannot be sent because the server cannot be reached waits in an
-  outbox and goes when it can, as do drafts saved without a connection.
+  outbox and goes when it can, as do drafts saved without a connection, and
+  the copy of sent mail that could not be put in the sent folder.
 
 **Organising**
 
@@ -167,9 +170,10 @@ it you have.
   marks them as (RFC 6154 special-use), or by their usual names (Archive or
   Archives, Sent Items, Deleted Items, ...), or can be chosen for each
   account. If one is missing it is made on the server the first time it is
-  needed. The side bar shows each by what it is for, whatever the server
-  calls it, so every account looks the same: an archive called Archives,
-  or one you chose, is shown as Archive.
+  needed, once the folders have been listed again, so that one is never made
+  beside the folder there is. The side bar shows each by what it is for,
+  whatever the server calls it, so every account looks the same: an archive
+  called Archives, or one you chose, is shown as Archive.
 - **New Folder** (the account's menu in the side bar) makes a folder on the
   server, among your own or within another.
 - **Delete Folder** (the folder's menu in the side bar) deletes a folder from
@@ -273,7 +277,9 @@ Go makes it natural to do many things at once, and ApeMail does:
 - **A dropped connection is made again.** When the server restarts, or a
   router forgets an idle connection overnight, the next check makes a new
   one rather than failing, and the inbox is checked for what arrived while
-  it was gone.
+  it was gone. The connection that does what you ask is tried first if it
+  has not been used for a minute, as servers close one left idle, so that
+  moving or deleting a message after a while away does not fail.
 
 ### The local copy
 
@@ -312,8 +318,8 @@ At 100,000 messages, on an ordinary laptop:
 | | Before | Now |
 |---|---|---|
 | Marking a message read (the list) | 125–750 ms | 12 ms |
-| Sorting the list by date / by sender | 125 ms / 756 ms | 33 ms / 42 ms |
-| Filtering the list, at each key typed | — | 35 ms at most |
+| Sorting the list by date / by sender | 125 ms / 756 ms | 37 ms / 50 ms |
+| Filtering the list, at each key typed | — | 37 ms at most |
 | Saving the folder's index | 235 ms, on every change | 130 ms, at most every 2 s, in the background |
 | The folder's index on disk | 44 MB | under 8 MB |
 | Checking an unchanged folder | the flags of every message | one command |
@@ -357,17 +363,16 @@ happens to your mail from a key pressed by mistake.
 
 ## Requirements
 
-ApeMail is developed and tested on Linux. There is a release for macOS on
-Apple Silicon (see [macOS app](#macos-app)), but it has not been tested on
-macOS by hand yet.
+ApeMail is for Linux, and is developed and tested there.
 
 Building needs:
 
 - Go 1.27 or later
 - A C++ compiler (GCC or Clang)
 - `pkg-config`
-- The Qt 6 development files of Qt Widgets, Qt SVG (which draws the icons)
-  and Qt WebEngine (which shows messages)
+- The development files of Qt 6.12 or later: Qt Widgets, Qt SVG (which draws
+  the icons) and Qt WebEngine (which shows messages). The bindings are made
+  from the headers of Qt 6.12, and do not build with an older Qt.
 
 Install them with your distribution's package manager:
 
@@ -394,10 +399,14 @@ Check that Qt can be found with:
 pkg-config --modversion Qt6Widgets Qt6SvgWidgets Qt6WebEngineWidgets
 ```
 
-This should print three versions starting with 6.
+This should print three versions, of 6.12 or later. Where the distribution's
+Qt is older, as on Ubuntu 24.04 (6.4), Qt's own build from
+[qt.io](https://www.qt.io/download-qt-installer-oss) can be used instead,
+with `PKG_CONFIG_PATH` set to its `lib/pkgconfig`, as the workflow that
+builds the AppImage does.
 
-Running a built binary on another machine only needs the Qt 6 runtime
-libraries (`qt6-base`, `qt6-svg` and `qt6-webengine` on Arch,
+Running a built binary on another machine only needs the runtime libraries
+of the same Qt or a later one (`qt6-base`, `qt6-svg` and `qt6-webengine` on Arch,
 `libqt6widgets6`, `libqt6svgwidgets6` and `libqt6webenginewidgets6` on Debian
 and Ubuntu, `qt6-qtbase`, `qt6-qtsvg` and `qt6-qtwebengine` on Fedora,
 `libQt6Widgets6`, `libQt6SvgWidgets6` and `libQt6WebEngineWidgets6` on
@@ -419,10 +428,9 @@ go build -ldflags "-s -w" -o apemail .
 The `-s -w` flags build without the symbol table and debug information, which
 roughly halves the size of the binary, to about 40 MB.
 
-The first build compiles the whole Qt binding, Qt WebEngine's with it, and
-takes several minutes,
-printing a lot of compiler warnings from the Qt headers which can be ignored.
-Later builds use the Go build cache and take a few seconds.
+The first build compiles the Qt bindings, Qt WebEngine's with them, and
+takes about five minutes. Later builds use the Go build cache and take a few
+seconds.
 
 ## AppImage
 
@@ -437,7 +445,8 @@ chmod +x ApeMail-*-x86_64.AppImage
 ```
 
 It is built by a GitHub workflow (`.github/workflows/appimage.yml`), which runs
-`packaging/appimage.sh` on Ubuntu 24.04 with Ubuntu's Qt 6.4:
+`packaging/appimage.sh` on Ubuntu 24.04 with Qt's own build of Qt 6.12, as
+Ubuntu's Qt (6.4) is older than the bindings build with:
 
 - Pushing a tag that starts with `v` builds it and attaches it to a release of
   that name: `git tag v1.0.0 && git push origin v1.0.0`.
@@ -462,48 +471,6 @@ Arch, Ubuntu 24.04, Debian 13, Fedora 40 and anything newer.
 `make appimage` runs the same script locally, but an AppImage built on a newer
 system only runs on systems at least as new.
 
-## macOS app
-
-Releases for macOS are a disk image, `ApeMail-*-arm64.dmg`, for Macs with
-Apple Silicon. Open it and drag ApeMail into Applications. Macs with Intel
-processors are not supported.
-
-The app is not signed with an Apple Developer ID or notarised by Apple, so
-the first time it is opened macOS says that it cannot check it for malicious
-software and will not open it. Either:
-
-- Open System Settings > Privacy & Security, where ApeMail is named
-  beneath Security, and choose Open Anyway, or
-- take away the mark macOS gives what is downloaded, in Terminal:
-
-  ```sh
-  xattr -dr com.apple.quarantine /Applications/ApeMail.app
-  ```
-
-Either is only needed once. It is signed ad hoc, which a Mac with Apple
-Silicon needs to run it at all.
-
-It is built by a GitHub workflow (`.github/workflows/macos.yml`), which runs
-`packaging/macos.sh` on a Mac with Apple Silicon and Homebrew's Qt, when a
-`v` tag is pushed, as the AppImage is, or by hand from the Actions tab (macOS
-> Run workflow). The script builds the program, makes `ApeMail.app` with its
-icon (from `packaging/macos/apemail.png`) and `Info.plist` (from
-`packaging/macos/Info.plist`), copies Qt into it with Qt's `macdeployqt`,
-has everything in it find the libraries it uses within it (the helper process
-of Qt WebEngine too, which `macdeployqt` leaves as it was), checks that nothing
-uses a library from outside it, signs it, checks that it and the helper start,
-and makes the disk image. It needs the macOS the
-workflow builds on (macOS 15) or later, which the script works out from what
-is in the app and writes into its `Info.plist`.
-
-`make macos` runs the same script on a Mac with Apple Silicon and
-`brew install go pkgconf qtbase qtsvg qtwebengine`: the base of Qt, Qt SVG
-and Qt WebEngine alone, which is all ApeMail uses, as with the whole of
-Homebrew's `qt` the plugins of its other modules go into the app too, with
-what they use. The icon of the
-app is drawn from the program's own, within the margin macOS gives the icons
-of the Dock, by `make icons`.
-
 ## Running
 
 ```sh
@@ -515,7 +482,7 @@ with (see [Encryption](#encryption)), and then for your first account. Type
 your name and email address and press **Look Up Settings** to fill in the
 servers, then enter your passwords.
 
-On Linux, every time it starts, ApeMail adds itself to the desktop's
+Every time it starts, ApeMail adds itself to the desktop's
 applications, so that it can be started from the menu and kept in a dock or
 sidebar: it writes `~/.local/share/applications/apemail.desktop` and its icon
 to `~/.local/share/icons/hicolor/256x256/apps/apemail.png` (or under
@@ -534,11 +501,7 @@ clears the socket away. Under Wayland the new copy hands on the desktop's
 activation token, without which the window would only ask for attention.
 
 The settings are kept where the system keeps the configuration of programs:
-
-| System | Settings file |
-|---|---|
-| Linux | `~/.config/apemail/settings.json` (or under `$XDG_CONFIG_HOME`) |
-| macOS | `~/Library/Application Support/apemail/settings.json` |
+`~/.config/apemail/settings.json` (or under `$XDG_CONFIG_HOME`).
 
 They hold the paths of the keys, where the accounts are kept, the
 code font the source of a message is shown in and the theme (the User
@@ -550,12 +513,8 @@ where the keys are, so they never name a folder: the open folders are kept by
 a hash of their names.
 
 The accounts and the copy of their mail are kept, by default, where the
-system keeps the data of programs:
-
-| System | Accounts folder |
-|---|---|
-| Linux | `~/.local/share/apemail/accounts` (or under `$XDG_DATA_HOME`) |
-| macOS | `~/Library/Application Support/apemail/accounts` |
+system keeps the data of programs: `~/.local/share/apemail/accounts` (or under
+`$XDG_DATA_HOME`).
 
 | Path in it | Contents |
 |---|---|
@@ -612,8 +571,14 @@ ApeMail treats your mailbox as yours, not its own:
   marked as deleted are left alone. A server that cannot expunge particular
   messages (no UIDPLUS) is never asked to expunge at all.
 - Before anything is done to messages, ApeMail checks that the server has
-  not numbered the folder anew since it was listed, so it can never act on
-  the wrong messages.
+  not numbered the folder anew since they were listed, so it can never act
+  on the wrong messages: what you select is named by how the folder was
+  numbered when you saw it, even if it is numbered anew while you are being
+  asked whether to delete for good. A folder numbered anew has nothing in
+  it selected.
+- Mail the server has taken is sent, whatever becomes of the connection
+  after; mail that could be neither sent nor kept in the outbox stays in
+  its window, and is never said to be waiting.
 - Removing an account removes only what is kept on this computer. The
   mailbox on the server is not touched.
 - A message is shown, and quoted in a reply or forward, with its scripts off
@@ -641,8 +606,8 @@ offscreen, so they do not need a display, Qt WebEngine with them: messages
 are shown, clicked, written and typed in as you would, and one that names a
 server of the test's own in every way a page can (images, stylesheets,
 fonts, frames, scripts, preconnecting, prefetching), shown or quoted in a
-reply, fails the test if any connection at all is made to it. The work done at once is tested
-together under the race detector: accounts stopped while every kind of work
+reply, fails the test if any connection at all is made to it. The work done
+at once is tested together under the race detector: accounts stopped while every kind of work
 is under way, mail sent from several windows at once, the server dropping
 every connection, and answers that arrive after the window they were for
 has closed.

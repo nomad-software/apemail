@@ -21,6 +21,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/emersion/go-imap/v2/imapclient"
 
@@ -364,6 +365,8 @@ func (e *Engine) nextOp() (func(*remote.Conn) error, bool) {
 // opWorker does what the user asks of the mailbox, in the order it is asked.
 func (e *Engine) opWorker() {
 	var conn *remote.Conn
+	// used is when the connection was last used.
+	var used time.Time
 	defer func() {
 		if conn != nil {
 			e.disconnect(conn)
@@ -388,6 +391,15 @@ func (e *Engine) opWorker() {
 			op(nil)
 			continue
 		}
+		if conn != nil && time.Since(used) >= opIdle && conn.Check() != nil {
+			// A connection kept from before that has gone since, as
+			// the server closes one left idle, would fail whatever is
+			// asked of it, which cannot always be asked again: so one
+			// not used for a while is tried first, and another made
+			// if it does not answer.
+			e.disconnect(conn)
+			conn = nil
+		}
 		if conn == nil {
 			c, err := e.connect(true, nil)
 			if err != nil {
@@ -402,8 +414,15 @@ func (e *Engine) opWorker() {
 			e.disconnect(conn)
 			conn = nil
 		}
+		used = time.Now()
 	}
 }
+
+// opIdle is how long the connection of the op worker is left unused before
+// it is tried (NOOP) ahead of what is asked of it next. It is well under the
+// half hour a server keeps an idle connection for, and long enough that what
+// is asked one after another is not held up.
+var opIdle = time.Minute
 
 // errNoConn is given to an op which there is no connection for.
 var errNoConn = errors.New("the server could not be reached")
@@ -424,10 +443,3 @@ func (e *Engine) reply(done func(error), err error) {
 		e.post(func() { done(err) })
 	}
 }
-
-const (
-	Sent Special = iota
-	Drafts
-	Trash
-	Archive
-)

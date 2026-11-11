@@ -250,6 +250,23 @@ func TestHTMLToText(t *testing.T) {
 	}
 }
 
+// TestHTMLToTextOddTags checks that markup that is not well made, as a tag
+// with nothing in it or a name on a line of its own, is read rather than
+// stopping the program.
+func TestHTMLToTextOddTags(t *testing.T) {
+	for html, want := range map[string]string{
+		"One<>two":               "Onetwo",
+		"One< >two":              "Onetwo",
+		"One<br\n/>two":          "One\ntwo",
+		"<P\tclass=x>One</P>two": "One\ntwo",
+		"One<":                   "One",
+	} {
+		if got := message.HTMLToText(html); got != want {
+			t.Errorf("the text of %q = %q, want %q", html, got, want)
+		}
+	}
+}
+
 func TestFlowed(t *testing.T) {
 	raw := "Content-Type: text/plain; format=flowed\r\n\r\nA long \r\nline.\r\nNext\r\n"
 	m, err := message.Parse([]byte(raw))

@@ -7,7 +7,6 @@ import (
 	"image/png"
 	"net/http"
 	"net/http/httptest"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -15,8 +14,10 @@ import (
 
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-message/mail"
-	qt "github.com/mappu/miqt/qt6"
-	"github.com/mappu/miqt/qt6/mainthread"
+	"github.com/nomad-software/qute"
+	"github.com/nomad-software/qute/qtcore"
+	"github.com/nomad-software/qute/qtwidgets"
+	"github.com/nomad-software/qute/qutetest"
 
 	"github.com/nomad-software/apemail/internal/account"
 	"github.com/nomad-software/apemail/internal/message"
@@ -107,7 +108,7 @@ func imageMessage(s *imageServer, paths ...string) *message.Message {
 // buttonShown waits for the button that loads images to be shown.
 func buttonShown(t *testing.T, v *messageView) {
 	t.Helper()
-	wait(t, "the button to load images", func() bool { return v.loadImages != nil && v.loadImages.IsVisibleTo(v.QWidget) })
+	wait(t, "the button to load images", func() bool { return v.loadImages != nil && v.loadImages.IsVisibleTo(v) })
 }
 
 // TestLoadRemoteImages checks that the images a message links to, those of
@@ -121,7 +122,7 @@ func TestLoadRemoteImages(t *testing.T) {
 	v := newShownView(t, 600, 400)
 	showWhole(t, v, m)
 	buttonShown(t, v)
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if !v.loadImages.IsEnabled() {
 			t.Error("the button is not enabled")
 		}
@@ -133,11 +134,11 @@ func TestLoadRemoteImages(t *testing.T) {
 		t.Fatalf("%d things were fetched before the button was pressed", n)
 	}
 
-	mainthread.Wait(func() { v.loadImages.Click() })
+	qutetest.Run(t, func() { v.loadImages.Click() })
 	// The three are drawn whole, 60 by 40.
 	wait(t, "the images", func() bool { return redPixels(v) >= 3*60*40 })
-	mainthread.Wait(func() {
-		if v.loadImages.IsVisibleTo(v.QWidget) {
+	qutetest.Run(t, func() {
+		if v.loadImages.IsVisibleTo(v) {
 			t.Error("the button is still shown")
 		}
 	})
@@ -157,10 +158,10 @@ func TestRemoteImagesNotLoaded(t *testing.T) {
 	v := newShownView(t, 600, 400)
 	showWhole(t, v, imageMessage(s, "/a.png", "/missing.gif"))
 	buttonShown(t, v)
-	mainthread.Wait(func() { v.loadImages.Click() })
+	qutetest.Run(t, func() { v.loadImages.Click() })
 	wait(t, "the images", func() bool { return v.stopImages == nil && v.loadImages.IsEnabled() })
-	mainthread.Wait(func() {
-		if len(v.images) != 1 || !v.loadImages.IsVisibleTo(v.QWidget) || !strings.Contains(v.loadImages.ToolTip(), "1 of 2") {
+	qutetest.Run(t, func() {
+		if len(v.images) != 1 || !v.loadImages.IsVisibleTo(v) || !strings.Contains(v.loadImages.ToolTip(), "1 of 2") {
 			t.Errorf("loaded %d, the button says %q", len(v.images), v.loadImages.ToolTip())
 		}
 		v.loadImages.Click()
@@ -178,8 +179,8 @@ func TestNoRemoteImagesButton(t *testing.T) {
 	} {
 		showWhole(t, v, m)
 		time.Sleep(200 * time.Millisecond)
-		mainthread.Wait(func() {
-			if v.loadImages != nil && v.loadImages.IsVisibleTo(v.QWidget) {
+		qutetest.Run(t, func() {
+			if v.loadImages != nil && v.loadImages.IsVisibleTo(v) {
 				t.Errorf("%+v has a button to load images", m)
 			}
 		})
@@ -210,21 +211,21 @@ func TestLoadRemoteImagesAlways(t *testing.T) {
 			imageMessage(images, c.paths...).HTML+"\r\n", imap.FlagSeen)
 		w := newTestWindow(t, s, func(a *account.Account) { a.LoadRemoteImages = c.always })
 		// The message asks for its images only where it is seen.
-		mainthread.Wait(w.Show)
-		wait(t, "the inbox", func() bool { return w.folder != "" && w.list.model.RowCount(noParent) == 1 })
-		mainthread.Wait(func() { clickRow(w.list, 0) })
+		qute.PostSync(w.Show)
+		wait(t, "the inbox", func() bool { return w.folder != "" && w.list.model.RowCount(qtcore.NewQModelIndex()) == 1 })
+		qutetest.Run(t, func() { clickRow(w.list, 0) })
 		wait(t, "the message", func() bool { return w.view.msg != nil })
 		if c.always {
 			wait(t, "the images to be loaded", func() bool { return w.view.stopImages != nil })
-			mainthread.Wait(func() {
-				if w.view.loadImages.IsVisibleTo(w.view.QWidget) {
+			qutetest.Run(t, func() {
+				if w.view.loadImages.IsVisibleTo(w.view) {
 					t.Errorf("%v: the button is shown while the images load", c.paths)
 				}
 			})
 			close(hold)
 			wait(t, "the images", func() bool { return w.view.stopImages == nil && len(w.view.images) == 1 })
-			mainthread.Wait(func() {
-				if shown := w.view.loadImages.IsVisibleTo(w.view.QWidget); shown != c.button {
+			qutetest.Run(t, func() {
+				if shown := w.view.loadImages.IsVisibleTo(w.view); shown != c.button {
 					t.Errorf("%v: the button is shown %v once they have loaded, want %v", c.paths, shown, c.button)
 				}
 			})
@@ -232,7 +233,7 @@ func TestLoadRemoteImagesAlways(t *testing.T) {
 		}
 		close(hold)
 		buttonShown(t, w.view)
-		mainthread.Wait(func() {
+		qutetest.Run(t, func() {
 			if w.view.stopImages != nil || !w.view.loadImages.IsEnabled() {
 				t.Error("the images are being loaded")
 			}
@@ -244,11 +245,11 @@ func TestLoadRemoteImagesAlways(t *testing.T) {
 }
 
 // findCheckBox returns the check box within the widget with the text.
-func findCheckBox(t *testing.T, within *qt.QWidget, text string) *qt.QCheckBox {
+func findCheckBox(t *testing.T, within qtwidgets.QWidgetLike, text string) *qtwidgets.QCheckBox {
 	t.Helper()
-	for _, w := range qt.QApplication_AllWidgets() {
-		if w.Inherits("QCheckBox") && within.IsAncestorOf(w) {
-			if b := qt.UnsafeNewQCheckBox(w.UnsafePointer()); b.Text() == text {
+	for _, w := range qtwidgets.QApplicationAllWidgets() {
+		if w.Inherits("QCheckBox") && within.AsQWidget().IsAncestorOf(w) {
+			if b := qtwidgets.QCheckBoxCast(w); b.Text() == text {
 				return b
 			}
 		}
@@ -267,16 +268,16 @@ func TestRemoteImagesSetting(t *testing.T) {
 		a.Outgoing = account.Server{Host: "smtp.example.com", Port: 465, Security: account.SecurityTLS, Auth: account.AuthPassword, Username: "u", Password: "p"}
 		a.LoadRemoteImages = before
 		var saved *account.Account
-		mainthread.Wait(func() {
-			parent := qt.NewQWidget2()
+		qutetest.Run(t, func() {
+			parent := qtwidgets.NewQWidget(nil)
 			defer parent.Delete()
 			d := newAccountDialog(parent, a, false, nil, func(changed account.Account) { saved = &changed })
-			box := findCheckBox(t, d.QWidget, "Load images from the internet when a message is shown")
+			box := findCheckBox(t, d, "Load images from the internet when a message is shown")
 			if box.IsChecked() != before {
 				t.Errorf("the setting is shown as %v, not %v", box.IsChecked(), before)
 			}
 			box.SetChecked(!before)
-			findButton(t, d.QWidget, "OK").Click()
+			findButton(t, d, "OK").Click()
 		})
 		if saved == nil || saved.LoadRemoteImages != !before {
 			t.Errorf("saved %+v", saved)
@@ -289,27 +290,25 @@ func TestRemoteImagesSetting(t *testing.T) {
 func TestLoadImagesButtonPlace(t *testing.T) {
 	s := newImageServer(t)
 	v := newShownView(t, 800, 300)
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		m := imageMessage(s, "/a.png")
 		m.From = []*mail.Address{{Name: "Ada", Address: "ada@example.com"}}
 		m.To = []*mail.Address{{Address: "grace@example.com"}}
 		m.Date = time.Date(2026, 10, 8, 8, 15, 0, 0, time.UTC)
-		v.show(m, "INBOX", 1)
+		v.show(m, "INBOX", 1, 1)
 	})
 	buttonShown(t, v)
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		headers, button := v.headers.Geometry(), v.loadImages.Geometry()
-		defer runtime.KeepAlive(headers)
-		defer runtime.KeepAlive(button)
 		// Within the margins of the headers, 8 pixels across and 6 down.
-		if gap := headers.Height() - (button.Y() + button.Height()); gap < 0 || gap > 8 {
+		if gap := headers.Height - (button.Y + button.Height); gap < 0 || gap > 8 {
 			t.Errorf("the button is %d pixels above the bottom of the headers", gap)
 		}
-		if gap := headers.Width() - (button.X() + button.Width()); gap < 0 || gap > 10 {
+		if gap := headers.Width - (button.X + button.Width); gap < 0 || gap > 10 {
 			t.Errorf("the button is %d pixels from the right of the headers", gap)
 		}
-		if button.Y() < headers.Height()/2 {
-			t.Errorf("the button is at %d of %d", button.Y(), headers.Height())
+		if button.Y < headers.Height/2 {
+			t.Errorf("the button is at %d of %d", button.Y, headers.Height)
 		}
 	})
 }

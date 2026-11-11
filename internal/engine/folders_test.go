@@ -128,7 +128,7 @@ func TestDeleteFolder(t *testing.T) {
 	wait(t, "the folder", func() bool { ix := l.index("Projects/Engine"); return ix != nil && len(ix.Messages) == 2 })
 	uid := l.index("Projects/Engine").Messages[0].UID
 	got := make(chan error, 1)
-	e.Message("Projects/Engine", uid, func(_ []byte, err error) { got <- err })
+	e.Message("Projects/Engine", e.Validity("Projects/Engine"), uid, func(_ []byte, err error) { got <- err })
 	if err := recv(t, got); err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +203,7 @@ func TestDeleteFolderLeavesItOpen(t *testing.T) {
 	wait(t, "the folder", func() bool { ix := l.index("Old"); return ix != nil && len(ix.Messages) == 1 })
 	// Setting a flag has the connection open the folder.
 	if err := result(t, func(done func(error)) {
-		e.SetFlag("Old", []uint32{l.index("Old").Messages[0].UID}, string(imap.FlagFlagged), true, done)
+		e.SetFlag("Old", e.Validity("Old"), []uint32{l.index("Old").Messages[0].UID}, string(imap.FlagFlagged), true, done)
 	}); err != nil {
 		t.Fatal(err)
 	}

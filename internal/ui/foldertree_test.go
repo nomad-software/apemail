@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/emersion/go-imap/v2"
-	"github.com/mappu/miqt/qt6/mainthread"
+	"github.com/nomad-software/qute/qutetest"
 
 	"github.com/nomad-software/apemail/internal/account"
 	"github.com/nomad-software/apemail/internal/remote/remotetest"
@@ -20,9 +20,9 @@ func TestFoldersShownByUse(t *testing.T) {
 	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Archives", "Archives/2026", "Old mail", "Old mail/2026", "Sent Items", "Work")
 	w := newTestWindow(t, s, func(a *account.Account) { a.Folders.Archive = "Old mail" })
 	wait(t, "the folders", func() bool {
-		return mainthread.Wait2(func() bool { return w.folders.folders[w.account]["Work"] != nil })
+		return onUI(func() bool { return w.folders.folders[w.account]["Work"] != nil })
 	})
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		items := w.folders.folders[w.account]
 		for folder, want := range map[string]string{"Old mail": "Archive", "Sent Items": "Sent", "Archives": "Archives", "Archives/2026": "2026", "Work": "Work"} {
 			if got := items[folder].Text(0); got != want {

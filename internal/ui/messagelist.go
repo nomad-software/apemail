@@ -8,7 +8,9 @@ import (
 	"sync"
 	"time"
 
-	qt "github.com/mappu/miqt/qt6"
+	"github.com/nomad-software/qute/qtcore"
+	"github.com/nomad-software/qute/qtgui"
+	"github.com/nomad-software/qute/qtwidgets"
 
 	"github.com/nomad-software/apemail/internal/icons"
 	"github.com/nomad-software/apemail/internal/store"
@@ -41,8 +43,8 @@ const (
 // the rows it draws, so that a folder of tens of thousands of messages is
 // shown at once.
 type messageList struct {
-	*qt.QTreeView
-	model *qt.QAbstractTableModel
+	qtwidgets.QTreeViewBase
+	model *listModel
 
 	// account and folder are where the messages listed are, which a drag
 	// of them says.
@@ -68,12 +70,13 @@ type messageList struct {
 	uidValidity uint32
 	// sortColumn and sortOrder are how the rows are sorted.
 	sortColumn int
-	sortOrder  qt.SortOrder
+	sortOrder  qtcore.SortOrder
 
 	// boldValue and flaggedValue are what the list shows unread messages
-	// in, a bold font, and flagged ones in, red, and attachmentValue the
-	// paperclip of those with attachments, made once.
-	boldValue, flaggedValue, attachmentValue *qt.QVariant
+	// in, a bold font, and flagged ones in, red, attachmentValue the
+	// paperclip of those with attachments, and noValue what a cell with
+	// nothing to show has, made once.
+	boldValue, flaggedValue, attachmentValue, noValue *qtcore.QVariant
 
 	// selection are the UIDs of the messages that are selected, in the
 	// order of their rows, worked out when they are first asked for after
@@ -87,7 +90,7 @@ type messageList struct {
 
 	// header is the header of the columns, and fitting says the widths of
 	// its columns are being changed to fit, not dragged.
-	header  *qt.QHeaderView
+	header  *listHeader
 	fitting bool
 
 	// selected is called when the selection changes, opened when a message
@@ -101,106 +104,34 @@ type messageList struct {
 
 func newMessageList() *messageList {
 	l := &messageList{
-		QTreeView:  qt.NewQTreeView2(),
-		model:      qt.NewQAbstractTableModel(),
 		sortColumn: colDate,
-		sortOrder:  qt.DescendingOrder,
+		sortOrder:  qtcore.DescendingOrder,
+		noValue:    qtcore.NewQVariant(),
 	}
-	bold := qt.NewQFont()
+	qtwidgets.NewQTreeViewWith(l, nil)
+	l.model = &listModel{list: l}
+	qtcore.NewQAbstractTableModelWith(l.model, l)
+	bold := qtgui.NewQFont()
 	bold.SetBold(true)
-	boldValue := bold.ToQVariant()
-	l.boldValue = qt.NewQVariant3(boldValue)
-	runtime.KeepAlive(boldValue)
-	bold.Delete()
-	red := qt.NewQColor6("#d03030")
-	flagged := qt.NewQBrush3(red)
-	flaggedValue := flagged.ToQVariant()
-	l.flaggedValue = qt.NewQVariant3(flaggedValue)
-	runtime.KeepAlive(flaggedValue)
-	flagged.Delete()
-	red.Delete()
-	paperclip := icon(icons.Attachment)
-	attachmentValue := paperclip.ToQVariant()
-	l.attachmentValue = qt.NewQVariant3(attachmentValue)
-	runtime.KeepAlive(attachmentValue)
-	paperclip.Delete()
+	l.boldValue = qtgui.NewQVariantOf(bold)
+	l.flaggedValue = qtgui.NewQVariantOf(qtgui.NewQBrushWithColor(parseColour("#d03030")))
+	l.attachmentValue = qtgui.NewQVariantOf(icon(icons.Attachment))
 
-	l.model.OnRowCount(func(parent *qt.QModelIndex) int {
-		if parent.IsValid() {
-			return 0
-		}
-		return len(l.rows)
-	})
-	l.model.OnColumnCount(func(parent *qt.QModelIndex) int {
-		if parent.IsValid() {
-			return 0
-		}
-		return colCount
-	})
-	var data, header returned
-	l.model.OnData(func(index *qt.QModelIndex, role int) *qt.QVariant { return data.give(l.data(index, role)) })
-	l.model.OnHeaderData(func(super func(int, qt.Orientation, int) *qt.QVariant, section int, orientation qt.Orientation, role int) *qt.QVariant {
-		if orientation == qt.Horizontal && section == colAttachment && role == int(qt.DecorationRole) {
-			return header.give(qt.NewQVariant3(l.attachmentValue))
-		}
-		if orientation != qt.Horizontal || role != int(qt.DisplayRole) {
-			return header.giveCopy(super(section, orientation, role))
-		}
-		switch section {
-		case colSubject:
-			return header.give(qt.NewQVariant11("Subject"))
-		case colCorrespondent:
-			if l.sent {
-				return header.give(qt.NewQVariant11("Recipient"))
-			}
-			return header.give(qt.NewQVariant11("From"))
-		case colDate:
-			return header.give(qt.NewQVariant11("Date"))
-		}
-		return header.give(qt.NewQVariant())
-	})
-	l.model.OnSort(func(_ func(int, qt.SortOrder), column int, order qt.SortOrder) {
-		l.sortColumn, l.sortOrder = column, order
-		l.resetKeepingSelection(l.all)
-	})
-
-	// Messages are dragged to a folder of the tree to move them there.
-	l.model.OnFlags(func(super func(*qt.QModelIndex) qt.ItemFlag, index *qt.QModelIndex) qt.ItemFlag {
-		flags := super(index)
-		if index.IsValid() {
-			flags |= qt.ItemIsDragEnabled
-		}
-		return flags
-	})
-	// The drag is made here rather than by the model's mimeData, which miqt
-	// hands a list of indexes that it frees while they are in use, and
-	// cannot make of more than 65,535: dragging a large selection would
-	// crash.
-	l.OnStartDrag(func(func(qt.DropAction), qt.DropAction) {
-		d := l.draggedSelection()
-		if len(d.UIDs) == 0 {
-			return
-		}
-		drag := qt.NewQDrag(l.QObject)
-		drag.SetMimeData(d.encode())
-		drag.Exec2(qt.MoveAction, qt.MoveAction)
-	})
-
-	l.SetModel(l.model.QAbstractItemModel)
+	l.SetModel(l.model)
 	l.SetDragEnabled(true)
-	l.SetDragDropMode(qt.QAbstractItemView__DragOnly)
-	l.SetDefaultDropAction(qt.MoveAction)
+	l.SetDragDropMode(qtwidgets.QAbstractItemViewDragOnly)
+	l.SetDefaultDropAction(qtcore.MoveAction)
 	l.SetRootIsDecorated(false)
 	l.SetUniformRowHeights(true)
 	l.SetAllColumnsShowFocus(true)
-	l.SetSelectionMode(qt.QAbstractItemView__ExtendedSelection)
-	l.SetSelectionBehavior(qt.QAbstractItemView__SelectRows)
+	l.SetSelectionMode(qtwidgets.QAbstractItemViewExtendedSelection)
+	l.SetSelectionBehavior(qtwidgets.QAbstractItemViewSelectRows)
 	l.makeHeader()
 	l.SetSortingEnabled(true)
-	l.SortByColumn(colDate, qt.DescendingOrder)
+	l.SortByColumn(colDate, qtcore.DescendingOrder)
 	l.setColumnWidths(0, 0)
 
-	l.SelectionModel().OnSelectionChanged(func(_, _ *qt.QItemSelection) {
+	l.SelectionModel().OnSelectionChanged(func(_, _ *qtcore.QItemSelection) {
 		l.selectionKnown = false
 		// The user chose other messages, so the next of those that were
 		// selected is not wanted. The list's own changes are not
@@ -210,13 +141,13 @@ func newMessageList() *messageList {
 			l.selected()
 		}
 	})
-	l.OnDoubleClicked(func(index *qt.QModelIndex) {
+	l.OnDoubleClicked(func(index *qtcore.QModelIndex) {
 		if index.IsValid() && index.Row() < len(l.rows) && l.opened != nil {
 			l.opened(l.rows[index.Row()].UID)
 		}
 	})
-	l.SetContextMenuPolicy(qt.CustomContextMenu)
-	l.OnCustomContextMenuRequested(func(*qt.QPoint) {
+	l.SetContextMenuPolicy(qtcore.CustomContextMenu)
+	l.OnCustomContextMenuRequested(func(qtcore.QPoint) {
 		if l.contextMenu != nil && len(l.selectedUIDs()) > 0 {
 			l.contextMenu()
 		}
@@ -224,54 +155,127 @@ func newMessageList() *messageList {
 	return l
 }
 
-// data returns what the view shows of a cell, as a value a constructor
-// made, which returned deletes once Qt has copied it.
-func (l *messageList) data(index *qt.QModelIndex, role int) *qt.QVariant {
+// StartDrag starts a drag of the messages selected, which are dragged to a
+// folder of the tree to move them there. The drag is made here rather than
+// from the model's mimeData, which would be handed an index for every cell
+// of a large selection.
+func (l *messageList) StartDrag(qtcore.DropActions) {
+	d := l.draggedSelection()
+	if len(d.UIDs) == 0 {
+		return
+	}
+	drag := qtgui.NewQDrag(l)
+	drag.SetMimeData(d.encode())
+	drag.ExecWithDropAction(qtcore.MoveAction, qtcore.MoveAction)
+}
+
+// listModel is the model of a messageList, which tells the view what the
+// rows it draws show.
+type listModel struct {
+	qtcore.QAbstractTableModelBase
+	list *messageList
+}
+
+func (m *listModel) RowCount(parent *qtcore.QModelIndex) int {
+	if parent.IsValid() {
+		return 0
+	}
+	return len(m.list.rows)
+}
+
+func (m *listModel) ColumnCount(parent *qtcore.QModelIndex) int {
+	if parent.IsValid() {
+		return 0
+	}
+	return colCount
+}
+
+func (m *listModel) HeaderData(section int, orientation qtcore.Orientations, role int) *qtcore.QVariant {
+	if orientation == qtcore.Horizontal && section == colAttachment && role == int(qtcore.DecorationRole) {
+		return m.list.attachmentValue
+	}
+	if orientation != qtcore.Horizontal || role != int(qtcore.DisplayRole) {
+		return m.Super().HeaderData(section, orientation, role)
+	}
+	switch section {
+	case colSubject:
+		return qtcore.NewQVariantWithString("Subject")
+	case colCorrespondent:
+		if m.list.sent {
+			return qtcore.NewQVariantWithString("Recipient")
+		}
+		return qtcore.NewQVariantWithString("From")
+	case colDate:
+		return qtcore.NewQVariantWithString("Date")
+	}
+	return m.list.noValue
+}
+
+func (m *listModel) Sort(column int, order qtcore.SortOrder) {
+	l := m.list
+	l.sortColumn, l.sortOrder = column, order
+	l.resetKeepingSelection(l.all)
+}
+
+// Flags lets the messages be dragged.
+func (m *listModel) Flags(index *qtcore.QModelIndex) qtcore.ItemFlags {
+	flags := m.Super().Flags(index)
+	if index.IsValid() {
+		flags |= qtcore.ItemIsDragEnabled
+	}
+	return flags
+}
+
+// Data returns what the view shows of a cell.
+func (m *listModel) Data(index *qtcore.QModelIndex, role int) *qtcore.QVariant {
+	l := m.list
 	row := index.Row()
 	if !index.IsValid() || row >= len(l.rows) {
-		return qt.NewQVariant()
+		return l.noValue
 	}
-	m := l.rows[row]
+	msg := l.rows[row]
 	switch role {
-	case int(qt.DisplayRole):
+	case int(qtcore.DisplayRole):
 		switch index.Column() {
 		case colSubject:
-			if m.Subject == "" {
-				return qt.NewQVariant11("(no subject)")
+			if msg.Subject == "" {
+				return qtcore.NewQVariantWithString("(no subject)")
 			}
-			return qt.NewQVariant11(m.Subject)
+			return qtcore.NewQVariantWithString(msg.Subject)
 		case colCorrespondent:
 			if l.sent {
-				return qt.NewQVariant11(shortAddresses(m.To))
+				return qtcore.NewQVariantWithString(shortAddresses(msg.To))
 			}
-			return qt.NewQVariant11(shortAddresses(m.From))
+			return qtcore.NewQVariantWithString(shortAddresses(msg.From))
 		case colDate:
-			return qt.NewQVariant11(formatDate(m.Date))
+			return qtcore.NewQVariantWithString(formatDate(msg.Date))
 		}
-	case int(qt.DecorationRole):
-		if index.Column() == colAttachment && m.Attachments {
-			return qt.NewQVariant3(l.attachmentValue)
+	case int(qtcore.DecorationRole):
+		if index.Column() == colAttachment && msg.Attachments {
+			return l.attachmentValue
 		}
-	case int(qt.FontRole):
-		if !m.Has(`\Seen`) {
-			return qt.NewQVariant3(l.boldValue)
+	case int(qtcore.FontRole):
+		if !msg.Has(`\Seen`) {
+			return l.boldValue
 		}
-	case int(qt.ToolTipRole):
+	case int(qtcore.ToolTipRole):
 		switch index.Column() {
 		case colCorrespondent:
 			if l.sent {
-				return qt.NewQVariant11(m.To)
+				return qtcore.NewQVariantWithString(msg.To)
 			}
-			return qt.NewQVariant11(m.From)
+			return qtcore.NewQVariantWithString(msg.From)
 		case colDate:
-			return qt.NewQVariant11(m.Date.Local().Format("Monday 2 January 2006 15:04"))
+			if !msg.Date.IsZero() {
+				return qtcore.NewQVariantWithString(msg.Date.Local().Format("Monday 2 January 2006 15:04"))
+			}
 		}
-	case int(qt.ForegroundRole):
-		if m.Has(`\Flagged`) {
-			return qt.NewQVariant3(l.flaggedValue)
+	case int(qtcore.ForegroundRole):
+		if msg.Has(`\Flagged`) {
+			return l.flaggedValue
 		}
 	}
-	return qt.NewQVariant()
+	return l.noValue
 }
 
 // shortAddresses returns the names of the addresses, or the addresses of
@@ -356,7 +360,7 @@ func (l *messageList) sorted(rows []store.Summary) []store.Summary {
 		if c == 0 {
 			c = cmp.Compare(rows[i].UID, rows[j].UID)
 		}
-		if l.sortOrder == qt.DescendingOrder {
+		if l.sortOrder == qtcore.DescendingOrder {
 			return -c
 		}
 		return c
@@ -442,11 +446,9 @@ func (l *messageList) setFilter(text string) {
 	}
 	l.filter = filter
 	l.relist(l.applyFilter)
-	cur := l.CurrentIndex()
-	if cur.IsValid() {
-		l.ScrollTo(cur, qt.QAbstractItemView__EnsureVisible)
+	if cur := l.CurrentIndex(); cur.IsValid() {
+		l.ScrollTo(cur)
 	}
-	runtime.KeepAlive(cur)
 	l.announce()
 }
 
@@ -475,9 +477,19 @@ func (l *messageList) setIndex(ix *store.Index, sent bool) {
 	if sent == l.sent && ix.UIDValidity == l.uidValidity && l.update(ix) {
 		return
 	}
+	// A folder numbered anew has other messages by the UIDs of those
+	// selected, if any, so none of it is selected.
+	renumbered := l.uidValidity != 0 && ix.UIDValidity != l.uidValidity
+	deselected := renumbered && len(l.selectedUIDs()) > 0
+	if renumbered {
+		l.clear()
+	}
 	l.sent = sent
 	l.uidValidity = ix.UIDValidity
 	l.resetKeepingSelection(ix.Messages)
+	if deselected && l.selected != nil {
+		l.selected()
+	}
 }
 
 // listed reports whether the messages of a folder are listed, how many of
@@ -526,10 +538,8 @@ func (l *messageList) update(ix *store.Index) bool {
 		}
 	}
 	if last >= 0 {
-		from, to := l.model.Index(first, 0, noParent), l.model.Index(last, colCount-1, noParent)
-		l.model.DataChanged(from, to)
-		runtime.KeepAlive(from)
-		runtime.KeepAlive(to)
+		from, to := l.model.Index(first, 0), l.model.Index(last, colCount-1)
+		l.model.EmitDataChanged(from, to)
 	}
 	return true
 }
@@ -556,7 +566,6 @@ func (l *messageList) relist(change func()) {
 	if cur.IsValid() && cur.Row() < len(l.rows) {
 		current = l.rows[cur.Row()].UID
 	}
-	runtime.KeepAlive(cur)
 
 	sm := l.SelectionModel()
 	// The selection is put back without each row of it being announced.
@@ -570,12 +579,11 @@ func (l *messageList) relist(change func()) {
 
 	// Rows that were selected are selected again a run at a time, as a
 	// large selection a row at a time takes a long while.
-	selection := qt.NewQItemSelection2()
-	defer selection.Delete()
+	var selection *qtcore.QItemSelection
 	reselected := 0
 	for i := 0; i < len(l.rows); i++ {
 		if l.rows[i].UID == current {
-			l.setCurrentRow(i, qt.QItemSelectionModel__NoUpdate)
+			l.setCurrentRow(i, qtcore.QItemSelectionModelNoUpdate)
 		}
 		if !selected[l.rows[i].UID] {
 			continue
@@ -584,28 +592,29 @@ func (l *messageList) relist(change func()) {
 		for j+1 < len(l.rows) && selected[l.rows[j+1].UID] {
 			j++
 			if l.rows[j].UID == current {
-				l.setCurrentRow(j, qt.QItemSelectionModel__NoUpdate)
+				l.setCurrentRow(j, qtcore.QItemSelectionModelNoUpdate)
 			}
 		}
-		from, to := l.model.Index(i, 0, noParent), l.model.Index(j, colCount-1, noParent)
-		selection.Select(from, to)
-		runtime.KeepAlive(from)
-		runtime.KeepAlive(to)
+		from, to := l.model.Index(i, 0), l.model.Index(j, colCount-1)
+		if selection == nil {
+			selection = qtcore.NewQItemSelectionWithModelIndex(from, to)
+		} else {
+			selection.Select(from, to)
+		}
 		reselected += j - i + 1
 		i = j
 	}
 	if reselected > 0 {
-		sm.Select2(selection, qt.QItemSelectionModel__Select|qt.QItemSelectionModel__Rows)
+		sm.SelectItemSelection(selection, qtcore.QItemSelectionModelSelect|qtcore.QItemSelectionModelRows)
 	}
 	// Once the messages selected have all gone, which can be a few at a
 	// time, as archiving moves them to a folder for each year, the one
 	// after them is selected in their place.
 	if len(selected) > 0 && reselected == 0 {
 		if i, ok := l.row[l.next]; ok {
-			l.setCurrentRow(i, qt.QItemSelectionModel__ClearAndSelect|qt.QItemSelectionModel__Rows)
-			index := l.model.Index(i, 0, noParent)
-			l.ScrollTo(index, qt.QAbstractItemView__EnsureVisible)
-			runtime.KeepAlive(index)
+			l.setCurrentRow(i, qtcore.QItemSelectionModelClearAndSelect|qtcore.QItemSelectionModelRows)
+			index := l.model.Index(i, 0)
+			l.ScrollTo(index)
 			l.selectionKnown = false
 		}
 		l.next = 0
@@ -619,10 +628,9 @@ func (l *messageList) relist(change func()) {
 
 // setCurrentRow makes the row the current one, selecting it as the flags
 // say.
-func (l *messageList) setCurrentRow(row int, flags qt.QItemSelectionModel__SelectionFlag) {
-	index := l.model.Index(row, 0, noParent)
+func (l *messageList) setCurrentRow(row int, flags qtcore.QItemSelectionModelSelectionFlags) {
+	index := l.model.Index(row, 0)
 	l.SelectionModel().SetCurrentIndex(index, flags)
-	runtime.KeepAlive(index)
 }
 
 // selectNextLater has the list select, once the messages selected have gone
@@ -656,11 +664,8 @@ func (l *messageList) selectNextLater() {
 // draggedSelection returns the messages a drag from the list carries: those
 // that are selected, and where they are.
 func (l *messageList) draggedSelection() draggedMessages {
-	return draggedMessages{Account: l.account, Folder: l.folder, UIDs: l.selectedUIDs()}
+	return draggedMessages{Account: l.account, Folder: l.folder, UIDValidity: l.uidValidity, UIDs: l.selectedUIDs()}
 }
-
-// noParent is the parent of the rows of the list, which have none.
-var noParent = qt.NewQModelIndex()
 
 // clear empties the list. The filter stays, as the field it comes from does.
 func (l *messageList) clear() {
@@ -681,14 +686,16 @@ func (l *messageList) clear() {
 // order they are shown.
 func (l *messageList) selectedUIDs() []uint32 {
 	if !l.selectionKnown {
-		// Each row is asked about, as miqt's SelectedRows frees the
-		// indexes it returns while they are in use, and cannot return
-		// more than 65,535.
+		// Each row is asked about, rather than a list made of an index
+		// for each of what may be 100,000 rows. Rows are selected whole,
+		// so one with any of it selected is selected, which is asked
+		// rather than whether all of it is, as Qt then asks the model
+		// about one cell of the row and not every one.
 		l.selection = nil
 		sm := l.SelectionModel()
 		if sm.HasSelection() {
 			for i, r := range l.rows {
-				if sm.IsRowSelected(i) {
+				if sm.RowIntersectsSelection(i) {
 					l.selection = append(l.selection, r.UID)
 				}
 			}
@@ -716,8 +723,9 @@ func (l *messageList) summary(uid uint32) (store.Summary, bool) {
 // its left, rather than only by its right edge against the side of the
 // list.
 func (l *messageList) makeHeader() {
-	l.header = qt.NewQHeaderView(qt.Horizontal)
-	l.header.SetDefaultAlignment(qt.AlignLeft | qt.AlignVCenter)
+	l.header = &listHeader{resized: l.fitSubject}
+	qtwidgets.NewQHeaderViewWith(l.header, qtcore.Horizontal, l)
+	l.header.SetDefaultAlignment(qtcore.AlignLeft | qtcore.AlignVCenter)
 	l.header.SetStretchLastSection(false)
 	// The trade is between columns in their order, so they stay in it.
 	l.header.SetSectionsMovable(false)
@@ -726,10 +734,10 @@ func (l *messageList) makeHeader() {
 	l.header.SetMinimumSectionSize(attachmentWidth)
 	l.SetHeader(l.header)
 	for col := range colCount {
-		l.header.SetSectionResizeMode2(col, qt.QHeaderView__Interactive)
+		l.header.SetSectionResizeMode(col, qtwidgets.QHeaderViewInteractive)
 	}
 	// The paperclips keep their width, and their border is not dragged.
-	l.header.SetSectionResizeMode2(colAttachment, qt.QHeaderView__Fixed)
+	l.header.SetSectionResizeMode(colAttachment, qtwidgets.QHeaderViewFixed)
 	l.fitting = true
 	l.header.ResizeSection(colAttachment, attachmentWidth)
 	l.fitting = false
@@ -756,10 +764,18 @@ func (l *messageList) makeHeader() {
 		}
 		l.header.ResizeSection(next, width)
 	})
-	l.header.OnResizeEvent(func(super func(*qt.QResizeEvent), e *qt.QResizeEvent) {
-		super(e)
-		l.fitSubject()
-	})
+}
+
+// listHeader is the header of the columns of a messageList, which says when
+// its width has changed.
+type listHeader struct {
+	qtwidgets.QHeaderViewBase
+	resized func()
+}
+
+func (h *listHeader) ResizeEvent(e *qtgui.QResizeEvent) {
+	h.Super().ResizeEvent(e)
+	h.resized()
 }
 
 // fitSubject gives the subject the width the other columns leave.

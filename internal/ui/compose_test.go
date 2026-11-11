@@ -8,21 +8,23 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
-	"unicode"
 
 	"github.com/emersion/go-imap/v2"
 	gosmtp "github.com/emersion/go-smtp"
-	qt "github.com/mappu/miqt/qt6"
-	"github.com/mappu/miqt/qt6/mainthread"
-	"github.com/mappu/miqt/qt6/webengine"
+	"github.com/nomad-software/qute"
+	"github.com/nomad-software/qute/qtcore"
+	"github.com/nomad-software/qute/qtgui"
+	"github.com/nomad-software/qute/qtwebenginecore"
+	"github.com/nomad-software/qute/qtwidgets"
+	"github.com/nomad-software/qute/qutetest"
 
 	"github.com/nomad-software/apemail/internal/account"
+	"github.com/nomad-software/apemail/internal/engine"
 	"github.com/nomad-software/apemail/internal/message"
 	"github.com/nomad-software/apemail/internal/remote/remotetest"
 	"github.com/nomad-software/apemail/internal/send/sendtest"
@@ -34,13 +36,13 @@ func TestReply(t *testing.T) {
 	s.Append(t, "INBOX", "Bernoulli numbers")
 	w := newTestWindow(t, s)
 	wait(t, "the inbox", func() bool { return len(w.list.rows) == 1 && w.folder == "INBOX" })
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		clickRow(w.list, 0)
 	})
 	wait(t, "the message", func() bool { return w.view.msg != nil })
 
 	var c *composer
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		w.replyTo(false)
 		for c = range composers {
 		}
@@ -48,7 +50,7 @@ func TestReply(t *testing.T) {
 	if c == nil {
 		t.Fatal("no window was opened")
 	}
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if got := c.to.Text(); got != "Alice <alice@example.com>" {
 			t.Errorf("to = %q", got)
 		}
@@ -62,7 +64,7 @@ func TestReply(t *testing.T) {
 	if d := draftOf(t, c); d.InReplyTo == "" || d.From.Address != "ada@example.com" {
 		t.Errorf("draft = %+v", d)
 	}
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if !c.Close() {
 			t.Error("the window did not close")
 		}
@@ -80,7 +82,7 @@ func TestBold(t *testing.T) {
 	c := openComposer(t, w)
 	// Triggering the button, as clicking it or its shortcut does, makes
 	// what is typed next bold, and it shows that it is.
-	mainthread.Wait(c.bold.Trigger)
+	qute.PostSync(c.bold.Trigger)
 	typeInBody(t, c, "strong")
 	wait(t, "bold", func() bool { return c.bold.IsChecked() })
 	bodyHas(t, c, "<b>strong</b>")
@@ -94,8 +96,8 @@ func TestShortcutsHaveModifiers(t *testing.T) {
 	w := newTestWindow(t, s, func(a *account.Account) { a.ComposeHTML = true })
 	wait(t, "the account", func() bool { return len(w.engines) == 1 })
 
-	mainthread.Wait(func() {
-		actions := []*qt.QAction{w.getMail, w.write, w.reply, w.replyAll, w.forward, w.archive, w.del,
+	qutetest.Run(t, func() {
+		actions := []*qtgui.QAction{w.getMail, w.write, w.reply, w.replyAll, w.forward, w.archive, w.del,
 			w.markRead, w.markUnread, w.viewSource, w.filterMessages, w.addressBook, w.editAccount, w.removeAccount, w.updateCounts, w.syncAll}
 		actions = append(actions, w.MenuBar().Actions()...)
 		w.composeNew("", "")
@@ -142,7 +144,7 @@ func TestReplacedDraftsGoToTrash(t *testing.T) {
 	asked := answer(t, false)
 
 	var c *composer
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		w.composeNew("bob@example.com", "Plans")
 		for c = range composers {
 		}
@@ -150,18 +152,101 @@ func TestReplacedDraftsGoToTrash(t *testing.T) {
 	})
 	wait(t, "the first draft", func() bool { return len(c.saved) == 1 })
 	typeInBody(t, c, "Changed")
-	mainthread.Wait(func() { c.saveDraft(nil) })
+	qutetest.Run(t, func() { c.saveDraft(nil) })
 	wait(t, "the second draft", func() bool { return len(c.saved) == 2 })
 
 	// Closing the window keeps the latest draft, and moves the one it
 	// replaced to the trash without asking.
-	mainthread.Wait(func() { c.Close() })
+	qutetest.Run(t, func() { c.Close() })
 	eventually(t, "the replaced draft in the trash", func() bool { return len(s.Messages(t, "Trash")) == 1 })
 	if msgs := s.Messages(t, "Drafts"); len(msgs) != 1 {
 		t.Errorf("drafts = %+v", msgs)
 	}
 	if *asked != 0 {
 		t.Errorf("asked %d times", *asked)
+	}
+}
+
+// TestDiscardKeepsSavedDraft checks that closing a window without saving
+// what was written since the draft was saved leaves that draft where it is:
+// nothing replaced it. Saying to keep writing closes nothing.
+func TestDiscardKeepsSavedDraft(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Drafts", "Trash")
+	w := newTestWindow(t, s)
+	wait(t, "the account", func() bool { return len(w.engines) == 1 })
+
+	var c *composer
+	qutetest.Run(t, func() {
+		w.composeNew("bob@example.com", "Plans")
+		for c = range composers {
+		}
+		c.saveDraft(nil)
+	})
+	wait(t, "the draft", func() bool { return len(c.saved) == 1 })
+	typeInBody(t, c, "More")
+
+	asked := answerSave(t, qtwidgets.QMessageBoxCancel)
+	qutetest.Run(t, func() {
+		if c.Close() || !composers[c] {
+			t.Error("the window closed though the user would keep writing")
+		}
+	})
+	if *asked != 1 {
+		t.Errorf("asked %d times", *asked)
+	}
+
+	asked = answerSave(t, qtwidgets.QMessageBoxDiscard)
+	qutetest.Run(t, func() { c.Close() })
+	wait(t, "the window closed", func() bool { return !composers[c] })
+	if *asked != 1 {
+		t.Errorf("asked %d times", *asked)
+	}
+	// What the engine was asked before this is done by the time it is.
+	made := make(chan error, 1)
+	qutetest.Run(t, func() {
+		w.engines[w.order[0]].CreateFolder("", "Marker", func(err error) { made <- err })
+	})
+	select {
+	case err := <-made:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("waiting for the engine")
+	}
+	if msgs := s.Messages(t, "Drafts"); len(msgs) != 1 || msgs[0].Subject != "Plans" {
+		t.Errorf("drafts = %+v", msgs)
+	}
+	if msgs := s.Messages(t, "Trash"); len(msgs) != 0 {
+		t.Errorf("trash = %+v", msgs)
+	}
+}
+
+// TestSaveOnClose checks that saying to save what is written when the window
+// is closed saves it as a draft, and then closes the window.
+func TestSaveOnClose(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Drafts", "Trash")
+	w := newTestWindow(t, s)
+	wait(t, "the account", func() bool { return len(w.engines) == 1 })
+	var c *composer
+	qutetest.Run(t, func() {
+		w.composeNew("bob@example.com", "Plans")
+		for c = range composers {
+		}
+	})
+	bodyLoaded(t, c)
+	typeInBody(t, c, "Something")
+	asked := answerSave(t, qtwidgets.QMessageBoxSave)
+	qutetest.Run(t, func() { c.Close() })
+	wait(t, "the window closed", func() bool { return !composers[c] })
+	if *asked != 1 {
+		t.Errorf("asked %d times", *asked)
+	}
+	if msgs := s.Messages(t, "Drafts"); len(msgs) != 1 || msgs[0].Subject != "Plans" || !strings.Contains(string(msgs[0].Raw), "Something") {
+		t.Errorf("drafts = %+v", msgs)
+	}
+	if msgs := s.Messages(t, "Trash"); len(msgs) != 0 {
+		t.Errorf("trash = %+v", msgs)
 	}
 }
 
@@ -172,7 +257,7 @@ func TestComposeSizeIsKept(t *testing.T) {
 	w := newTestWindow(t, s)
 	wait(t, "the account", func() bool { return len(w.engines) == 1 })
 
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		w.composeNew("", "")
 		for c := range composers {
 			c.Resize(720, 540)
@@ -183,7 +268,7 @@ func TestComposeSizeIsKept(t *testing.T) {
 		t.Fatalf("saved = %dx%d", config.ComposeWidth, config.ComposeHeight)
 	}
 
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		w.composeNew("", "")
 		for c := range composers {
 			if c.Width() != 720 || c.Height() != 540 {
@@ -198,7 +283,7 @@ func TestComposeSizeIsKept(t *testing.T) {
 func openComposer(t *testing.T, w *Window) *composer {
 	t.Helper()
 	var c *composer
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		w.composeNew("bob@example.com", "Pictures")
 		for c = range composers {
 		}
@@ -229,7 +314,7 @@ func bodyLoaded(t *testing.T, c *composer) {
 func bodyOf(t *testing.T, c *composer) (html, text string) {
 	t.Helper()
 	done := false
-	mainthread.Wait(func() { c.body.content(func(h, x string) { html, text, done = h, x, true }) })
+	qutetest.Run(t, func() { c.body.content(func(h, x string) { html, text, done = h, x, true }) })
 	wait(t, "the body to say what it holds", func() bool { return done })
 	return html, text
 }
@@ -257,7 +342,7 @@ func draftOf(t *testing.T, c *composer) *message.Draft {
 	var d *message.Draft
 	var err error
 	done := false
-	mainthread.Wait(func() { c.draft(func(got *message.Draft, e error) { d, err, done = got, e, true }) })
+	qutetest.Run(t, func() { c.draft(func(got *message.Draft, e error) { d, err, done = got, e, true }) })
 	wait(t, "the draft", func() bool { return done })
 	if err != nil {
 		t.Fatal(err)
@@ -270,17 +355,10 @@ func draftOf(t *testing.T, c *composer) *message.Draft {
 func typeInBody(t *testing.T, c *composer, text string) {
 	t.Helper()
 	_, before := bodyOf(t, c)
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		c.ActivateWindow()
 		c.body.web.SetFocus()
-		target := c.body.web.FocusProxy()
-		for _, r := range text {
-			for _, typ := range []qt.QEvent__Type{qt.QEvent__KeyPress, qt.QEvent__KeyRelease} {
-				e := qt.NewQKeyEvent3(typ, int(unicode.ToUpper(r)), qt.NoModifier, string(r))
-				qt.QCoreApplication_SendEvent(target.QObject, e.QEvent)
-				e.Delete()
-			}
-		}
+		qutetest.Type(c.body.web.FocusProxy(), text)
 	})
 	deadline := time.Now().Add(10 * time.Second)
 	for {
@@ -297,7 +375,7 @@ func typeInBody(t *testing.T, c *composer, text string) {
 // closeUnchanged closes the window, if it is open, as if nothing had been
 // written in it, so that it does not ask what to do with it.
 func closeUnchanged(c *composer) {
-	mainthread.Wait(func() {
+	qute.PostSync(func() {
 		if composers[c] {
 			c.body.modified = false
 			c.Close()
@@ -325,17 +403,17 @@ func TestLists(t *testing.T) {
 		return func() bool { return c.bullets.IsChecked() == bullets && c.numbers.IsChecked() == numbers }
 	}
 
-	mainthread.Wait(c.bullets.Trigger)
+	qute.PostSync(c.bullets.Trigger)
 	bodyHas(t, c, "<ul><li>one")
 	wait(t, "bullets checked", buttons(true, false))
 
 	// Numbers turn the list into a numbered one.
-	mainthread.Wait(c.numbers.Trigger)
+	qute.PostSync(c.numbers.Trigger)
 	bodyHas(t, c, "<ol><li>one")
 	wait(t, "numbers checked", buttons(false, true))
 
 	// Pressing it again takes the paragraph out of the list.
-	mainthread.Wait(c.numbers.Trigger)
+	qute.PostSync(c.numbers.Trigger)
 	wait(t, "no list checked", buttons(false, false))
 	if html, _ := bodyOf(t, c); strings.Contains(html, "<ol") || strings.Contains(html, "<ul") || !strings.Contains(html, "one") {
 		t.Errorf("html = %s", html)
@@ -348,7 +426,7 @@ func TestInsertImage(t *testing.T) {
 	wait(t, "the account", func() bool { return len(w.engines) == 1 })
 	c := openComposer(t, w)
 
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		// Something that is not an image is refused.
 		if err := c.putImage("notes.png", []byte("not a picture")); err == nil || len(c.images) != 0 {
 			t.Errorf("err = %v, images = %d", err, len(c.images))
@@ -371,7 +449,7 @@ func TestInsertImage(t *testing.T) {
 	}
 
 	// An image taken out of the message does not go with it.
-	mainthread.Wait(func() { c.body.setHTML("<p>No pictures</p>") })
+	qutetest.Run(t, func() { c.body.setHTML("<p>No pictures</p>") })
 	bodyLoaded(t, c)
 	if d := draftOf(t, c); len(d.Images) != 0 {
 		t.Errorf("images = %+v", d.Images)
@@ -385,13 +463,13 @@ func TestPicturesShown(t *testing.T) {
 	w := newTestWindow(t, s, func(a *account.Account) { a.ComposeHTML = true })
 	wait(t, "the account", func() bool { return len(w.engines) == 1 })
 	c := openComposer(t, w)
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if err := c.putImage("red.png", redImage(t)); err != nil {
 			t.Fatal(err)
 		}
 	})
-	wait(t, "the picture", func() bool { return pixelsOf(c.body.web.QWidget, 0xff0000) >= 60*40 })
-	if _, _, ok := webContent("cid:other", mainthread.Wait2(func() string { return c.body.pageURL("edit") })); ok {
+	wait(t, "the picture", func() bool { return pixelsOf(c.body.web, 0xff0000) >= 60*40 })
+	if _, _, ok := webContent("cid:other", onUI(func() string { return c.body.pageURL("edit") })); ok {
 		t.Error("a picture the message does not have is served")
 	}
 }
@@ -404,15 +482,15 @@ func TestImageInDraft(t *testing.T) {
 	wait(t, "the account", func() bool { return len(w.engines) == 1 })
 	c := openComposer(t, w)
 
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if err := c.putImage("dot.png", pngImage(t, 10)); err != nil {
 			t.Fatal(err)
 		}
 	})
 	bodyHas(t, c, "<img")
-	mainthread.Wait(func() { c.saveDraft(nil) })
+	qutetest.Run(t, func() { c.saveDraft(nil) })
 	wait(t, "the draft", func() bool { return len(c.saved) == 1 })
-	mainthread.Wait(func() { c.Close() })
+	qutetest.Run(t, func() { c.Close() })
 
 	drafts := s.Messages(t, "Drafts")
 	if len(drafts) != 1 {
@@ -427,8 +505,8 @@ func TestImageInDraft(t *testing.T) {
 	}
 
 	var again *composer
-	mainthread.Wait(func() {
-		w.composeDraft(w.engines[w.order[0]], m, "Drafts", drafts[0].UID)
+	qutetest.Run(t, func() {
+		w.composeDraft(w.engines[w.order[0]], m, engine.Saved{Folder: "Drafts", UID: drafts[0].UID})
 		for again = range composers {
 		}
 	})
@@ -438,14 +516,14 @@ func TestImageInDraft(t *testing.T) {
 		t.Errorf("images = %+v, attachments = %d", d.Images, len(d.Attachments))
 	}
 	// The window has the picture to show.
-	if _, _, ok := webContent("cid:"+m.Images()[0].ContentID, mainthread.Wait2(func() string { return again.body.pageURL("edit") })); !ok {
+	if _, _, ok := webContent("cid:"+m.Images()[0].ContentID, onUI(func() string { return again.body.pageURL("edit") })); !ok {
 		t.Error("the image is not shown")
 	}
 	closeUnchanged(again)
 
 	// A message forwarded keeps the pictures it shows, not as attachments.
 	var fwd *composer
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		w.view.msg = m
 		w.forwardMessage()
 		for fwd = range composers {
@@ -459,9 +537,9 @@ func TestImageInDraft(t *testing.T) {
 }
 
 // focus gives a field the focus, in a window shown, as clicking in it does.
-func focus(w *qt.QWidget) {
-	w.Window().ActivateWindow()
-	w.SetFocus()
+func focus(w qtwidgets.QWidgetLike) {
+	w.AsQWidget().Window().ActivateWindow()
+	w.AsQWidget().SetFocus()
 }
 
 // TestEditMenu checks that the Edit menu acts on the field or body last in
@@ -472,16 +550,16 @@ func TestEditMenu(t *testing.T) {
 	wait(t, "the account", func() bool { return len(w.engines) == 1 })
 	c := openComposer(t, w)
 
-	mainthread.Wait(func() {
-		clipboard := qt.QGuiApplication_Clipboard()
+	qutetest.Run(t, func() {
+		clipboard := qtgui.QGuiApplicationClipboard()
 		// choose opens the menu, which enables what can be done, and
 		// chooses an item of it.
-		choose := func(a *qt.QAction) {
+		choose := func(a *qtgui.QAction) {
 			c.updateEditMenu()
 			a.Trigger()
 		}
 
-		focus(c.subject.QWidget)
+		focus(c.subject)
 		c.subject.SetText("Hello world")
 		c.subject.Deselect()
 		c.updateEditMenu()
@@ -513,13 +591,13 @@ func TestEditMenu(t *testing.T) {
 	})
 
 	// The body is acted on once it has the focus.
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		c.body.setHTML("")
-		focus(c.body.web.QWidget)
+		focus(c.body.web)
 	})
 	bodyLoaded(t, c)
 	wait(t, "the body to have the focus", func() bool { return c.editor == editor(c.body) })
-	clipboard := mainthread.Wait2(qt.QGuiApplication_Clipboard)
+	clipboard := onUI(qtgui.QGuiApplicationClipboard)
 	textIs := func(what, want string) {
 		t.Helper()
 		deadline := time.Now().Add(10 * time.Second)
@@ -534,29 +612,29 @@ func TestEditMenu(t *testing.T) {
 			time.Sleep(20 * time.Millisecond)
 		}
 	}
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		clipboard.SetText("pasted")
 		c.updateEditMenu()
 		c.edit.paste.Trigger()
 	})
 	textIs("paste", "pasted")
-	mainthread.Wait(c.edit.selectAll.Trigger)
+	qute.PostSync(c.edit.selectAll.Trigger)
 	wait(t, "the body selected", func() bool { c.updateEditMenu(); return c.edit.copy.IsEnabled() && c.edit.del.IsEnabled() })
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		clipboard.Clear()
 		c.edit.copy.Trigger()
 	})
 	wait(t, "the copy", func() bool { return clipboard.Text() == "pasted" })
-	mainthread.Wait(c.edit.del.Trigger)
+	qute.PostSync(c.edit.del.Trigger)
 	textIs("delete", "")
 	wait(t, "undo", func() bool { c.updateEditMenu(); return c.edit.undo.IsEnabled() })
-	mainthread.Wait(c.edit.undo.Trigger)
+	qute.PostSync(c.edit.undo.Trigger)
 	textIs("undo", "pasted")
 
 	// Pasting without formatting pastes the text, not the markup.
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		c.edit.selectAll.Trigger()
-		mime := qt.NewQMimeData()
+		mime := qtcore.NewQMimeData()
 		mime.SetHtml("<b>bold</b>")
 		mime.SetText("bold")
 		clipboard.SetMimeData(mime)
@@ -579,7 +657,7 @@ func TestSendOptions(t *testing.T) {
 
 	for _, on := range []bool{true, false} {
 		c := openComposer(t, w)
-		mainthread.Wait(func() {
+		qutetest.Run(t, func() {
 			c.receipt.SetChecked(on)
 			c.dsn.SetChecked(on)
 			c.send()
@@ -610,12 +688,12 @@ func TestReturnReceiptInDraft(t *testing.T) {
 	w := newTestWindow(t, s)
 	wait(t, "the account", func() bool { return len(w.engines) == 1 })
 	c := openComposer(t, w)
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		c.receipt.SetChecked(true)
 		c.saveDraft(nil)
 	})
 	wait(t, "the draft", func() bool { return len(c.saved) == 1 })
-	mainthread.Wait(func() { c.Close() })
+	qutetest.Run(t, func() { c.Close() })
 
 	drafts := s.Messages(t, "Drafts")
 	if len(drafts) != 1 {
@@ -625,8 +703,8 @@ func TestReturnReceiptInDraft(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mainthread.Wait(func() {
-		w.composeDraft(w.engines[w.order[0]], m, "Drafts", drafts[0].UID)
+	qutetest.Run(t, func() {
+		w.composeDraft(w.engines[w.order[0]], m, engine.Saved{Folder: "Drafts", UID: drafts[0].UID})
 		for c = range composers {
 		}
 		defer c.Close()
@@ -644,7 +722,7 @@ func TestMenus(t *testing.T) {
 		w := newTestWindow(t, s, func(a *account.Account) { a.ComposeHTML = html })
 		wait(t, "the account", func() bool { return len(w.engines) == 1 })
 		c := openComposer(t, w)
-		mainthread.Wait(func() {
+		qutetest.Run(t, func() {
 			var titles []string
 			for _, a := range c.MenuBar().Actions() {
 				titles = append(titles, strings.ReplaceAll(a.Text(), "&", ""))
@@ -687,10 +765,10 @@ func TestCloseItem(t *testing.T) {
 	w := newTestWindow(t, s)
 	wait(t, "the account", func() bool { return len(w.engines) == 1 })
 	c := openComposer(t, w)
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		// The item is in the menu it was made by, the first.
-		file := qt.UnsafeNewQMenu(c.closeItem.Parent().UnsafePointer())
-		if c.MenuBar().Actions()[0].UnsafePointer() != file.MenuAction().UnsafePointer() || len(file.Actions()) != 1 {
+		file := qtwidgets.QMenuCast(c.closeItem.Parent())
+		if c.MenuBar().Actions()[0].Ptr() != file.MenuAction().Ptr() || len(file.Actions()) != 1 {
 			t.Fatal("Close is not the File menu's one item")
 		}
 		if got := strings.ReplaceAll(c.closeItem.Text(), "&", ""); got != "Close" {
@@ -771,7 +849,7 @@ func TestMissingSignatureFile(t *testing.T) {
 	if _, text := bodyOf(t, c); strings.Contains(text, "-- ") {
 		t.Errorf("body = %q", text)
 	}
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if msg := c.StatusBar().CurrentMessage(); !strings.Contains(msg, "reading the signature") {
 			t.Errorf("status = %q", msg)
 		}
@@ -821,7 +899,7 @@ func TestRoomAboveSignature(t *testing.T) {
 		for _, quote := range []string{"none", "above", "below"} {
 			name := fmt.Sprintf("html %v, quote %s", html, quote)
 			c := openComposer(t, w)
-			mainthread.Wait(func() {
+			qutetest.Run(t, func() {
 				a := w.engines[w.order[0]].Account()
 				a.QuoteBelow = quote == "below"
 				if quote == "none" {
@@ -835,7 +913,7 @@ func TestRoomAboveSignature(t *testing.T) {
 				t.Errorf("%s: the body is taken as changed", name)
 			}
 			typeInBody(t, c, "X")
-			if !mainthread.Wait2(func() bool { return c.body.modified }) {
+			if !onUI(func() bool { return c.body.modified }) {
 				t.Errorf("%s: typing is not taken as a change", name)
 			}
 			body, text := bodyOf(t, c)
@@ -871,7 +949,7 @@ func TestRoomAboveCentredQuote(t *testing.T) {
 	wait(t, "the account", func() bool { return len(w.engines) == 1 })
 	c := openComposer(t, w)
 	quote := `<p align="center">Alice wrote:</p><p>Hello</p>`
-	mainthread.Wait(func() { c.setBody(w.engines[w.order[0]].Account(), "Alice wrote:", quote) })
+	qutetest.Run(t, func() { c.setBody(w.engines[w.order[0]].Account(), "Alice wrote:", quote) })
 	bodyLoaded(t, c)
 	typeInBody(t, c, "X")
 	bodyHas(t, c, "<body><div>X</div>"+strings.Repeat("<div><br></div>", writingLines-1)+quote)
@@ -892,12 +970,12 @@ func TestReplyQuickly(t *testing.T) {
 	s.AppendRaw(t, "INBOX", "From: a@example.com\r\nSubject: Booking\r\nContent-Type: text/html; charset=utf-8\r\n\r\n"+b.String()+"\r\n", imap.FlagSeen)
 	w := newTestWindow(t, s, func(a *account.Account) { a.ComposeHTML = true })
 	wait(t, "the inbox", func() bool { return w.folder != "" && len(w.list.rows) == 1 })
-	mainthread.Wait(func() { clickRow(w.list, 0) })
+	qutetest.Run(t, func() { clickRow(w.list, 0) })
 	wait(t, "the message", func() bool { return w.view.msg != nil })
 
 	start := time.Now()
 	var c *composer
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		w.replyTo(false)
 		for c = range composers {
 		}
@@ -946,10 +1024,10 @@ func TestQuoteKeptOffline(t *testing.T) {
 	w := newTestWindow(t, s, func(a *account.Account) { a.ComposeHTML = true })
 	wait(t, "the account", func() bool { return len(w.engines) == 1 })
 	c := openComposer(t, w)
-	mainthread.Wait(func() { c.body.setHTML(quote) })
+	qutetest.Run(t, func() { c.body.setHTML(quote) })
 	bodyLoaded(t, c)
-	mainthread.Wait(func() {
-		if c.body.page.Settings().TestAttribute(webengine.QWebEngineSettings__JavascriptEnabled) {
+	qutetest.Run(t, func() {
+		if c.body.page.Settings().TestAttribute(qtwebenginecore.QWebEngineSettingsJavascriptEnabled) {
 			t.Error("JavaScript is on")
 		}
 		clickAtPage(c.body.web, 50, 50)
@@ -961,7 +1039,7 @@ func TestQuoteKeptOffline(t *testing.T) {
 	if n := connections.Load(); n != 0 {
 		t.Errorf("%d connections were made to the server", n)
 	}
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if len(opened) != 0 {
 			t.Errorf("opened %q", opened)
 		}
@@ -980,18 +1058,16 @@ func TestBodyFollowsTheme(t *testing.T) {
 	c := openComposer(t, w)
 	typeInBody(t, c, "Kept")
 	useTheme(t, settings.ThemeDark)
-	wait(t, "the body in the dark theme", func() bool { return pixelsOf(c.body.web.QWidget, 0x1e1e1e) > 0 })
+	wait(t, "the body in the dark theme", func() bool { return pixelsOf(c.body.web, 0x1e1e1e) > 0 })
 	if _, text := bodyOf(t, c); !strings.Contains(text, "Kept") {
 		t.Errorf("the body is %q", text)
 	}
 }
 
 // pixelsOf counts the pixels of the colour the widget shows.
-func pixelsOf(w *qt.QWidget, colour uint) int {
-	return mainthread.Wait2(func() int {
-		pixmap := w.Grab()
-		img := pixmap.ToImage()
-		runtime.KeepAlive(pixmap)
+func pixelsOf(w qtwidgets.QWidgetLike, colour uint) int {
+	return onUI(func() int {
+		img := w.AsQWidget().Grab().ToImage()
 		n := 0
 		for y := range img.Height() {
 			for x := range img.Width() {
@@ -1017,9 +1093,9 @@ func replyWindow(t *testing.T, images *imageServer, always bool) *Window {
 		a.LoadRemoteImages = always
 	})
 	// The message asks for its images only where it is seen.
-	mainthread.Wait(w.Show)
+	qute.PostSync(w.Show)
 	wait(t, "the inbox", func() bool { return w.folder != "" && len(w.list.rows) == 1 })
-	mainthread.Wait(func() { clickRow(w.list, 0) })
+	qutetest.Run(t, func() { clickRow(w.list, 0) })
 	wait(t, "the message", func() bool { return w.view.msg != nil })
 	return w
 }
@@ -1029,7 +1105,7 @@ func replyWindow(t *testing.T, images *imageServer, always bool) *Window {
 func reply(t *testing.T, w *Window) *composer {
 	t.Helper()
 	var c *composer
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		w.replyTo(false)
 		for c = range composers {
 		}
@@ -1047,7 +1123,7 @@ func TestReplyShowsImages(t *testing.T) {
 	w := replyWindow(t, images, true)
 	wait(t, "the images of the message", func() bool { return len(w.view.images) == 1 })
 	c := reply(t, w)
-	wait(t, "the image in the reply", func() bool { return pixelsOf(c.body.web.QWidget, 0xff0000) >= 60*40 })
+	wait(t, "the image in the reply", func() bool { return pixelsOf(c.body.web, 0xff0000) >= 60*40 })
 	if n := images.count("/a.png"); n != 1 {
 		t.Errorf("the image was fetched %d times", n)
 	}
@@ -1064,7 +1140,7 @@ func TestReplyImagesFollowAccount(t *testing.T) {
 	w := replyWindow(t, images, false)
 	c := reply(t, w)
 	time.Sleep(time.Second)
-	if n := pixelsOf(c.body.web.QWidget, 0xff0000); n != 0 {
+	if n := pixelsOf(c.body.web, 0xff0000); n != 0 {
 		t.Errorf("%d red pixels are shown", n)
 	}
 	if n := images.count(""); n != 0 {
@@ -1073,10 +1149,10 @@ func TestReplyImagesFollowAccount(t *testing.T) {
 	closeUnchanged(c)
 
 	buttonShown(t, w.view)
-	mainthread.Wait(w.view.loadImages.Click)
+	qute.PostSync(w.view.loadImages.Click)
 	wait(t, "the images of the message", func() bool { return len(w.view.images) == 1 })
 	c = reply(t, w)
-	wait(t, "the image in the reply", func() bool { return pixelsOf(c.body.web.QWidget, 0xff0000) >= 60*40 })
+	wait(t, "the image in the reply", func() bool { return pixelsOf(c.body.web, 0xff0000) >= 60*40 })
 	if n := images.count("/a.png"); n != 1 {
 		t.Errorf("the image was fetched %d times", n)
 	}
@@ -1094,18 +1170,18 @@ func TestDraftFetchesImages(t *testing.T) {
 	})
 	wait(t, "the account", func() bool { return len(w.engines) == 1 })
 	var c *composer
-	mainthread.Wait(func() {
-		w.composeDraft(w.engines[w.order[0]], imageMessage(images, "/a.png"), "Drafts", 1)
+	qutetest.Run(t, func() {
+		w.composeDraft(w.engines[w.order[0]], imageMessage(images, "/a.png"), engine.Saved{Folder: "Drafts", UID: 1})
 		for c = range composers {
 		}
 	})
 	t.Cleanup(func() { closeUnchanged(c) })
-	wait(t, "the image in the draft", func() bool { return pixelsOf(c.body.web.QWidget, 0xff0000) >= 60*40 })
+	wait(t, "the image in the draft", func() bool { return pixelsOf(c.body.web, 0xff0000) >= 60*40 })
 	if n := images.count("/a.png"); n != 1 {
 		t.Errorf("the image was fetched %d times", n)
 	}
 	// Nothing was typed: the images are not a change to what is written.
-	if mainthread.Wait2(func() bool { return c.body.modified }) {
+	if onUI(func() bool { return c.body.modified }) {
 		t.Error("the draft is taken as changed")
 	}
 }
@@ -1122,7 +1198,7 @@ func TestRoomAroundBody(t *testing.T) {
 		w := newTestWindow(t, s, func(a *account.Account) { a.ComposeHTML = html })
 		wait(t, "the account", func() bool { return len(w.engines) == 1 })
 		c := openComposer(t, w)
-		mainthread.Wait(func() {
+		qutetest.Run(t, func() {
 			c.setBody(w.engines[w.order[0]].Account(), "Alice wrote:\n> Hello",
 				`<style>html, body { margin: 0 !important; padding: 0 !important; width: 100% !important }</style><p>Alice wrote:</p><p>Hello</p>`)
 		})
@@ -1130,22 +1206,21 @@ func TestRoomAroundBody(t *testing.T) {
 		typeInBody(t, c, "MMMM")
 		// Nothing is drawn within the room kept at the left and the top.
 		edge := func() int {
-			return mainthread.Wait2(func() int {
+			return onUI(func() int {
 				background := c.body.page.BackgroundColor()
 				pixmap := c.body.web.Grab()
 				img := pixmap.ToImage()
-				runtime.KeepAlive(pixmap)
 				n := 0
 				for y := range img.Height() {
 					for x := range bodyRoom {
-						if img.Pixel(x, y)&0xffffff != background.Rgb()&0xffffff {
+						if img.Pixel(x, y)&0xffffff != rgb(background)&0xffffff {
 							n++
 						}
 					}
 				}
 				for y := range bodyRoom {
 					for x := range img.Width() - 20 {
-						if img.Pixel(x, y)&0xffffff != background.Rgb()&0xffffff {
+						if img.Pixel(x, y)&0xffffff != rgb(background)&0xffffff {
 							n++
 						}
 					}
@@ -1158,10 +1233,9 @@ func TestRoomAroundBody(t *testing.T) {
 		if n := edge(); n != 0 {
 			t.Errorf("html %v: %d pixels are drawn within %d of the edges", html, n, bodyRoom)
 		}
-		mainthread.Wait(func() {
+		qutetest.Run(t, func() {
 			size := c.body.page.ContentsSize()
-			defer runtime.KeepAlive(size)
-			if wide, room := size.Width(), float64(c.body.web.Width()); wide > room {
+			if wide, room := size.Width, float64(c.body.web.Width()); wide > room {
 				t.Errorf("html %v: the body is %v wide, in %v", html, wide, room)
 			}
 		})

@@ -1,29 +1,28 @@
 package ui
 
 import (
-	"runtime"
-
-	qt "github.com/mappu/miqt/qt6"
-	"github.com/mappu/miqt/qt6/mainthread"
+	"github.com/nomad-software/qute"
+	"github.com/nomad-software/qute/qtcore"
+	"github.com/nomad-software/qute/qtwidgets"
 )
 
 // fitDialog makes the dialog the width, or wider if it needs to be, and as
 // tall as what is in it needs at that width, so that notes which wrap onto
 // more lines in a larger font are not cut off.
-func fitDialog(d *qt.QDialog, width int) {
+func fitDialog(dialog qtwidgets.QDialogLike, width int) {
+	d := dialog.AsQDialog()
 	layout := d.Layout()
 	layout.Activate()
 	least, hint := layout.MinimumSize(), d.SizeHint()
-	width = max(width, least.Width())
-	height := max(layout.HeightForWidth(width), hint.Height(), least.Height())
-	runtime.KeepAlive(least)
-	runtime.KeepAlive(hint)
+	width = max(width, least.Width)
+	height := max(layout.AsQLayoutItem().HeightForWidth(width), hint.Height, least.Height)
 	d.Resize(width, height)
 }
 
 // openDialog shows a dialog which keeps the window from being used until it
 // is answered, without waiting for it, and deletes it once it is.
-func openDialog(d *qt.QDialog) {
+func openDialog(dialog qtwidgets.QDialogLike) {
+	d := dialog.AsQDialog()
 	d.OnFinished(func(int) { d.DeleteLater() })
 	d.Open()
 }
@@ -32,15 +31,20 @@ func openDialog(d *qt.QDialog) {
 // does, and then done on the UI's thread, unless w has been destroyed by
 // then: a dialog answered meanwhile has been deleted, with its widgets,
 // which done would use.
-func inBackground(w *qt.QWidget, work, done func()) {
+func inBackground(w qtwidgets.QWidgetLike, work, done func()) {
 	gone := false
-	w.OnDestroyed(func() { gone = true })
+	w.AsQWidget().OnDestroyed(func(*qtcore.QObject) { gone = true })
 	go func() {
 		work()
-		mainthread.Start(func() {
+		qute.Post(func() {
 			if !gone {
 				done()
 			}
 		})
 	}()
+}
+
+// currentData returns the text of the data of the item chosen in the box.
+func currentData(box *qtwidgets.QComboBox) string {
+	return box.CurrentData().ToString()
 }

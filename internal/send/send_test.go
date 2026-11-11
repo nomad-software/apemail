@@ -1,12 +1,18 @@
 package send_test
 
 import (
+	"bufio"
 	"errors"
+	"fmt"
+	"net"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/emersion/go-smtp"
 
+	"github.com/nomad-software/apemail/internal/account"
 	"github.com/nomad-software/apemail/internal/send"
 	"github.com/nomad-software/apemail/internal/send/sendtest"
 )
@@ -80,5 +86,73 @@ func TestUnreachable(t *testing.T) {
 	server.Port = 1
 	if err := send.Send(server, "me@example.com", []string{"bob@example.com"}, []byte(raw), false); !errors.Is(err, send.ErrUnreachable) {
 		t.Errorf("err = %v", err)
+	}
+}
+
+// TestSentThoughGoodbyeFails checks that mail the server has taken is said
+// to be sent, though the server then goes without answering the goodbye:
+// said to have failed, it would be sent again.
+func TestSentThoughGoodbyeFails(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	taken := make(chan string, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		conn.SetDeadline(time.Now().Add(10 * time.Second))
+		r := bufio.NewReader(conn)
+		say := func(line string) { conn.Write([]byte(line + "\r\n")) }
+		say("220 test")
+		for {
+			line, err := r.ReadString('\n')
+			if err != nil {
+				return
+			}
+			switch cmd := strings.ToUpper(strings.Fields(line + " -")[0]); cmd {
+			case "DATA":
+				say("354 go on")
+				var data strings.Builder
+				for {
+					line, err := r.ReadString('\n')
+					if err != nil {
+						return
+					}
+					if line == ".\r\n" {
+						break
+					}
+					data.WriteString(line)
+				}
+				say("250 taken")
+				taken <- data.String()
+			case "QUIT":
+				// The server goes without a word.
+				return
+			default:
+				say("250 ok")
+			}
+		}
+	}()
+
+	host, port, _ := strings.Cut(ln.Addr().String(), ":")
+	server := account.Server{Host: host, Security: account.SecurityNone, Auth: account.AuthPassword}
+	if _, err := fmt.Sscan(port, &server.Port); err != nil {
+		t.Fatal(err)
+	}
+	if err := send.Send(server, "me@example.com", []string{"bob@example.com"}, []byte(raw), false); err != nil {
+		t.Errorf("mail the server took was said to fail: %v", err)
+	}
+	select {
+	case data := <-taken:
+		if data != raw {
+			t.Errorf("the server was given %q", data)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("waiting for the server to be given the message")
 	}
 }

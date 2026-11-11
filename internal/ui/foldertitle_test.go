@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/emersion/go-imap/v2"
-	"github.com/mappu/miqt/qt6/mainthread"
+	"github.com/nomad-software/qute/qutetest"
 
 	"github.com/nomad-software/apemail/internal/remote/remotetest"
 )
@@ -21,7 +21,7 @@ func TestFolderTitle(t *testing.T) {
 	s.AppendRaw(t, "Projects/Engine", "From: a@example.com\r\nSubject: Gears\r\n\r\nHello.\r\n")
 	w := newTestWindow(t, s)
 	title := func() string {
-		if !w.folderTitle.IsVisibleTo(w.QWidget) {
+		if !w.folderTitle.IsVisibleTo(w) {
 			return ""
 		}
 		return w.folderTitle.Text()
@@ -40,7 +40,7 @@ func TestFolderTitle(t *testing.T) {
 	wait(t, "the inbox counted", shows(">Inbox<", "3 messages"))
 
 	// The count follows the messages as they go.
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		clickRow(w.list, 0)
 		w.deleteMessages()
 	})
@@ -48,23 +48,23 @@ func TestFolderTitle(t *testing.T) {
 
 	// A folder within another is named with those it is within, as the
 	// side bar names them.
-	mainthread.Wait(func() { w.folders.selectFolder(w.account, "Projects/Engine") })
+	qutetest.Run(t, func() { w.folders.selectFolder(w.account, "Projects/Engine") })
 	wait(t, "the folder counted", shows(">Projects/Engine<", "1 message"))
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if strings.Contains(title(), "1 messages") {
 			t.Errorf("title = %q", title())
 		}
 	})
-	mainthread.Wait(func() { w.folders.selectFolder(w.account, "Trash") })
+	qutetest.Run(t, func() { w.folders.selectFolder(w.account, "Trash") })
 	wait(t, "the trash counted", shows(">Trash<", "1 message"))
 
 	// The account itself lists nothing.
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		w.folders.SetCurrentItem(w.folders.accounts[w.account])
 		if w.folder != "" {
 			t.Fatalf("listing %q", w.folder)
 		}
-		if w.folderTitle.IsVisibleTo(w.QWidget) {
+		if w.folderTitle.IsVisibleTo(w) {
 			t.Errorf("a title is shown with no folder: %q", w.folderTitle.Text())
 		}
 	})

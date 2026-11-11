@@ -20,7 +20,7 @@ func (c *composer) setBody(a account.Account, quoteText, quoteHTML string) {
 	signature, err := message.LoadSignature(a.Signature, a.SignatureFile)
 	if err != nil {
 		// The message is written without it, rather than not at all.
-		c.StatusBar().ShowMessage2(err.Error(), 15000)
+		c.StatusBar().ShowMessageFull(err.Error(), 15000)
 	}
 	below := a.QuoteBelow && quoteText != ""
 	if c.html {

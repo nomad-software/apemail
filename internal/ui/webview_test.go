@@ -4,16 +4,18 @@ import (
 	"errors"
 	"net"
 	"os"
-	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	qt "github.com/mappu/miqt/qt6"
-	"github.com/mappu/miqt/qt6/mainthread"
-	"github.com/mappu/miqt/qt6/webengine"
+	"github.com/nomad-software/qute"
+	"github.com/nomad-software/qute/qtcore"
+	"github.com/nomad-software/qute/qtgui"
+	"github.com/nomad-software/qute/qtwebenginecore"
+	"github.com/nomad-software/qute/qtwidgets"
+	"github.com/nomad-software/qute/qutetest"
 
 	"github.com/nomad-software/apemail/internal/message"
 	"github.com/nomad-software/apemail/internal/settings"
@@ -23,19 +25,19 @@ import (
 // when the test ends.
 func newShownView(t *testing.T, width, height int) *messageView {
 	var v *messageView
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		v = newMessageView()
 		v.Resize(width, height)
 		v.Show()
 	})
-	t.Cleanup(func() { mainthread.Wait(func() { v.DeleteLater() }) })
+	t.Cleanup(func() { qutetest.Run(t, func() { v.DeleteLater() }) })
 	return v
 }
 
 // showWhole shows the message in the view and waits for its page to load.
 func showWhole(t *testing.T, v *messageView, m *message.Message) {
 	t.Helper()
-	mainthread.Wait(func() { v.show(m, "INBOX", 1) })
+	qutetest.Run(t, func() { v.show(m, "INBOX", 1, 1) })
 	loadedWhole(t, v)
 }
 
@@ -52,19 +54,19 @@ func loadedWhole(t *testing.T, v *messageView) {
 func pageText(t *testing.T, v *messageView) string {
 	t.Helper()
 	loadedWhole(t, v)
-	var focused *qt.QWidget
-	mainthread.Wait(func() {
-		focused = qt.QApplication_FocusWidget()
+	var focused *qtwidgets.QWidget
+	qutetest.Run(t, func() {
+		focused = qtwidgets.QApplicationFocusWidget()
 		v.web.SetFocus()
-		v.page.TriggerAction(webengine.QWebEnginePage__SelectAll, false)
+		v.page.TriggerAction(qtwebenginecore.QWebEnginePageSelectAll)
 	})
 	var text string
 	wait(t, "the text to be selected", func() bool {
 		text = v.web.SelectedText()
 		return v.web.HasSelection()
 	})
-	mainthread.Wait(func() {
-		v.page.TriggerAction(webengine.QWebEnginePage__Unselect, false)
+	qutetest.Run(t, func() {
+		v.page.TriggerAction(qtwebenginecore.QWebEnginePageUnselect)
 		if focused != nil {
 			focused.SetFocus()
 		}
@@ -79,33 +81,22 @@ func htmlMessageOf(html string) *message.Message {
 
 // clickAt clicks the body of the view at the point, as the user does.
 func clickAt(v *messageView, x, y int) {
-	clickWith(v, x, y, qt.LeftButton)
+	clickWith(v, x, y, qtcore.LeftButton)
 }
 
 // clickWith clicks the body of the view at the point with the button.
-func clickWith(v *messageView, x, y int, button qt.MouseButton) {
+func clickWith(v *messageView, x, y int, button qtcore.MouseButton) {
 	clickPage(v.web, x, y, button)
 }
 
 // clickAtPage clicks a page at the point, as the user does.
-func clickAtPage(web *webengine.QWebEngineView, x, y int) {
-	clickPage(web, x, y, qt.LeftButton)
+func clickAtPage(web *hostView, x, y int) {
+	clickPage(web, x, y, qtcore.LeftButton)
 }
 
 // clickPage clicks a page at the point with the button.
-func clickPage(web *webengine.QWebEngineView, x, y int, button qt.MouseButton) {
-	p := qt.NewQPointF3(float64(x), float64(y))
-	defer p.Delete()
-	target := web.FocusProxy()
-	for _, typ := range []qt.QEvent__Type{qt.QEvent__MouseButtonPress, qt.QEvent__MouseButtonRelease} {
-		buttons := button
-		if typ == qt.QEvent__MouseButtonRelease {
-			buttons = qt.NoButton
-		}
-		e := qt.NewQMouseEvent(typ, p, button, buttons, qt.NoModifier)
-		qt.QCoreApplication_SendEvent(target.QObject, e.QEvent)
-		e.Delete()
-	}
+func clickPage(web *hostView, x, y int, button qtcore.MouseButton) {
+	qutetest.ClickAt(web.FocusProxy(), button, qtcore.QPoint{X: x, Y: y})
 }
 
 // TestNothingFetched checks that a message which links to a server in every
@@ -155,7 +146,7 @@ func TestNothingFetched(t *testing.T) {
 	if n := connections.Load(); n != 0 {
 		t.Errorf("%d connections were made to the server", n)
 	}
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if !strings.HasPrefix(encoded(v.page.Url()), webScheme+":") {
 			t.Errorf("the page went to %s", encoded(v.page.Url()))
 		}
@@ -195,8 +186,8 @@ func TestChromiumFlags(t *testing.T) {
 // what it shows for want of them is.
 func TestJavaScriptOff(t *testing.T) {
 	v := newShownView(t, 600, 400)
-	mainthread.Wait(func() {
-		if v.page.Settings().TestAttribute(webengine.QWebEngineSettings__JavascriptEnabled) {
+	qutetest.Run(t, func() {
+		if v.page.Settings().TestAttribute(qtwebenginecore.QWebEngineSettingsJavascriptEnabled) {
 			t.Error("JavaScript is on")
 		}
 	})
@@ -218,7 +209,7 @@ func TestPartsShown(t *testing.T) {
 		Attachments: []message.Attachment{{Filename: "pic.png", ContentType: "image/png", ContentID: "pic", Inline: true, Data: red}},
 	})
 	var stolen, before string
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		other.images["https://example.com/a.png"] = red
 		stolen = other.pageURL("image?src=https%3A%2F%2Fexample.com%2Fa.png")
 		before = other.pageURL("message")
@@ -227,7 +218,7 @@ func TestPartsShown(t *testing.T) {
 	v := newShownView(t, 300, 200)
 	showWhole(t, v, htmlMessageOf(`<p>Nothing red</p><img src="`+stolen+`" width="60" height="40"><iframe src="`+before+`"></iframe>`))
 	time.Sleep(500 * time.Millisecond)
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if n := redPixels(v); n != 0 {
 			t.Errorf("%d red pixels of another view are shown", n)
 		}
@@ -237,7 +228,7 @@ func TestPartsShown(t *testing.T) {
 	})
 
 	// What was shown before is served no more.
-	mainthread.Wait(func() { other.show(htmlMessageOf("<p>Another</p>"), "INBOX", 2) })
+	qutetest.Run(t, func() { other.show(htmlMessageOf("<p>Another</p>"), "INBOX", 1, 2) })
 	if _, _, ok := webContent(before, ""); ok {
 		t.Error("the page shown before is still served")
 	}
@@ -254,15 +245,15 @@ func TestPartsShown(t *testing.T) {
 // the web but the images the user has had loaded, served in their place.
 func TestRequests(t *testing.T) {
 	v, other := newShownView(t, 300, 200), newShownView(t, 300, 200)
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		before := v.pageURL("message")
-		v.show(htmlMessageOf("<p>Hello</p>"), "INBOX", 1)
+		v.show(htmlMessageOf("<p>Hello</p>"), "INBOX", 1, 1)
 		page := v.pageURL("message")
 		v.images["https://example.com/a.png"] = []byte("PNG")
-		mainFrame, image, frame := webengine.QWebEngineUrlRequestInfo__ResourceTypeMainFrame, webengine.QWebEngineUrlRequestInfo__ResourceTypeImage, webengine.QWebEngineUrlRequestInfo__ResourceTypeSubFrame
+		mainFrame, image, frame := qtwebenginecore.QWebEngineUrlRequestInfoResourceTypeMainFrame, qtwebenginecore.QWebEngineUrlRequestInfoResourceTypeImage, qtwebenginecore.QWebEngineUrlRequestInfoResourceTypeSubFrame
 		for _, c := range []struct {
 			address, from string
-			kind          webengine.QWebEngineUrlRequestInfo__ResourceType
+			kind          qtwebenginecore.QWebEngineUrlRequestInfoResourceType
 			allow         bool
 			to            string
 		}{
@@ -282,7 +273,7 @@ func TestRequests(t *testing.T) {
 			{"https://example.com/a.png", page, image, false, v.pageURL("image?src=https%3A%2F%2Fexample.com%2Fa.png")},
 			{"https://example.com/a.png", before, image, false, ""},
 			{"https://example.com/b.png", page, image, false, ""},
-			{"https://example.com/a.css", page, webengine.QWebEngineUrlRequestInfo__ResourceTypeStylesheet, false, ""},
+			{"https://example.com/a.css", page, qtwebenginecore.QWebEngineUrlRequestInfoResourceTypeStylesheet, false, ""},
 		} {
 			if allow, to := webRequest(c.address, c.from, c.kind); allow != c.allow || to != c.to {
 				t.Errorf("%s for %s (%d): let through %v, sent to %q", c.address, c.from, c.kind, allow, to)
@@ -307,7 +298,7 @@ func TestLinksOpen(t *testing.T) {
 	block := `style="display: block; height: 40px"`
 	v := newShownView(t, 600, 600)
 	var wrote []string
-	mainthread.Wait(func() { v.compose = func(to, _ string) { wrote = append(wrote, to) } })
+	qutetest.Run(t, func() { v.compose = func(to, _ string) { wrote = append(wrote, to) } })
 	showWhole(t, v, htmlMessageOf(`<body style="margin: 0">`+
 		`<a `+block+` href="https://example.com/a?x=1&amp;y=2">a link</a>`+
 		`<a `+block+` href="https://example.com/b" target="_blank">a window</a>`+
@@ -316,12 +307,12 @@ func TestLinksOpen(t *testing.T) {
 		`<form action="https://example.com/form"><input type="submit" `+block+` value="Send"></form>`+
 		`<p id="end">The end</p></body>`))
 	for i := range 5 {
-		mainthread.Wait(func() { clickAt(v, 100, 20+40*i) })
+		qutetest.Run(t, func() { clickAt(v, 100, 20+40*i) })
 		time.Sleep(200 * time.Millisecond)
 	}
 	want := []string{"https://example.com/a?x=1&y=2", "https://example.com/b"}
-	eventually(t, "the links to open", func() bool { return mainthread.Wait2(func() bool { return len(opened) == 2 && len(wrote) == 1 }) })
-	mainthread.Wait(func() {
+	eventually(t, "the links to open", func() bool { return onUI(func() bool { return len(opened) == 2 && len(wrote) == 1 }) })
+	qutetest.Run(t, func() {
 		if !slices.Equal(opened, want) {
 			t.Errorf("opened %q, want %q", opened, want)
 		}
@@ -343,18 +334,16 @@ func TestFollowsTheme(t *testing.T) {
 	pixel := func() string {
 		pixmap := v.web.Grab()
 		img := pixmap.ToImage()
-		runtime.KeepAlive(pixmap)
-		return qt.NewQColor4(img.Pixel(img.Width()-5, img.Height()-5) & 0xffffff).Name()
+		return colourOf(img.Pixel(img.Width()-5, img.Height()-5) & 0xffffff).Name()
 	}
 	useTheme(t, settings.ThemeDark)
 	showWhole(t, v, htmlMessageOf("<p>Hello</p>"))
 	wait(t, "the page in the dark theme", func() bool { return pixel() == "#1e1e1e" })
 	textIn := func() string {
-		palette := qt.QGuiApplication_Palette()
-		defer runtime.KeepAlive(palette)
-		return "color: " + palette.Color(qt.QPalette__Active, qt.QPalette__Text).Name()
+		palette := qtgui.QGuiApplicationPalette()
+		return "color: " + palette.GroupColor(qtgui.QPaletteActive, qtgui.QPaletteText).Name()
 	}
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if !strings.Contains(v.html, textIn()) {
 			t.Errorf("served %s", v.html)
 		}
@@ -365,20 +354,20 @@ func TestFollowsTheme(t *testing.T) {
 
 	showWhole(t, v, &message.Message{Text: "Hello"})
 	wait(t, "text in the dark theme", func() bool { return pixel() == "#1e1e1e" })
-	mainthread.Wait(func() { applyTheme(settings.ThemeLight) })
+	qutetest.Run(t, func() { applyTheme(settings.ThemeLight) })
 	wait(t, "text in the light theme", func() bool { return pixel() != "#1e1e1e" })
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if !strings.Contains(v.html, textIn()) {
 			t.Errorf("served %s", v.html)
 		}
 	})
 
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		v.Hide()
 		applyTheme(settings.ThemeDark)
 	})
 	wait(t, "the hidden view to be left", func() bool { return v.stale })
-	mainthread.Wait(v.Show)
+	qute.PostSync(v.Show)
 	wait(t, "the view seen in the dark theme", func() bool { return !v.stale && pixel() == "#1e1e1e" })
 }
 
@@ -386,7 +375,7 @@ func TestFollowsTheme(t *testing.T) {
 // keeps it first, with what may come before it, so that it is laid out as
 // it asks, and that the message is otherwise served as it is.
 func TestDoctypeFirst(t *testing.T) {
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		head := messagePage("")
 		for _, c := range []struct{ doctype, rest string }{
 			{"<!-- a -->\r\n<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\">", "<html><body>Hello"},
@@ -404,25 +393,25 @@ func TestDoctypeFirst(t *testing.T) {
 // TestFocusStays checks that showing a message leaves the focus where it
 // was, as in the list, where Delete deletes it.
 func TestFocusStays(t *testing.T) {
-	var window *qt.QWidget
-	var field *qt.QLineEdit
+	var window *qtwidgets.QWidget
+	var field *qtwidgets.QLineEdit
 	var v *messageView
-	mainthread.Wait(func() {
-		window = qt.NewQWidget2()
-		layout := qt.NewQVBoxLayout(window)
-		field = qt.NewQLineEdit2()
-		layout.AddWidget(field.QWidget)
+	qutetest.Run(t, func() {
+		window = qtwidgets.NewQWidget(nil)
+		layout := qtwidgets.NewQVBoxLayout(window)
+		field = qtwidgets.NewQLineEdit(nil)
+		layout.AddWidget(field)
 		v = newMessageView()
-		layout.AddWidget(v.QWidget)
+		layout.AddWidget(v)
 		window.Resize(400, 400)
 		window.Show()
 		window.ActivateWindow()
 		field.SetFocus()
 	})
-	t.Cleanup(func() { mainthread.Wait(func() { window.DeleteLater() }) })
+	t.Cleanup(func() { qutetest.Run(t, func() { window.DeleteLater() }) })
 	showWhole(t, v, htmlMessageOf(`<p>Hello <input autofocus></p>`))
 	time.Sleep(300 * time.Millisecond)
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if !field.HasFocus() {
 			t.Error("showing a message took the focus")
 		}
@@ -448,15 +437,15 @@ func TestContextMenu(t *testing.T) {
 		}
 		return names, copyOn
 	}
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		names, copyOn := texts()
 		if !slices.Equal(names, []string{"Copy", "Select All"}) || copyOn {
 			t.Errorf("the menu has %q, Copy enabled %v", names, copyOn)
 		}
-		v.page.TriggerAction(webengine.QWebEnginePage__SelectAll, false)
+		v.page.TriggerAction(qtwebenginecore.QWebEnginePageSelectAll)
 	})
 	wait(t, "the text to be selected", func() bool { return v.web.HasSelection() })
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if _, copyOn := texts(); !copyOn {
 			t.Error("Copy is not enabled with text selected")
 		}
@@ -475,16 +464,16 @@ func TestLinkMenu(t *testing.T) {
 	showWhole(t, v, htmlMessageOf(`<body style="margin: 0"><a style="display: block; height: 100px" href="https://example.com/a">A link</a></body>`))
 	// The menu runs a loop of its own until it is closed, in which what is
 	// asked of the UI's thread is done.
-	var menu *qt.QMenu
+	var menu *qtwidgets.QMenu
 	for _, item := range []string{"Open Link", "Copy Link Address"} {
-		mainthread.Start(func() { clickWith(v, 50, 50, qt.RightButton) })
+		qute.Post(func() { clickWith(v, 50, 50, qtcore.RightButton) })
 		wait(t, "the menu", func() bool {
-			if w := qt.QApplication_ActivePopupWidget(); w != nil {
-				menu = qt.UnsafeNewQMenu(w.UnsafePointer())
+			if w := qtwidgets.QApplicationActivePopupWidget(); w != nil {
+				menu = qtwidgets.QMenuCast(w)
 			}
-			return qt.QApplication_ActivePopupWidget() != nil
+			return qtwidgets.QApplicationActivePopupWidget() != nil
 		})
-		mainthread.Wait(func() {
+		qutetest.Run(t, func() {
 			var names []string
 			for _, a := range menu.Actions() {
 				if !a.IsSeparator() {
@@ -501,13 +490,13 @@ func TestLinkMenu(t *testing.T) {
 			}
 			menu.Close()
 		})
-		wait(t, "the menu to close", func() bool { return qt.QApplication_ActivePopupWidget() == nil })
+		wait(t, "the menu to close", func() bool { return qtwidgets.QApplicationActivePopupWidget() == nil })
 	}
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if !slices.Equal(opened, []string{"https://example.com/a"}) {
 			t.Errorf("opened %q", opened)
 		}
-		if got := qt.QGuiApplication_Clipboard().Text(); got != "https://example.com/a" {
+		if got := qtgui.QGuiApplicationClipboard().Text(); got != "https://example.com/a" {
 			t.Errorf("copied %q", got)
 		}
 	})
@@ -517,7 +506,7 @@ func TestLinkMenu(t *testing.T) {
 // shown in its place, as it is written.
 func TestFailedShown(t *testing.T) {
 	v := newShownView(t, 400, 300)
-	mainthread.Wait(func() { v.failed(errors.New("the server said <b>no</b> & left")) })
+	qutetest.Run(t, func() { v.failed(errors.New("the server said <b>no</b> & left")) })
 	if got := pageText(t, v); got != "the server said <b>no</b> & left" {
 		t.Errorf("shown %q", got)
 	}
@@ -527,7 +516,6 @@ func TestFailedShown(t *testing.T) {
 func redPixels(v *messageView) int {
 	pixmap := v.web.Grab()
 	img := pixmap.ToImage()
-	runtime.KeepAlive(pixmap)
 	n := 0
 	for y := range img.Height() {
 		for x := range img.Width() {
@@ -537,4 +525,30 @@ func redPixels(v *messageView) int {
 		}
 	}
 	return n
+}
+
+// TestProfileOffTheRecord checks that the profile messages are shown and
+// written in is the program's own, not Qt WebEngine's default one, and keeps
+// nothing on disk: it is off the record, with no cache and no cookies kept,
+// and every page is in it.
+func TestProfileOffTheRecord(t *testing.T) {
+	qutetest.Run(t, func() {
+		v := newMessageView()
+		defer v.DeleteLater()
+		if profile == nil || !profile.IsOffTheRecord() {
+			t.Fatal("the profile is not off the record")
+		}
+		if got := profile.HttpCacheType(); got != qtwebenginecore.QWebEngineProfileNoCache {
+			t.Errorf("the cache is %v", got)
+		}
+		if got := profile.PersistentCookiesPolicy(); got != qtwebenginecore.QWebEngineProfileNoPersistentCookies {
+			t.Errorf("cookies are kept: %v", got)
+		}
+		if v.page.Profile().Ptr() != profile.Ptr() {
+			t.Error("the page of a view is in another profile")
+		}
+		if profile.Ptr() == qtwebenginecore.QWebEngineProfileDefaultProfile().Ptr() {
+			t.Error("the pages are in Qt WebEngine's default profile")
+		}
+	})
 }

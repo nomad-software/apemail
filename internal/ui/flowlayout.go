@@ -1,9 +1,8 @@
 package ui
 
 import (
-	"runtime"
-
-	qt "github.com/mappu/miqt/qt6"
+	"github.com/nomad-software/qute/qtcore"
+	"github.com/nomad-software/qute/qtwidgets"
 )
 
 // flowLayout lays its items out in a row and wraps them onto the next row
@@ -12,78 +11,73 @@ import (
 // window. Qt has no such layout of its own. It asks for no more width than
 // its margins: an item wider than the row is cut down to it.
 type flowLayout struct {
-	*qt.QLayout
-	items []*qt.QLayoutItem
-	// sizes are the sizes last returned to Qt, which copies them only once
-	// the override has returned; they are deleted on the next call.
-	sizes struct{ hint, minimum *qt.QSize }
+	qtwidgets.QLayoutBase
+	items []*qtwidgets.QLayoutItem
 }
 
-func newFlowLayout(parent *qt.QWidget) *flowLayout {
-	l := &flowLayout{QLayout: qt.NewQLayout(parent)}
+func newFlowLayout(parent qtwidgets.QWidgetLike) *flowLayout {
+	l := &flowLayout{}
+	qtwidgets.NewQLayoutWith(l, parent)
 	l.SetSpacing(4)
-	l.OnAddItem(func(item *qt.QLayoutItem) { l.items = append(l.items, item) })
-	l.OnCount(func() int { return len(l.items) })
-	l.OnItemAt(func(i int) *qt.QLayoutItem {
-		if i < 0 || i >= len(l.items) {
-			return nil
-		}
-		return l.items[i]
-	})
-	l.OnTakeAt(func(i int) *qt.QLayoutItem {
-		if i < 0 || i >= len(l.items) {
-			return nil
-		}
-		item := l.items[i]
-		l.items = append(l.items[:i], l.items[i+1:]...)
-		return item
-	})
-	l.OnExpandingDirections(func(func() qt.Orientation) qt.Orientation { return 0 })
-	l.OnHasHeightForWidth(func(func() bool) bool { return true })
-	l.OnHeightForWidth(func(_ func(int) int, width int) int { return l.place(width, nil) })
-	l.OnMinimumHeightForWidth(func(_ func(int) int, width int) int { return l.place(width, nil) })
-	l.OnSizeHint(func() *qt.QSize { return giveSize(&l.sizes.hint, l.size()) })
-	l.OnMinimumSize(func(func() *qt.QSize) *qt.QSize { return giveSize(&l.sizes.minimum, l.size()) })
-	l.OnSetGeometry(func(super func(*qt.QRect), r *qt.QRect) {
-		super(r)
-		l.place(r.Width(), r)
-	})
 	return l
+}
+
+// What Qt asks of a layout.
+
+func (l *flowLayout) AddItem(item *qtwidgets.QLayoutItem) { l.items = append(l.items, item) }
+
+func (l *flowLayout) Count() int { return len(l.items) }
+
+func (l *flowLayout) ItemAt(i int) *qtwidgets.QLayoutItem {
+	if i < 0 || i >= len(l.items) {
+		return nil
+	}
+	return l.items[i]
+}
+
+func (l *flowLayout) TakeAt(i int) *qtwidgets.QLayoutItem {
+	if i < 0 || i >= len(l.items) {
+		return nil
+	}
+	item := l.items[i]
+	l.items = append(l.items[:i], l.items[i+1:]...)
+	return item
+}
+
+func (l *flowLayout) ExpandingDirections() qtcore.Orientations { return 0 }
+
+func (l *flowLayout) HasHeightForWidth() bool { return true }
+
+func (l *flowLayout) HeightForWidth(width int) int { return l.place(width, nil) }
+
+func (l *flowLayout) MinimumHeightForWidth(width int) int { return l.place(width, nil) }
+
+// SizeHint is the size the layout asks for: its margins, and the height of a
+// row, as HeightForWidth gives the height the items need.
+func (l *flowLayout) SizeHint() qtcore.QSize {
+	m := l.ContentsMargins()
+	return qtcore.QSize{Width: m.Left + m.Right, Height: l.rowHeight() + m.Top + m.Bottom}
+}
+
+func (l *flowLayout) MinimumSize() qtcore.QSize { return l.SizeHint() }
+
+func (l *flowLayout) SetGeometry(r qtcore.QRect) {
+	l.Super().SetGeometry(r)
+	l.place(r.Width, &r)
 }
 
 // addWidget adds w, shown at once: Qt shows a widget added to one shown only
 // later, and until then the rows have no room for it.
-func (l *flowLayout) addWidget(w *qt.QWidget) {
+func (l *flowLayout) addWidget(w qtwidgets.QWidgetLike) {
 	l.AddWidget(w)
-	w.Show()
-}
-
-// giveSize returns s, which a constructor made, for an override to return,
-// deleting the one last returned, kept in last, as returned.give does for a
-// QVariant.
-func giveSize(last **qt.QSize, s *qt.QSize) *qt.QSize {
-	if *last != nil {
-		(*last).Delete()
-	}
-	*last = s
-	return s
-}
-
-// size is the size the layout asks for: its margins, and the height of a
-// row, as heightForWidth gives the height the items need.
-func (l *flowLayout) size() *qt.QSize {
-	m := l.ContentsMargins()
-	defer runtime.KeepAlive(m)
-	return qt.NewQSize2(m.Left()+m.Right(), l.rowHeight()+m.Top()+m.Bottom())
+	w.AsQWidget().Show()
 }
 
 // rowHeight is the height of the tallest item.
 func (l *flowLayout) rowHeight() int {
 	h := 0
 	for _, item := range l.items {
-		s := item.SizeHint()
-		h = max(h, s.Height())
-		runtime.KeepAlive(s)
+		h = max(h, item.SizeHint().Height)
 	}
 	return h
 }
@@ -91,27 +85,25 @@ func (l *flowLayout) rowHeight() int {
 // heightOfRows is the height that rows of the tallest item take.
 func (l *flowLayout) heightOfRows(rows int) int {
 	m := l.ContentsMargins()
-	defer runtime.KeepAlive(m)
-	return rows*l.rowHeight() + (rows-1)*l.Spacing() + m.Top() + m.Bottom()
+	return rows*l.rowHeight() + (rows-1)*l.Spacing() + m.Top + m.Bottom
 }
 
 // place works out where each item goes in a width, and returns the height
 // they take. With a rectangle, the layout's, it puts them there.
-func (l *flowLayout) place(width int, r *qt.QRect) int {
+func (l *flowLayout) place(width int, r *qtcore.QRect) int {
 	m := l.ContentsMargins()
-	defer runtime.KeepAlive(m)
-	left, top := m.Left(), m.Top()
+	left, top := m.Left, m.Top
 	if r != nil {
-		left += r.X()
-		top += r.Y()
+		left += r.X
+		top += r.Y
 	}
-	right := left + max(width-m.Left()-m.Right(), 1)
+	right := left + max(width-m.Left-m.Right, 1)
 	spacing := l.Spacing()
 
 	// Each row is found first, so that its items can be centred on its
 	// height.
 	type placed struct {
-		item *qt.QLayoutItem
+		item *qtwidgets.QLayoutItem
 		x, w int
 		h    int
 	}
@@ -120,9 +112,7 @@ func (l *flowLayout) place(width int, r *qt.QRect) int {
 	flush := func() {
 		for _, p := range row {
 			if r != nil {
-				g := qt.NewQRect4(p.x, y+(rowHeight-p.h)/2, p.w, p.h)
-				p.item.SetGeometry(g)
-				g.Delete()
+				p.item.SetGeometry(qtcore.QRect{X: p.x, Y: y + (rowHeight-p.h)/2, Width: p.w, Height: p.h})
 			}
 		}
 		row = row[:0]
@@ -132,8 +122,7 @@ func (l *flowLayout) place(width int, r *qt.QRect) int {
 			continue
 		}
 		s := item.SizeHint()
-		w, h := min(s.Width(), right-left), s.Height()
-		runtime.KeepAlive(s)
+		w, h := min(s.Width, right-left), s.Height
 		if x > left && x+w > right {
 			flush()
 			x, y, rowHeight = left, y+rowHeight+spacing, 0
@@ -143,5 +132,5 @@ func (l *flowLayout) place(width int, r *qt.QRect) int {
 		rowHeight = max(rowHeight, h)
 	}
 	flush()
-	return y + rowHeight - top + m.Top() + m.Bottom()
+	return y + rowHeight - top + m.Top + m.Bottom
 }

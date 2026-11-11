@@ -6,7 +6,8 @@ import (
 	"time"
 
 	"github.com/emersion/go-imap/v2"
-	"github.com/mappu/miqt/qt6/mainthread"
+	"github.com/nomad-software/qute"
+	"github.com/nomad-software/qute/qutetest"
 
 	"github.com/nomad-software/apemail/internal/remote/remotetest"
 	"github.com/nomad-software/apemail/internal/store"
@@ -26,7 +27,7 @@ func threeMessages(t *testing.T, s *remotetest.Server, folder string) {
 // shown.
 func selectRow(t *testing.T, w *Window, row int) {
 	t.Helper()
-	mainthread.Wait(func() { clickRow(w.list, row) })
+	qutetest.Run(t, func() { clickRow(w.list, row) })
 	wait(t, "the message", func() bool { return w.view.msg != nil })
 }
 
@@ -67,15 +68,15 @@ func TestDeleteSelectsNext(t *testing.T) {
 	asked := answer(t, false)
 
 	selectRow(t, w, 1)
-	mainthread.Wait(w.deleteMessages)
+	qute.PostSync(w.deleteMessages)
 	if got := shownAfter(t, w, "Third", "First"); got != "First" {
 		t.Errorf("shown %q after deleting Second", got)
 	}
-	mainthread.Wait(w.deleteMessages)
+	qute.PostSync(w.deleteMessages)
 	if got := shownAfter(t, w, "Third"); got != "Third" {
 		t.Errorf("shown %q after deleting First", got)
 	}
-	mainthread.Wait(w.deleteMessages)
+	qute.PostSync(w.deleteMessages)
 	if got := shownAfter(t, w); got != "" {
 		t.Errorf("shown %q with nothing left", got)
 	}
@@ -94,12 +95,12 @@ func TestDeleteForGoodSelectsNext(t *testing.T) {
 	threeMessages(t, s, "Trash")
 	w := newTestWindow(t, s)
 	wait(t, "the inbox", func() bool { return w.folder == "INBOX" })
-	mainthread.Wait(func() { w.folders.selectFolder(w.order[0], "Trash") })
+	qutetest.Run(t, func() { w.folders.selectFolder(w.order[0], "Trash") })
 	wait(t, "the trash", func() bool { return w.folder == "Trash" && len(w.list.rows) == 3 })
 
 	selectRow(t, w, 0)
 	answer(t, false)
-	mainthread.Wait(w.deleteMessages)
+	qute.PostSync(w.deleteMessages)
 	if got := shownAfter(t, w, "Third", "Second", "First"); got != "Third" {
 		t.Errorf("shown %q after saying no", got)
 	}
@@ -108,7 +109,7 @@ func TestDeleteForGoodSelectsNext(t *testing.T) {
 	}
 
 	answer(t, true)
-	mainthread.Wait(w.deleteMessages)
+	qute.PostSync(w.deleteMessages)
 	if got := shownAfter(t, w, "Second", "First"); got != "Second" {
 		t.Errorf("shown %q after deleting Third", got)
 	}
@@ -127,11 +128,11 @@ func TestArchiveSelectsNext(t *testing.T) {
 
 	// Two selected together: the one after the last of them is next.
 	selectRow(t, w, 0)
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		addRow(w.list, 1)
 	})
 	wait(t, "two selected", func() bool { return len(w.list.selectedUIDs()) == 2 })
-	mainthread.Wait(w.archiveMessages)
+	qute.PostSync(w.archiveMessages)
 	if got := shownAfter(t, w, "First"); got != "First" {
 		t.Errorf("shown %q after archiving", got)
 	}
@@ -146,7 +147,7 @@ func TestChosenSelectionIsKept(t *testing.T) {
 	wait(t, "the inbox", func() bool { return len(w.list.rows) == 3 && w.folder == "INBOX" })
 
 	selectRow(t, w, 0)
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		w.list.selectNextLater()
 		if w.list.next != w.list.rows[1].UID {
 			t.Errorf("next = %d", w.list.next)
@@ -169,7 +170,7 @@ func TestFoldersListedAgainKeepSelection(t *testing.T) {
 	wait(t, "the inbox", func() bool { return len(w.list.rows) == 3 && w.folder == "INBOX" })
 	selectRow(t, w, 1)
 
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		id := w.order[0]
 		folders := w.engines[id].Folders()
 		w.FoldersChanged(id, folders)

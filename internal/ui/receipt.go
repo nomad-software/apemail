@@ -25,15 +25,15 @@ func (w *Window) askReceipt(m *message.Message, uid uint32) {
 	if e == nil || !ok || len(m.ReceiptTo) == 0 || s.Has(mdnSent) || w.list.sent {
 		return
 	}
-	folder := w.folder
+	folder, validity := w.folder, w.list.uidValidity
 	subject := m.Subject
 	if subject == "" {
 		subject = "(no subject)"
 	}
 	question := fmt.Sprintf("%s asks to be told that you have read “%s”.\n\nSend a return receipt?",
 		message.FormatAddresses(m.ReceiptTo), subject)
-	if !confirm(w.QWidget, "Return Receipt", question) {
-		e.SetFlag(folder, []uint32{uid}, mdnSent, true, w.showError)
+	if !confirm(w, "Return Receipt", question) {
+		e.SetFlag(folder, validity, []uint32{uid}, mdnSent, true, w.showError)
 		return
 	}
 
@@ -56,6 +56,6 @@ func (w *Window) askReceipt(m *message.Message, uid uint32) {
 		// A receipt waiting in the outbox is as good as sent; the error
 		// says it will be.
 		w.showError(err)
-		e.SetFlag(folder, []uint32{uid}, mdnSent, true, w.showError)
+		e.SetFlag(folder, validity, []uint32{uid}, mdnSent, true, w.showError)
 	})
 }

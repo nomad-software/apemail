@@ -9,8 +9,10 @@ import (
 	"testing"
 
 	"github.com/emersion/go-imap/v2"
-	qt "github.com/mappu/miqt/qt6"
-	"github.com/mappu/miqt/qt6/mainthread"
+	"github.com/nomad-software/qute"
+	"github.com/nomad-software/qute/qtcore"
+	"github.com/nomad-software/qute/qtgui"
+	"github.com/nomad-software/qute/qutetest"
 
 	"github.com/nomad-software/apemail/internal/account"
 	"github.com/nomad-software/apemail/internal/addressbook"
@@ -33,7 +35,7 @@ func savedBook(t *testing.T, w *Window) *addressbook.Book {
 	w.contacts.pending.Wait()
 	var path string
 	var keys *crypt.Keys
-	mainthread.Wait(func() { path, keys = addressbook.Path(w.accountsDir()), w.keys })
+	qutetest.Run(t, func() { path, keys = addressbook.Path(w.accountsDir()), w.keys })
 	b, err := addressbook.Load(path, keys)
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +46,7 @@ func savedBook(t *testing.T, w *Window) *addressbook.Book {
 // addContact puts a contact in the window's address book.
 func addContact(t *testing.T, w *Window, name, email string) {
 	t.Helper()
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if err := w.changeAddressBook(func(b *addressbook.Book) (bool, error) {
 			return b.Add(addressbook.Contact{Name: name, Email: email})
 		}); err != nil {
@@ -73,7 +75,7 @@ func TestAddSender(t *testing.T) {
 	waitForBook(t, w)
 	showFirst(t, w)
 
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if w.view.addSender == nil || !w.view.addSender.IsEnabled() {
 			t.Fatal("the sender cannot be added")
 		}
@@ -91,7 +93,7 @@ func TestAddSender(t *testing.T) {
 	if len(b.Contacts) != 1 || b.Contacts[0] != (addressbook.Contact{Name: "Alice", Email: "alice@example.com"}) {
 		t.Errorf("saved %+v", b.Contacts)
 	}
-	path := mainthread.Wait2(func() string { return addressbook.Path(w.accountsDir()) })
+	path := onUI(func() string { return addressbook.Path(w.accountsDir()) })
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -101,18 +103,18 @@ func TestAddSender(t *testing.T) {
 	}
 	// It is in the accounts' folder, so that it moves with them, but not
 	// taken for an account.
-	if rel, err := filepath.Rel(mainthread.Wait2(w.accountsDir), path); err != nil || strings.HasPrefix(rel, "..") {
+	if rel, err := filepath.Rel(onUI(w.accountsDir), path); err != nil || strings.HasPrefix(rel, "..") {
 		t.Errorf("the address book is at %s", path)
 	}
-	if accounts, err := account.List(mainthread.Wait2(w.accountsDir), mainthread.Wait2(func() *crypt.Keys { return w.keys })); err != nil || len(accounts) != 1 {
+	if accounts, err := account.List(onUI(w.accountsDir), onUI(func() *crypt.Keys { return w.keys })); err != nil || len(accounts) != 1 {
 		t.Errorf("accounts = %+v, %v", accounts, err)
 	}
 
 	// The button of a sender already in the book is not enabled.
-	mainthread.Wait(func() { w.list.ClearSelection() })
+	qutetest.Run(t, func() { w.list.ClearSelection() })
 	wait(t, "nothing shown", func() bool { return w.view.msg == nil })
 	showFirst(t, w)
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if w.view.addSender.IsEnabled() {
 			t.Error("a sender in the address book can be added")
 		}
@@ -129,17 +131,17 @@ func TestUnreadableBook(t *testing.T) {
 	s.Append(t, "INBOX", "Bernoulli numbers")
 	w := newTestWindow(t, s)
 	waitForBook(t, w)
-	path := mainthread.Wait2(func() string { return addressbook.Path(w.accountsDir()) })
+	path := onUI(func() string { return addressbook.Path(w.accountsDir()) })
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte("not encrypted"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	mainthread.Wait(w.loadAddressBook)
+	qute.PostSync(w.loadAddressBook)
 	wait(t, "the error", func() bool { return strings.Contains(w.StatusBar().CurrentMessage(), "address book could not be read") })
 	showFirst(t, w)
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if w.contacts.book != nil || w.addressBook.IsEnabled() || w.view.addSender.IsEnabled() {
 			t.Error("an address book that could not be read is used")
 		}
@@ -166,7 +168,7 @@ func TestReplyAddsRecipients(t *testing.T) {
 	showFirst(t, w)
 
 	var c *composer
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		w.replyTo(false)
 		for c = range composers {
 		}
@@ -179,7 +181,7 @@ func TestReplyAddsRecipients(t *testing.T) {
 	}
 
 	c = openComposer(t, w)
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		c.subject.SetText("Not a reply")
 		c.send()
 	})
@@ -204,7 +206,7 @@ func TestCompleteAddress(t *testing.T) {
 	c := openComposer(t, w)
 	defer closeUnchanged(c)
 
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if len(c.completers) != 3 {
 			t.Fatalf("%d fields are completed", len(c.completers))
 		}
@@ -296,14 +298,14 @@ func TestAddressBookWindow(t *testing.T) {
 	wait(t, "the account", func() bool { return len(w.engines) == 1 })
 	waitForBook(t, w)
 
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		// It is between Archive and Delete, with a separator each
 		// side.
 		actions := w.buttons.QWidget.Actions()
-		i := slices.IndexFunc(actions, func(a *qt.QAction) bool { return a.UnsafePointer() == w.addressBook.UnsafePointer() })
+		i := slices.IndexFunc(actions, func(a *qtgui.QAction) bool { return a.Ptr() == w.addressBook.Ptr() })
 		if i < 2 || i+2 >= len(actions) ||
-			actions[i-2].UnsafePointer() != w.archive.UnsafePointer() || !actions[i-1].IsSeparator() ||
-			!actions[i+1].IsSeparator() || actions[i+2].UnsafePointer() != w.del.UnsafePointer() {
+			actions[i-2].Ptr() != w.archive.Ptr() || !actions[i-1].IsSeparator() ||
+			!actions[i+1].IsSeparator() || actions[i+2].Ptr() != w.del.Ptr() {
 			t.Error("the address book is not between Archive and Delete")
 		}
 		if got := w.addressBook.Shortcut().ToString(); got != "Ctrl+Shift+B" {
@@ -317,11 +319,11 @@ func TestAddressBookWindow(t *testing.T) {
 			t.Fatal("the address book did not open")
 		}
 	})
-	b := mainthread.Wait2(func() *bookWindow { return w.bookDialog })
+	b := onUI(func() *bookWindow { return w.bookDialog })
 
 	answerContact := func(open func(), name, email string) {
 		t.Helper()
-		mainthread.Wait(func() {
+		qutetest.Run(t, func() {
 			open()
 			b.dialog.name.SetText(name)
 			b.dialog.email.SetText(email)
@@ -330,7 +332,7 @@ func TestAddressBookWindow(t *testing.T) {
 	}
 	answerContact(b.newContact, "Grace Hopper", "grace@example.com")
 	answerContact(b.newContact, "", "alan@example.com")
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if b.list.TopLevelItemCount() != 2 || b.list.TopLevelItem(0).Text(1) != "alan@example.com" || b.list.TopLevelItem(1).Text(0) != "Grace Hopper" {
 			t.Errorf("listed %+v", b.contacts)
 		}
@@ -350,7 +352,7 @@ func TestAddressBookWindow(t *testing.T) {
 	// Removing a contact is asked about, and nothing is removed if the
 	// user says no.
 	asked := answer(t, false)
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		b.list.SetCurrentItem(b.list.TopLevelItem(1))
 		b.removeSelected()
 		if *asked != 1 || len(w.contacts.book.Contacts) != 2 {
@@ -358,7 +360,7 @@ func TestAddressBookWindow(t *testing.T) {
 		}
 	})
 	answer(t, true)
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		b.removeSelected()
 		if got := emails(w.contacts.book.Contacts); !slices.Equal(got, []string{"alan@example.com"}) {
 			t.Errorf("contacts = %q", got)
@@ -368,7 +370,7 @@ func TestAddressBookWindow(t *testing.T) {
 		t.Errorf("saved %q", got)
 	}
 
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		b.list.SetCurrentItem(b.list.TopLevelItem(0))
 		b.writeSelected()
 		var c *composer
@@ -385,7 +387,7 @@ func TestAddressBookWindow(t *testing.T) {
 
 		// It opens once, and closes with the main window.
 		w.showAddressBook()
-		if w.bookDialog != b || b.ParentWidget().UnsafePointer() != w.QWidget.UnsafePointer() {
+		if w.bookDialog != b || b.ParentWidget().Ptr() != w.QWidget.Ptr() {
 			t.Error("a second address book was opened")
 		}
 	})
@@ -407,7 +409,7 @@ func TestAddReplyTo(t *testing.T) {
 	waitForBook(t, w)
 	showFirst(t, w)
 
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if w.view.addSender == nil || !w.view.addSender.IsEnabled() {
 			t.Fatal("the address replies go to cannot be added")
 		}
@@ -423,7 +425,7 @@ func TestAddReplyTo(t *testing.T) {
 			}
 			beside := false
 			for i := range item.Layout().Count() {
-				if wd := item.Layout().ItemAt(i).Widget(); wd != nil && wd.UnsafePointer() == w.view.addSender.UnsafePointer() {
+				if wd := item.Layout().ItemAt(i).Widget(); wd != nil && wd.Ptr() == w.view.addSender.Ptr() {
 					beside = true
 				}
 			}
@@ -451,11 +453,11 @@ func TestDoubleClickContact(t *testing.T) {
 	addContact(t, w, "Grace Hopper", "grace@example.com")
 	addContact(t, w, "Alan Turing", "alan@example.com")
 
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		w.showAddressBook()
 		b := w.bookDialog
 		// The second row, as the view reports a double click on it.
-		b.list.ItemDoubleClicked(b.list.TopLevelItem(1), 0)
+		b.list.EmitItemDoubleClicked(b.list.TopLevelItem(1), 0)
 		var c *composer
 		for c = range composers {
 		}
@@ -484,7 +486,7 @@ func TestSortContacts(t *testing.T) {
 	addContact(t, w, "Alan Turing", "turing@example.com")
 	addContact(t, w, "Ada Lovelace", "Zed@example.com")
 
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		w.showAddressBook()
 		b := w.bookDialog
 		defer b.Close()
@@ -499,20 +501,20 @@ func TestSortContacts(t *testing.T) {
 		if got := listed(); !slices.Equal(got, []string{"Zed@example.com", "turing@example.com", "hopper@example.com"}) {
 			t.Errorf("by name: %q", got)
 		}
-		if !header.IsSortIndicatorShown() || header.SortIndicatorSection() != 0 || header.SortIndicatorOrder() != qt.AscendingOrder {
+		if !header.IsSortIndicatorShown() || header.SortIndicatorSection() != 0 || header.SortIndicatorOrder() != qtcore.AscendingOrder {
 			t.Error("the header does not show the list sorted by name")
 		}
 
 		// The contact selected stays selected as the order changes.
 		b.list.SetCurrentItem(b.list.TopLevelItem(1))
-		header.SetSortIndicator(1, qt.AscendingOrder)
+		header.SetSortIndicator(1, qtcore.AscendingOrder)
 		if got := listed(); !slices.Equal(got, []string{"hopper@example.com", "turing@example.com", "Zed@example.com"}) {
 			t.Errorf("by address: %q", got)
 		}
 		if c, ok := b.selected(); !ok || c.Email != "turing@example.com" {
 			t.Errorf("selected %+v, %v", c, ok)
 		}
-		header.SetSortIndicator(1, qt.DescendingOrder)
+		header.SetSortIndicator(1, qtcore.DescendingOrder)
 		if got := listed(); !slices.Equal(got, []string{"Zed@example.com", "turing@example.com", "hopper@example.com"}) {
 			t.Errorf("by address, descending: %q", got)
 		}

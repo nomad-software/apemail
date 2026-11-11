@@ -5,8 +5,9 @@ import (
 	"testing"
 
 	"github.com/emersion/go-imap/v2"
-	qt "github.com/mappu/miqt/qt6"
-	"github.com/mappu/miqt/qt6/mainthread"
+	"github.com/nomad-software/qute/qtgui"
+	"github.com/nomad-software/qute/qtwidgets"
+	"github.com/nomad-software/qute/qutetest"
 
 	"github.com/nomad-software/apemail/internal/remote/remotetest"
 	"github.com/nomad-software/apemail/internal/settings"
@@ -31,7 +32,7 @@ func someFont(t *testing.T, f *fontField) string {
 // the system unless it is changed, chooses what is changed, and goes back
 // to the system's with Default.
 func TestFontField(t *testing.T) {
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		f := newFontField(settings.Settings{})
 		if family, size := f.chosen(); family != "" || size != 0 {
 			t.Errorf("unchanged = %q, %d", family, size)
@@ -41,12 +42,12 @@ func TestFontField(t *testing.T) {
 		}
 
 		// Any font can be chosen, not only those that are monospaced.
-		if f.familyBox.FontFilters() != qt.QFontComboBox__AllFonts {
+		if f.familyBox.FontFilters() != qtwidgets.QFontComboBoxAllFonts {
 			t.Errorf("filters = %v", f.familyBox.FontFilters())
 		}
 		proportional := ""
 		for i := range f.familyBox.Count() {
-			if name := f.familyBox.ItemText(i); !qt.QFontDatabase_IsFixedPitch(name) {
+			if name := f.familyBox.ItemText(i); !qtgui.QFontDatabaseIsFixedPitch(name) {
 				proportional = name
 				break
 			}
@@ -54,14 +55,14 @@ func TestFontField(t *testing.T) {
 		if proportional == "" {
 			t.Error("no font that is not monospaced is offered")
 		} else {
-			f.familyBox.SetCurrentFont(qt.NewQFont2(proportional))
+			f.familyBox.SetCurrentFont(qtgui.NewQFontWithFamily(proportional))
 			if got, _ := f.chosen(); got != proportional {
 				t.Errorf("chose %q, not %q", got, proportional)
 			}
 		}
 
 		family := someFont(t, f)
-		f.familyBox.SetCurrentFont(qt.NewQFont2(family))
+		f.familyBox.SetCurrentFont(qtgui.NewQFontWithFamily(family))
 		f.sizeBox.SetValue(14)
 		if got, size := f.chosen(); got != family || size != 14 {
 			t.Errorf("chosen = %q, %d, want %q, 14", got, size, family)
@@ -90,10 +91,10 @@ func TestSourceFont(t *testing.T) {
 	w := newTestWindow(t, s)
 	wait(t, "the account", func() bool { return len(w.engines) == 1 })
 
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		src := w.showSource("A message", []byte("Subject: A message\r\n\r\nBody\r\n"))
 		defer src.Close()
-		system := qt.QFontDatabase_SystemFont(qt.QFontDatabase__FixedFont)
+		system := qtgui.QFontDatabaseGetSystemFont(qtgui.QFontDatabaseFixedFont)
 		if src.Font().Family() != system.Family() {
 			t.Errorf("font = %q, want the system's %q", src.Font().Family(), system.Family())
 		}
@@ -119,15 +120,15 @@ func TestSourceFont(t *testing.T) {
 // TestSettingsTabs checks that the settings are in tabs, as triggerapi's
 // are, with the code font on a tab of its own.
 func TestSettingsTabs(t *testing.T) {
-	mainthread.Wait(func() {
-		parent := qt.NewQWidget2()
+	qutetest.Run(t, func() {
+		parent := qtwidgets.NewQWidget(nil)
 		defer parent.DeleteLater()
 		d := newSettingsDialog(parent, settings.Settings{}, "/accounts", func(settings.Settings) {})
 		defer d.Reject()
-		var tabs *qt.QTabWidget
+		var tabs *qtwidgets.QTabWidget
 		for _, child := range d.Children() {
 			if child.MetaObject().ClassName() == "QTabWidget" {
-				tabs = qt.UnsafeNewQTabWidget(child.UnsafePointer())
+				tabs = qtwidgets.QTabWidgetCast(child)
 			}
 		}
 		if tabs == nil {
@@ -145,7 +146,7 @@ func TestSettingsTabs(t *testing.T) {
 		var fonts []string
 		for _, child := range tabs.Widget(1).Children() {
 			if child.MetaObject().ClassName() == "QGroupBox" {
-				fonts = append(fonts, qt.UnsafeNewQGroupBox(child.UnsafePointer()).Title())
+				fonts = append(fonts, qtwidgets.QGroupBoxCast(child).Title())
 			}
 		}
 		if !slices.Equal(fonts, []string{"Fonts", "Theme"}) {

@@ -6,14 +6,14 @@ import (
 	"testing"
 	"time"
 
-	qt "github.com/mappu/miqt/qt6"
+	"github.com/nomad-software/qute/qtwidgets"
 
 	"github.com/nomad-software/apemail/internal/store"
 )
 
 // collecting runs the garbage collector all the while until the test ends,
-// so that a Qt value miqt frees itself which is still in use is freed while
-// it is, and crashes, rather than once in a long while.
+// so that a Qt value Go made, were it freed while Qt still used it, would be
+// freed at once, and crash, rather than once in a long while.
 func collecting(t *testing.T) {
 	stop := make(chan struct{})
 	done := make(chan struct{})
@@ -35,10 +35,8 @@ func collecting(t *testing.T) {
 }
 
 // drawn draws the widget, and reports if it was.
-func drawn(w *qt.QWidget) bool {
-	pixmap := w.Grab()
-	defer runtime.KeepAlive(pixmap)
-	return !pixmap.IsNull()
+func drawn(w qtwidgets.QWidgetLike) bool {
+	return !w.AsQWidget().Grab().IsNull()
 }
 
 // TestListWhileCollecting draws the message list over and over while the
@@ -59,10 +57,10 @@ func TestListWhileCollecting(t *testing.T) {
 		ix.Put(s)
 	}
 	collecting(t)
-	withList(func(l *messageList) {
+	withList(t, func(l *messageList) {
 		l.setIndex(ix, false)
 		for range 150 {
-			if !drawn(l.QWidget) {
+			if !drawn(l) {
 				t.Fatal("the list was not drawn")
 			}
 		}

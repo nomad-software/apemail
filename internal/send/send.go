@@ -119,7 +119,10 @@ func Send(s account.Server, from string, to []string, raw []byte, dsn bool) erro
 	if err := sendMail(c, from, to, raw, dsn); err != nil {
 		return fmt.Errorf("sending: %w", err)
 	}
-	return c.Quit()
+	// The server has taken the message, so it has been sent whatever
+	// becomes of the goodbye: an error here would have it sent again.
+	c.Quit()
+	return nil
 }
 
 // sendMail sends the message, as smtp.Client.SendMail does, asking for

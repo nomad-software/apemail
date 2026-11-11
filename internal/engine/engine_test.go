@@ -2,6 +2,8 @@ package engine_test
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -16,6 +18,7 @@ import (
 	"github.com/nomad-software/apemail/internal/engine"
 	"github.com/nomad-software/apemail/internal/remote/condstoretest"
 	"github.com/nomad-software/apemail/internal/remote/remotetest"
+	"github.com/nomad-software/apemail/internal/send"
 	"github.com/nomad-software/apemail/internal/send/sendtest"
 	"github.com/nomad-software/apemail/internal/store"
 )
@@ -143,12 +146,18 @@ func start(t *testing.T, s *remotetest.Server, change ...func(*account.Account))
 // openStore opens an empty local copy.
 func openStore(t *testing.T) *store.Store {
 	t.Helper()
+	return openStoreIn(t, t.TempDir())
+}
+
+// openStoreIn opens the local copy kept in dir.
+func openStoreIn(t *testing.T, dir string) *store.Store {
+	t.Helper()
 	public, private := crypttest.Pair(t, t.TempDir(), "id", "")
 	keys, err := crypt.Open(public, private, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := store.Open(t.TempDir(), keys)
+	st, err := store.Open(dir, keys)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +198,7 @@ func TestSyncAndOpen(t *testing.T) {
 	ix := l.index("INBOX")
 	uid := ix.Messages[0].UID
 	got := make(chan string, 1)
-	e.Message("INBOX", uid, func(raw []byte, err error) {
+	e.Message("INBOX", e.Validity("INBOX"), uid, func(raw []byte, err error) {
 		if err != nil {
 			t.Error(err)
 		}
@@ -211,7 +220,7 @@ func TestSyncAndOpen(t *testing.T) {
 
 	// Moving a message to the trash takes it out of the inbox here and
 	// there.
-	if err := result(t, func(done func(error)) { e.Move("INBOX", []uint32{uid}, "Trash", done) }); err != nil {
+	if err := result(t, func(done func(error)) { e.Move("INBOX", e.Validity("INBOX"), []uint32{uid}, "Trash", done) }); err != nil {
 		t.Fatal(err)
 	}
 	if subjects(l.index("INBOX")) != "second,third" || kept(st, "INBOX", uid) {
@@ -223,7 +232,7 @@ func TestSyncAndOpen(t *testing.T) {
 
 	// Marking a message as read.
 	if err := result(t, func(done func(error)) {
-		e.SetFlag("INBOX", []uint32{l.index("INBOX").Messages[0].UID}, `\Seen`, true, done)
+		e.SetFlag("INBOX", e.Validity("INBOX"), []uint32{l.index("INBOX").Messages[0].UID}, `\Seen`, true, done)
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -244,6 +253,27 @@ func TestOutbox(t *testing.T) {
 	}
 	if pending, _ := st.Pending(); len(pending) != 1 || pending[0].Use != "sent" || !pending[0].DSN {
 		t.Errorf("pending = %+v", pending)
+	}
+}
+
+// TestNeitherSentNorKept checks that mail which can be neither sent nor kept
+// in the outbox is not said to be waiting to be sent, which would have the
+// window it was written in closed, and the message lost.
+func TestNeitherSentNorKept(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus), "Sent")
+	dir := t.TempDir()
+	// A file where the outbox would be keeps anything from being kept.
+	if err := os.WriteFile(filepath.Join(dir, "outbox"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st := openStoreIn(t, dir)
+	e, _ := startOn(t, st, s.Account())
+	wait(t, "the folders", func() bool { return listed(e, "Sent") })
+	err := result(t, func(done func(error)) {
+		e.Send([]byte("Subject: x\r\n\r\nx"), []string{"bob@example.com"}, false, done)
+	})
+	if err == nil || errors.Is(err, send.ErrUnreachable) || !strings.Contains(err.Error(), "could not be kept") {
+		t.Errorf("err = %v", err)
 	}
 }
 
@@ -314,7 +344,7 @@ func TestFlagSetWhileSyncing(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the sync did not ask for the new message")
 	}
-	if err := result(t, func(done func(error)) { e.SetFlag("INBOX", []uint32{uid}, `\Seen`, true, done) }); err != nil {
+	if err := result(t, func(done func(error)) { e.SetFlag("INBOX", e.Validity("INBOX"), []uint32{uid}, `\Seen`, true, done) }); err != nil {
 		t.Fatal(err)
 	}
 	release()
@@ -392,7 +422,7 @@ func TestIndexSavedLater(t *testing.T) {
 	wait(t, "the index saved", func() bool { return subjects(savedIndex(t, st, "INBOX")) == "first" })
 	uid := l.index("INBOX").Messages[0].UID
 
-	if err := result(t, func(done func(error)) { e.SetFlag("INBOX", []uint32{uid}, `\Seen`, true, done) }); err != nil {
+	if err := result(t, func(done func(error)) { e.SetFlag("INBOX", e.Validity("INBOX"), []uint32{uid}, `\Seen`, true, done) }); err != nil {
 		t.Fatal(err)
 	}
 	if !l.index("INBOX").Messages[0].Has(`\Seen`) {
@@ -412,12 +442,70 @@ func TestIndexSavedOnClose(t *testing.T) {
 	e, l, st := start(t, s)
 	wait(t, "the inbox", func() bool { return subjects(l.index("INBOX")) == "first" })
 	uid := l.index("INBOX").Messages[0].UID
-	if err := result(t, func(done func(error)) { e.SetFlag("INBOX", []uint32{uid}, `\Flagged`, true, done) }); err != nil {
+	if err := result(t, func(done func(error)) { e.SetFlag("INBOX", e.Validity("INBOX"), []uint32{uid}, `\Flagged`, true, done) }); err != nil {
 		t.Fatal(err)
 	}
 	e.Close()
 	if ix := savedIndex(t, st, "INBOX"); len(ix.Messages) != 1 || !ix.Messages[0].Has(`\Flagged`) {
 		t.Errorf("saved %+v", ix.Messages)
+	}
+}
+
+// TestStaleUIDsRefused checks that what is asked of messages by the UIDs of
+// a folder that has been numbered anew since they were listed is refused,
+// though the engine knows the folder as it is numbered now: the UIDs may be
+// those of other messages. Nothing is asked of the server about them.
+func TestStaleUIDsRefused(t *testing.T) {
+	s := condstoretest.Start(t)
+	one := s.Append("one")
+	e, l := startOn(t, openStore(t), s.Account())
+	wait(t, "the inbox", func() bool { return subjects(l.index("INBOX")) == "one" })
+	// What the user sees, and chooses from.
+	seen := l.index("INBOX").UIDValidity
+	if err := result(t, func(done func(error)) { e.SetFlag("INBOX", seen, []uint32{one}, `\Flagged`, true, done) }); err != nil {
+		t.Fatal(err)
+	}
+	opened := make(chan error, 1)
+	e.Message("INBOX", seen, one, func(_ []byte, err error) { opened <- err })
+	if err := recv(t, opened); err != nil {
+		t.Fatal(err)
+	}
+
+	s.Renumber()
+	e.Refresh("")
+	wait(t, "the inbox numbered anew", func() bool {
+		ix := l.index("INBOX")
+		return ix.UIDValidity != seen && len(ix.Messages) == 1
+	})
+	renumbered := l.index("INBOX").Messages[0].UID
+	s.Commands()
+
+	for what, op := range map[string]func(done func(error)){
+		"SetFlag": func(done func(error)) { e.SetFlag("INBOX", seen, []uint32{one}, `\Seen`, true, done) },
+		"Move":    func(done func(error)) { e.Move("INBOX", seen, []uint32{one}, "Elsewhere", done) },
+		"Trash":   func(done func(error)) { e.Trash("INBOX", seen, []uint32{one}, done) },
+		"Archive": func(done func(error)) { e.Archive("INBOX", seen, []uint32{one}, done) },
+		"Message": func(done func(error)) { e.Message("INBOX", seen, one, func(_ []byte, err error) { done(err) }) },
+	} {
+		if err := result(t, op); err == nil || !strings.Contains(err.Error(), "numbered anew") {
+			t.Errorf("%s by the UIDs of a folder numbered anew: %v", what, err)
+		}
+	}
+	for _, cmd := range s.Commands() {
+		if strings.HasPrefix(cmd, "UID ") {
+			t.Errorf("the server was sent %s", cmd)
+		}
+	}
+	if flags := s.Flags(renumbered); slices.Contains(flags, `\Seen`) {
+		t.Errorf("the flags of the message = %v", flags)
+	}
+	// By the UIDs it has now, it is done.
+	now := l.index("INBOX").UIDValidity
+	if err := result(t, func(done func(error)) { e.SetFlag("INBOX", now, []uint32{renumbered}, `\Seen`, true, done) }); err != nil {
+		t.Error(err)
+	}
+	if flags := s.Flags(renumbered); !slices.Contains(flags, `\Seen`) {
+		t.Errorf("the flags of the message = %v", flags)
 	}
 }
 
@@ -452,7 +540,7 @@ func TestCondStoreKept(t *testing.T) {
 	}
 
 	// The user's own change is one too.
-	if err := result(t, func(done func(error)) { e.SetFlag("INBOX", []uint32{two}, `\Flagged`, true, done) }); err != nil {
+	if err := result(t, func(done func(error)) { e.SetFlag("INBOX", e.Validity("INBOX"), []uint32{two}, `\Flagged`, true, done) }); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Contains(s.Flags(two), `\Flagged`) {
@@ -532,7 +620,7 @@ func TestGoneFolderForgotten(t *testing.T) {
 	wait(t, "the old folder", func() bool { return subjects(l.index("Old")) == "kept" })
 	uid := l.index("Old").Messages[0].UID
 	// The change waits to be saved.
-	if err := result(t, func(done func(error)) { e.SetFlag("Old", []uint32{uid}, `\Flagged`, true, done) }); err != nil {
+	if err := result(t, func(done func(error)) { e.SetFlag("Old", e.Validity("Old"), []uint32{uid}, `\Flagged`, true, done) }); err != nil {
 		t.Fatal(err)
 	}
 
@@ -698,7 +786,7 @@ func TestTrash(t *testing.T) {
 	wait(t, "the inbox", func() bool { return subjects(l.index("INBOX")) == "first" })
 	uids := []uint32{l.index("INBOX").Messages[0].UID}
 
-	if err := result(t, func(done func(error)) { e.Trash("INBOX", uids, done) }); err != nil {
+	if err := result(t, func(done func(error)) { e.Trash("INBOX", e.Validity("INBOX"), uids, done) }); err != nil {
 		t.Fatal(err)
 	}
 	wait(t, "the trash", func() bool { return subjects(l.index("Trash")) == "first" })
@@ -707,12 +795,16 @@ func TestTrash(t *testing.T) {
 	s.Append(t, "INBOX", "second")
 	e.Refresh("INBOX")
 	wait(t, "the inbox", func() bool { return subjects(l.index("INBOX")) == "second" })
-	if err := result(t, func(done func(error)) { e.Delete("INBOX", []uint32{l.index("INBOX").Messages[0].UID}, done) }); err == nil {
+	if err := result(t, func(done func(error)) {
+		e.Delete("INBOX", e.Validity("INBOX"), []uint32{l.index("INBOX").Messages[0].UID}, done)
+	}); err == nil {
 		t.Error("mail outside the trash was deleted for good")
 	}
 
 	// Mail in the trash is.
-	if err := result(t, func(done func(error)) { e.Delete("Trash", []uint32{l.index("Trash").Messages[0].UID}, done) }); err != nil {
+	if err := result(t, func(done func(error)) {
+		e.Delete("Trash", e.Validity("Trash"), []uint32{l.index("Trash").Messages[0].UID}, done)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if msgs := s.Messages(t, "Trash"); len(msgs) != 0 {
@@ -735,10 +827,10 @@ func TestMissingFoldersAreMade(t *testing.T) {
 	ix := l.index("INBOX")
 	first, second := ix.Messages[0].UID, ix.Messages[1].UID
 
-	if err := result(t, func(done func(error)) { e.Archive("INBOX", []uint32{first}, done) }); err != nil {
+	if err := result(t, func(done func(error)) { e.Archive("INBOX", e.Validity("INBOX"), []uint32{first}, done) }); err != nil {
 		t.Fatal(err)
 	}
-	if err := result(t, func(done func(error)) { e.Trash("INBOX", []uint32{second}, done) }); err != nil {
+	if err := result(t, func(done func(error)) { e.Trash("INBOX", e.Validity("INBOX"), []uint32{second}, done) }); err != nil {
 		t.Fatal(err)
 	}
 	saved := make(chan engine.Saved, 1)
@@ -779,10 +871,10 @@ func TestUsualNamesAreUsed(t *testing.T) {
 	wait(t, "the folders", func() bool { return len(e.Folders()) == 3 && subjects(l.index("INBOX")) == "first,second" })
 	ix := l.index("INBOX")
 
-	if err := result(t, func(done func(error)) { e.Archive("INBOX", []uint32{ix.Messages[0].UID}, done) }); err != nil {
+	if err := result(t, func(done func(error)) { e.Archive("INBOX", e.Validity("INBOX"), []uint32{ix.Messages[0].UID}, done) }); err != nil {
 		t.Fatal(err)
 	}
-	if err := result(t, func(done func(error)) { e.Trash("INBOX", []uint32{ix.Messages[1].UID}, done) }); err != nil {
+	if err := result(t, func(done func(error)) { e.Trash("INBOX", e.Validity("INBOX"), []uint32{ix.Messages[1].UID}, done) }); err != nil {
 		t.Fatal(err)
 	}
 	if msgs := s.Messages(t, "Archives/2006"); len(msgs) != 1 {
@@ -831,7 +923,7 @@ func TestArchiveByYear(t *testing.T) {
 		uids = append(uids, m.UID)
 	}
 
-	if err := result(t, func(done func(error)) { e.Archive("INBOX", uids, done) }); err != nil {
+	if err := result(t, func(done func(error)) { e.Archive("INBOX", e.Validity("INBOX"), uids, done) }); err != nil {
 		t.Fatal(err)
 	}
 	// The server of the tests separates folders with /.
@@ -855,7 +947,7 @@ func TestArchiveByYear(t *testing.T) {
 	e.Refresh("Archive/2024")
 	wait(t, "the 2024 index", func() bool { ix := l.index("Archive/2024"); return ix != nil && len(ix.Messages) == 1 })
 	if err := result(t, func(done func(error)) {
-		e.Archive("Archive/2024", []uint32{l.index("Archive/2024").Messages[0].UID}, done)
+		e.Archive("Archive/2024", e.Validity("Archive/2024"), []uint32{l.index("Archive/2024").Messages[0].UID}, done)
 	}); err == nil {
 		t.Error("archived mail was archived again")
 	}
@@ -895,7 +987,9 @@ func TestArchiveChosen(t *testing.T) {
 		t.Errorf("the archive is %q", got)
 	}
 
-	if err := result(t, func(done func(error)) { e.Archive("INBOX", []uint32{l.index("INBOX").Messages[0].UID}, done) }); err != nil {
+	if err := result(t, func(done func(error)) {
+		e.Archive("INBOX", e.Validity("INBOX"), []uint32{l.index("INBOX").Messages[0].UID}, done)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if msgs := s.Messages(t, "Archives"); len(msgs) != 1 || msgs[0].Subject != "hello" {

@@ -277,7 +277,10 @@ func (s *Server) Messages(t *testing.T, folder string) []Message {
 	if data.NumMessages == 0 {
 		return nil
 	}
-	all := imap.SeqSet{}
+	// By UID, as the client asks: a message another client expunges
+	// meanwhile is then left out, or answered with nothing of it, rather
+	// than taken for another by its number.
+	all := imap.UIDSet{}
 	all.AddRange(1, 0)
 	whole := &imap.FetchItemBodySection{Peek: true}
 	options := &imap.FetchOptions{UID: true, Flags: true, Envelope: true, BodySection: []*imap.FetchItemBodySection{whole}}
@@ -287,6 +290,10 @@ func (s *Server) Messages(t *testing.T, folder string) []Message {
 	}
 	var out []Message
 	for _, m := range msgs {
+		if m.UID == 0 || m.Envelope == nil {
+			// It went while it was being fetched.
+			continue
+		}
 		out = append(out, Message{UID: uint32(m.UID), Subject: m.Envelope.Subject, Flags: m.Flags, Raw: m.FindBodySection(whole)})
 	}
 	c.Logout().Wait()

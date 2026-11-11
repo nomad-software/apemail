@@ -4,7 +4,8 @@ import (
 	"strings"
 	"unicode/utf16"
 
-	qt "github.com/mappu/miqt/qt6"
+	"github.com/nomad-software/qute/qtcore"
+	"github.com/nomad-software/qute/qtwidgets"
 )
 
 // addressCompleter offers the contacts of the address book for the address
@@ -12,19 +13,19 @@ import (
 // one the cursor is in that is completed, rather than the whole field as a
 // QLineEdit's own completer would.
 type addressCompleter struct {
-	field     *qt.QLineEdit
-	completer *qt.QCompleter
+	field     *qtwidgets.QLineEdit
+	completer *qtwidgets.QCompleter
 }
 
 // newAddressCompleter completes the addresses typed in the field from the
 // model, which has a contact as written in the field in each row. Any part
 // of a name or address finds it.
-func newAddressCompleter(field *qt.QLineEdit, model *qt.QStringListModel) *addressCompleter {
-	a := &addressCompleter{field: field, completer: qt.NewQCompleter5(model.QAbstractItemModel, field.QObject)}
-	a.completer.SetWidget(field.QWidget)
-	a.completer.SetCompletionMode(qt.QCompleter__PopupCompletion)
-	a.completer.SetCaseSensitivity(qt.CaseInsensitive)
-	a.completer.SetFilterMode(qt.MatchContains)
+func newAddressCompleter(field *qtwidgets.QLineEdit, model *qtcore.QStringListModel) *addressCompleter {
+	a := &addressCompleter{field: field, completer: qtwidgets.NewQCompleterWithModel(model, field)}
+	a.completer.SetWidget(field)
+	a.completer.SetCompletionMode(qtwidgets.QCompleterPopupCompletion)
+	a.completer.SetCaseSensitivity(qtcore.CaseInsensitive)
+	a.completer.SetFilterMode(qtcore.MatchContains)
 	field.OnTextEdited(func(string) { a.suggest() })
 	a.completer.OnActivated(a.insert)
 	return a

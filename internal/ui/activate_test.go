@@ -4,8 +4,8 @@ import (
 	"os"
 	"testing"
 
-	qt "github.com/mappu/miqt/qt6"
-	"github.com/mappu/miqt/qt6/mainthread"
+	"github.com/nomad-software/qute/qtcore"
+	"github.com/nomad-software/qute/qutetest"
 )
 
 // TestActivate checks that the window is brought back when the program is
@@ -13,11 +13,11 @@ import (
 // was, with the desktop's token in the environment for Qt.
 func TestActivate(t *testing.T) {
 	t.Setenv("XDG_ACTIVATION_TOKEN", "")
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		w := NewWindow(Files{Settings: t.TempDir() + "/settings.json", Accounts: t.TempDir()})
 		defer w.DeleteLater()
 
-		w.SetWindowState(qt.WindowMaximized | qt.WindowMinimized)
+		w.SetWindowState(qtcore.WindowMaximized | qtcore.WindowMinimized)
 		w.Show()
 		w.Activate("token-1")
 		if w.IsMinimized() || !w.IsMaximized() || !w.IsVisible() {

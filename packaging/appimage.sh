@@ -1,28 +1,30 @@
 #!/bin/sh
 # Builds ApeMail and packs it, with the Qt libraries it needs, into an
 # AppImage: one file that runs on most Linux systems without installing
-# anything. The result is build/ApeMail-<version>-x86_64.AppImage.
+# anything. It is built in a folder of its own in /tmp, which is removed
+# when it is done, and only the AppImage, ApeMail-<version>-x86_64.AppImage,
+# is left, in the folder of the project.
 #
-# The GitHub workflow runs it on Ubuntu 24.04, with Ubuntu's Qt, as an
-# AppImage runs on systems as new as the one it was built on or newer, not
-# on older ones. It needs Go, a
-# C++ compiler, pkg-config, the Qt 6 development files with qmake, curl and
-# file. The Qt that pkg-config finds is the one built with, with Qt SVG, which
-# draws the icons, and Qt WebEngine, which shows messages, with the process it
-# runs pages in (QtWebEngineProcess), and QMAKE, if set, says which qmake
-# belongs to it.
+# The GitHub workflow runs it on Ubuntu 24.04, with Qt's own build of Qt, as
+# an AppImage runs on systems as new as the one it was built on or newer, not
+# on older ones, and the bindings need a newer Qt than Ubuntu's. It needs Go,
+# a C++ compiler, pkg-config, the development files of Qt 6.12 or later with
+# qmake, curl and file. The Qt that pkg-config finds is the one built with,
+# with Qt SVG, which draws the icons, and Qt WebEngine, which shows messages,
+# with the process it runs pages in (QtWebEngineProcess), and QMAKE, if set,
+# says which qmake belongs to it.
 set -eu
 
 cd "$(dirname "$0")/.."
 
 VERSION="${VERSION:-$(git describe --tags --always 2>/dev/null || echo dev)}"
 ARCH=x86_64
-BUILD=build
+BUILD="$(mktemp -d /tmp/apemail-appimage.XXXXXX)"
+trap 'rm -rf "$BUILD"' EXIT
 APPDIR="$BUILD/AppDir"
 TOOLS="$BUILD/tools"
 OUTPUT="ApeMail-$VERSION-$ARCH.AppImage"
 
-rm -rf "$APPDIR"
 mkdir -p "$TOOLS"
 
 echo "Building ApeMail $VERSION"
@@ -61,7 +63,7 @@ export QMAKE="${QMAKE:-$(command -v qmake6 || command -v qmake)}"
 # a qmake which says that is where the plugins are.
 PLUGINS="$("$QMAKE" -query QT_INSTALL_PLUGINS)"
 if [ -n "$(find "$PLUGINS" -mindepth 2 -maxdepth 2 -name '*.so' ! -name 'lib*' | head -n 1)" ]; then
-	STAGE="$PWD/$BUILD/qt-plugins"
+	STAGE="$BUILD/qt-plugins"
 	rm -rf "$STAGE"
 	for dir in "$PLUGINS"/*/; do
 		name="$(basename "$dir")"
@@ -72,7 +74,7 @@ if [ -n "$(find "$PLUGINS" -mindepth 2 -maxdepth 2 -name '*.so' ! -name 'lib*' |
 	done
 
 	REAL_QMAKE="$QMAKE"
-	QMAKE="$PWD/$TOOLS/qmake"
+	QMAKE="$TOOLS/qmake"
 	cat > "$QMAKE" <<WRAPPER
 #!/bin/sh
 "$REAL_QMAKE" "\$@" | sed "s|$PLUGINS|$STAGE|"
@@ -159,7 +161,6 @@ if [ "$missing" -ne 0 ]; then
 fi
 
 "$TOOLS/linuxdeploy-$ARCH.AppImage" --appdir "$APPDIR" --output appimage
-mv "$OUTPUT" "$BUILD/$OUTPUT"
 
 # It is started without a display, with its settings and data in a scratch
 # folder, and has to still be running when it is stopped a few seconds
@@ -168,11 +169,11 @@ mv "$OUTPUT" "$BUILD/$OUTPUT"
 scratch="$(mktemp -d)"
 status=0
 XDG_CONFIG_HOME="$scratch/config" XDG_DATA_HOME="$scratch/data" QT_QPA_PLATFORM=offscreen \
-	timeout 5 "$BUILD/$OUTPUT" || status=$?
+	timeout 5 "./$OUTPUT" || status=$?
 rm -rf "$scratch"
 if [ "$status" -ne 124 ]; then
 	echo "The AppImage did not start: exit code $status" >&2
 	exit 1
 fi
 
-echo "Made $BUILD/$OUTPUT"
+echo "Made $OUTPUT"

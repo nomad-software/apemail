@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
-	qt "github.com/mappu/miqt/qt6"
-	"github.com/mappu/miqt/qt6/mainthread"
+	"github.com/nomad-software/qute/qtcore"
+	"github.com/nomad-software/qute/qtgui"
+	"github.com/nomad-software/qute/qtwidgets"
+	"github.com/nomad-software/qute/qutetest"
 
 	"github.com/nomad-software/apemail/internal/message"
 )
@@ -24,19 +25,19 @@ func TestAttachmentsWrap(t *testing.T) {
 	}
 	// One name far wider than the pane is cut down to it.
 	files = append(files, message.Attachment{Filename: strings.Repeat("long", 200) + ".pdf"})
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		v := newMessageView()
 		defer v.DeleteLater()
 		// They ask for no more width than one does.
 		v.setAttachments(files[:1])
-		one := v.MinimumSizeHint().Width()
+		one := v.MinimumSizeHint().Width
 		v.setAttachments(files)
-		if w := v.MinimumSizeHint().Width(); w > one+200 {
+		if w := v.MinimumSizeHint().Width; w > one+200 {
 			t.Errorf("the attachments ask for a width of %d, and one for %d", w, one)
 		}
 		v.Resize(600, 400)
 		v.Show()
-		qt.QCoreApplication_ProcessEvents()
+		qtcore.QCoreApplicationProcessEvents()
 		if w := v.Width(); w != 600 {
 			t.Errorf("the pane is %d wide", w)
 		}
@@ -44,16 +45,14 @@ func TestAttachmentsWrap(t *testing.T) {
 		// The rows are within the attachments, which are as wide as the
 		// pane less its scroll bar.
 		inside := v.attachments.Rect()
-		defer runtime.KeepAlive(inside)
 		rows := map[int]bool{}
 		for i := range v.attachBox.Count() {
 			g := v.attachBox.ItemAt(i).Geometry()
-			if !inside.Contains(g) {
+			if !inside.Contains(g.TopLeft()) || !inside.Contains(qtcore.QPoint{X: g.Right(), Y: g.Bottom()}) {
 				t.Errorf("item %d is at %d,%d %dx%d, outside the %dx%d of the attachments",
-					i, g.X(), g.Y(), g.Width(), g.Height(), inside.Width(), inside.Height())
+					i, g.X, g.Y, g.Width, g.Height, inside.Width, inside.Height)
 			}
-			rows[g.Y()] = true
-			runtime.KeepAlive(g)
+			rows[g.Y] = true
 		}
 		if len(rows) < 5 {
 			t.Errorf("the attachments are on %d rows", len(rows))
@@ -65,7 +64,7 @@ func TestAttachmentsWrap(t *testing.T) {
 
 		// One takes a row, which is no taller than it needs.
 		v.setAttachments(files[:1])
-		qt.QCoreApplication_ProcessEvents()
+		qtcore.QCoreApplicationProcessEvents()
 		if got, want := v.attachScroll.Height(), v.attachBox.heightOfRows(1); got != want {
 			t.Errorf("one attachment is %d high, not %d", got, want)
 		}
@@ -73,8 +72,8 @@ func TestAttachmentsWrap(t *testing.T) {
 }
 
 // attachmentButtons returns the buttons of the attachments shown.
-func attachmentButtons(v *messageView) []*qt.QWidget {
-	var buttons []*qt.QWidget
+func attachmentButtons(v *messageView) []*qtwidgets.QWidget {
+	var buttons []*qtwidgets.QWidget
 	for i := range v.attachBox.Count() {
 		buttons = append(buttons, v.attachBox.ItemAt(i).Widget())
 	}
@@ -82,17 +81,12 @@ func attachmentButtons(v *messageView) []*qt.QWidget {
 }
 
 // lightness returns the mean lightness of what the widget draws.
-func lightness(w *qt.QWidget) int {
-	pixmap := w.Grab()
-	defer runtime.KeepAlive(pixmap)
-	img := pixmap.ToImage()
-	defer runtime.KeepAlive(img)
+func lightness(w qtwidgets.QWidgetLike) int {
+	img := w.AsQWidget().Grab().ToImage()
 	total := 0
 	for y := range img.Height() {
 		for x := range img.Width() {
-			c := img.PixelColor(x, y)
-			total += c.Lightness()
-			runtime.KeepAlive(c)
+			total += lightnessOf(img.PixelColor(x, y))
 		}
 	}
 	return total / (img.Width() * img.Height())
@@ -100,13 +94,11 @@ func lightness(w *qt.QWidget) int {
 
 // moveMouse moves the mouse to the point of the window, as the desktop does,
 // so that the widget under it is told that it is.
-func moveMouse(window *qt.QWidget, to *qt.QPointF) {
-	defer runtime.KeepAlive(to)
-	global := window.MapToGlobal(to)
-	defer runtime.KeepAlive(global)
-	e := qt.NewQMouseEvent2(qt.QEvent__MouseMove, to, global, qt.NoButton, qt.NoButton, qt.NoModifier)
-	defer e.Delete()
-	qt.QCoreApplication_SendEvent(window.WindowHandle().QObject, e.QEvent)
+func moveMouse(window qtwidgets.QWidgetLike, to qtcore.QPoint) {
+	w := window.AsQWidget()
+	at := to.ToF()
+	e := qtgui.NewQMouseEvent(qtcore.QEventMouseMove, at, w.MapToGlobal(to).ToF(), qtcore.NoButton, qtcore.NoButton, qtcore.NoModifier)
+	qtcore.QCoreApplicationSendEvent(w.WindowHandle(), e)
 }
 
 // TestAttachmentButtons checks that the button of an attachment has no tool
@@ -114,7 +106,7 @@ func moveMouse(window *qt.QWidget, to *qt.QPointF) {
 // All is shown only for more than one.
 func TestAttachmentButtons(t *testing.T) {
 	files := []message.Attachment{{Filename: "a.pdf", Data: []byte("a")}, {Filename: "b.pdf", Data: []byte("b")}}
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		applyTheme("light")
 		defer applyTheme("")
 		v := newMessageView()
@@ -122,7 +114,7 @@ func TestAttachmentButtons(t *testing.T) {
 		v.Resize(600, 400)
 		v.Show()
 		v.setAttachments(files)
-		qt.QCoreApplication_ProcessEvents()
+		qtcore.QCoreApplicationProcessEvents()
 		// The buttons are all there is: no label counts them.
 		buttons := attachmentButtons(v)
 		if len(buttons) != 2 {
@@ -135,9 +127,7 @@ func TestAttachmentButtons(t *testing.T) {
 		}
 		b := buttons[0]
 		before := lightness(b)
-		middle := qt.NewQPointF3(float64(b.Width()/2), float64(b.Height()/2))
-		moveMouse(v.QWidget, b.MapTo(v.QWidget, middle))
-		middle.Delete()
+		moveMouse(v, b.MapTo(v, qtcore.QPoint{X: b.Width() / 2, Y: b.Height() / 2}))
 		hovered := lightness(b)
 		if hovered >= before {
 			t.Errorf("hovered, the button is %d light, and %d before", hovered, before)
@@ -162,7 +152,7 @@ func TestSaveAllAttachments(t *testing.T) {
 	}
 	chosen := ""
 	old := chooseFolder
-	chooseFolder = func(_ *qt.QWidget, _, _ string) string { return chosen }
+	chooseFolder = func(_ qtwidgets.QWidgetLike, _, _ string) string { return chosen }
 	t.Cleanup(func() { chooseFolder = old })
 	files := []message.Attachment{
 		{Filename: "a.pdf", Data: []byte("first")},
@@ -170,7 +160,7 @@ func TestSaveAllAttachments(t *testing.T) {
 		{Filename: "../../notes.txt", Data: []byte("notes")},
 		{Filename: "", Data: []byte("nameless")},
 	}
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		v := newMessageView()
 		defer v.DeleteLater()
 		v.setAttachments(files)
@@ -217,7 +207,7 @@ func TestSaveAllAttachments(t *testing.T) {
 	forgetWarnings()
 	defer forgetWarnings()
 	chosen = filepath.Join(dir, "missing")
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		v := newMessageView()
 		defer v.DeleteLater()
 		v.setAttachments(files)
@@ -237,8 +227,8 @@ func headerRows(v *messageView) map[string]string {
 		if name == nil || name.Widget() == nil || value == nil || value.Layout() == nil {
 			continue
 		}
-		label := qt.UnsafeNewQLabel(name.Widget().UnsafePointer())
-		text := qt.UnsafeNewQLabel(value.Layout().ItemAt(0).Widget().UnsafePointer())
+		label := qtwidgets.QLabelCast(name.Widget())
+		text := qtwidgets.QLabelCast(value.Layout().ItemAt(0).Widget())
 		rows[label.Text()] = text.Text()
 	}
 	return rows
@@ -258,10 +248,10 @@ func TestAttachmentsRow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		v := newMessageView()
 		defer v.DeleteLater()
-		v.show(with, "INBOX", 1)
+		v.show(with, "INBOX", 1, 1)
 		rows := headerRows(v)
 		var count string
 		for name, value := range rows {
@@ -272,7 +262,7 @@ func TestAttachmentsRow(t *testing.T) {
 		if count != "5" {
 			t.Errorf("headers %v", rows)
 		}
-		v.show(without, "INBOX", 2)
+		v.show(without, "INBOX", 1, 2)
 		for name := range headerRows(v) {
 			if strings.Contains(name, "Attachments") {
 				t.Errorf("a message without attachments has the row %q", name)
@@ -291,24 +281,22 @@ func TestAttachmentsPaneHeight(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		v := newMessageView()
 		defer v.DeleteLater()
-		v.show(m, "INBOX", 1)
+		v.show(m, "INBOX", 1, 1)
 		policy := v.attachPane.SizePolicy()
-		if got := policy.VerticalPolicy(); got != qt.QSizePolicy__Fixed {
+		if got := policy.VerticalPolicy(); got != qtwidgets.QSizePolicyFixed {
 			t.Errorf("the pane's height can be %v", got)
 		}
-		runtime.KeepAlive(policy)
 		for _, height := range []int{400, 800, 300} {
 			v.Resize(800, height)
 			v.Show()
-			qt.QCoreApplication_ProcessEvents()
+			qtcore.QCoreApplicationProcessEvents()
 			hint := v.attachPane.SizeHint()
-			if got, want := v.attachPane.Height(), hint.Height(); got != want {
+			if got, want := v.attachPane.Height(), hint.Height; got != want {
 				t.Errorf("in a view %d tall the pane is %d, not %d", height, got, want)
 			}
-			runtime.KeepAlive(hint)
 			if got, want := v.web.Height(), height-v.headers.Height()-v.attachPane.Height(); got != want {
 				t.Errorf("in a view %d tall the body is %d, not %d", height, got, want)
 			}
@@ -324,16 +312,16 @@ func TestSaveAttachment(t *testing.T) {
 	dir := t.TempDir()
 	chosen, offered := "", ""
 	old := chooseFile
-	chooseFile = func(_ *qt.QWidget, _, start string) string {
+	chooseFile = func(_ qtwidgets.QWidgetLike, _, start string) string {
 		offered = start
 		return chosen
 	}
 	t.Cleanup(func() { chooseFile = old })
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		v := newMessageView()
 		defer v.DeleteLater()
 		v.setAttachments([]message.Attachment{{Filename: "../report.pdf", Data: []byte("report")}})
-		button := qt.UnsafeNewQPushButton(attachmentButtons(v)[0].UnsafePointer())
+		button := qtwidgets.QPushButtonCast(attachmentButtons(v)[0])
 
 		button.Click()
 		if entries, _ := os.ReadDir(dir); len(entries) != 0 || filepath.Base(offered) != "report.pdf" {

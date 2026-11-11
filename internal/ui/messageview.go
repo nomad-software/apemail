@@ -11,9 +11,11 @@ import (
 	"strings"
 
 	"github.com/emersion/go-message/mail"
-	qt "github.com/mappu/miqt/qt6"
-	"github.com/mappu/miqt/qt6/mainthread"
-	"github.com/mappu/miqt/qt6/webengine"
+	"github.com/nomad-software/qute"
+	"github.com/nomad-software/qute/qtcore"
+	"github.com/nomad-software/qute/qtgui"
+	"github.com/nomad-software/qute/qtwebenginecore"
+	"github.com/nomad-software/qute/qtwidgets"
 
 	"github.com/nomad-software/apemail/internal/icons"
 	"github.com/nomad-software/apemail/internal/images"
@@ -30,19 +32,19 @@ import (
 // place of those it asked for. Images the message carries itself (cid: and
 // data:) are shown; nothing else is loaded, local files included.
 type messageView struct {
-	*qt.QWidget
+	qtwidgets.QWidgetBase
 
-	headers    *qt.QWidget
-	headerGrid *qt.QGridLayout
+	headers    *qtwidgets.QWidget
+	headerGrid *qtwidgets.QGridLayout
 	// attachments holds a button for each of files, the attachments shown,
 	// laid out by attachBox, in attachScroll, which scrolls them once they
 	// take more than attachRows rows. attachPane holds attachScroll and
 	// saveAll, which saves every one.
-	attachments  *qt.QWidget
+	attachments  *qtwidgets.QWidget
 	attachBox    *flowLayout
-	attachScroll *qt.QScrollArea
-	attachPane   *qt.QWidget
-	saveAll      *qt.QPushButton
+	attachScroll *resizingScroll
+	attachPane   *qtwidgets.QWidget
+	saveAll      *qtwidgets.QPushButton
 	files        []message.Attachment
 
 	// webPage shows the body of the message. body is what it shows, and
@@ -56,15 +58,17 @@ type messageView struct {
 	stale  bool
 
 	// msg is the message that is shown, if one is, and folder and uid
-	// where it is.
-	msg    *message.Message
-	folder string
-	uid    uint32
+	// where it is, with the UIDVALIDITY the folder had when it was listed,
+	// by which what is done to the message names it.
+	msg      *message.Message
+	folder   string
+	validity uint32
+	uid      uint32
 
 	// loadImages is the button that loads the images the message asks for
 	// on the internet, shown once it has asked for some that are not
 	// loaded.
-	loadImages *qt.QPushButton
+	loadImages *qtwidgets.QPushButton
 	// wanted are the images on the web the page has asked for, in the order
 	// it did, tried those that have been fetched, and images those that
 	// were, by their address. allowImages is set once the user has had them
@@ -83,7 +87,7 @@ type messageView struct {
 	// addSender is the button which puts whoever replies to the message
 	// go to in the address book, if a message is shown: beside Reply to,
 	// if it has one, or beside From.
-	addSender *qt.QToolButton
+	addSender *qtwidgets.QToolButton
 
 	// compose is called to write to an address that is clicked, as
 	// mailto:.
@@ -95,16 +99,17 @@ type messageView struct {
 }
 
 func newMessageView() *messageView {
-	v := &messageView{QWidget: qt.NewQWidget2()}
-	layout := qt.NewQVBoxLayout(v.QWidget)
-	layout.SetContentsMargins(0, 0, 0, 0)
+	v := &messageView{}
+	qtwidgets.NewQWidgetWith(v, nil)
+	layout := qtwidgets.NewQVBoxLayout(v)
+	layout.SetContentsMargins(qtcore.QMargins{})
 	layout.SetSpacing(0)
 
-	v.headers = qt.NewQWidget2()
+	v.headers = qtwidgets.NewQWidget(nil)
 	v.headers.SetAutoFillBackground(true)
-	v.headers.SetBackgroundRole(qt.QPalette__AlternateBase)
-	v.headerGrid = qt.NewQGridLayout(v.headers)
-	v.headerGrid.SetContentsMargins(8, 6, 8, 6)
+	v.headers.SetBackgroundRole(qtgui.QPaletteAlternateBase)
+	v.headerGrid = qtwidgets.NewQGridLayout(v.headers)
+	v.headerGrid.SetContentsMargins(qtcore.QMargins{Left: 8, Top: 6, Right: 8, Bottom: 6})
 	v.headerGrid.SetHorizontalSpacing(8)
 	v.headerGrid.SetVerticalSpacing(2)
 	v.headerGrid.SetColumnStretch(1, 1)
@@ -113,25 +118,29 @@ func newMessageView() *messageView {
 	layout.AddWidget(v.makeAttachments())
 
 	v.newWebView()
-	layout.AddWidget2(v.web.QWidget, 1)
-	// A change of theme is shown in the message too, once it is seen.
-	v.OnChangeEvent(func(super func(*qt.QEvent), e *qt.QEvent) {
-		super(e)
-		if e.Type() == qt.QEvent__PaletteChange {
-			v.restyle()
-		}
-	})
-	v.OnShowEvent(func(super func(*qt.QShowEvent), e *qt.QShowEvent) {
-		super(e)
-		if v.stale {
-			v.stale = false
-			v.page.TriggerAction(webengine.QWebEnginePage__Reload, false)
-		}
-	})
-	v.OnDestroyed(v.stopLoading)
+	layout.AddWidgetFull(v.web, 1, 0)
+	v.OnDestroyed(func(*qtcore.QObject) { v.stopLoading() })
 
 	v.clear()
 	return v
+}
+
+// ChangeEvent shows a change of theme in the message too, once it is seen.
+func (v *messageView) ChangeEvent(e *qtcore.QEvent) {
+	v.Super().ChangeEvent(e)
+	if e.Type() == qtcore.QEventPaletteChange {
+		v.restyle()
+	}
+}
+
+// ShowEvent shows the message in the colours of the theme, if they changed
+// while it was not seen.
+func (v *messageView) ShowEvent(e *qtgui.QShowEvent) {
+	v.Super().ShowEvent(e)
+	if v.stale {
+		v.stale = false
+		v.page.TriggerAction(qtwebenginecore.QWebEnginePageReload)
+	}
 }
 
 // render shows the HTML as the body.
@@ -156,7 +165,7 @@ func (v *messageView) restyle() {
 	case v.loaded != v.serial:
 		// It is being loaded, as it is now.
 	case v.IsVisible():
-		v.page.TriggerAction(webengine.QWebEnginePage__Reload, false)
+		v.page.TriggerAction(qtwebenginecore.QWebEnginePageReload)
 	default:
 		v.stale = true
 	}
@@ -183,9 +192,7 @@ func (v *messageView) follow(link string) {
 // openURL opens an address in the desktop's web browser. Tests replace it,
 // so that no browser opens.
 var openURL = func(link string) {
-	u := qt.NewQUrl3(link)
-	qt.QDesktopServices_OpenUrl(u)
-	u.Delete()
+	qtgui.QDesktopServicesOpenUrl(qtcore.NewQUrlWithUrl(link))
 }
 
 // clear shows nothing.
@@ -206,19 +213,20 @@ func (v *messageView) failed(err error) {
 // showOnly shows the HTML in place of a message, with no headers or
 // attachments.
 func (v *messageView) showOnly(body string) {
-	v.msg, v.folder, v.uid = nil, "", 0
+	v.msg, v.folder, v.validity, v.uid = nil, "", 0, 0
 	v.addSender, v.loadImages = nil, nil
 	v.forgetImages()
-	clearLayout(v.headerGrid.QLayout)
+	clearLayout(v.headerGrid)
 	v.headers.SetVisible(false)
 	v.setAttachments(nil)
 	v.render(body)
 }
 
-// show shows the message, which is in the folder with the UID.
-func (v *messageView) show(m *message.Message, folder string, uid uint32) {
+// show shows the message, which is in the folder, numbered as validity
+// says, with the UID.
+func (v *messageView) show(m *message.Message, folder string, validity, uid uint32) {
 	v.forgetImages()
-	v.msg, v.folder, v.uid = m, folder, uid
+	v.msg, v.folder, v.validity, v.uid = m, folder, validity, uid
 	v.allowImages = m.HTML != "" && v.loadAlways != nil && v.loadAlways()
 
 	v.showHeaders(m)
@@ -321,7 +329,7 @@ func (v *messageView) fetchImages(srcs []string) {
 	v.showImagesButton()
 	go func() {
 		got := images.Fetch(ctx, srcs)
-		mainthread.Start(func() {
+		qute.Post(func() {
 			// Another message may be shown by now, or none.
 			if v.gone || v.msg != m || v.serial != serial || ctx.Err() != nil {
 				return
@@ -330,7 +338,7 @@ func (v *messageView) fetchImages(srcs []string) {
 			v.stopImages = nil
 			maps.Copy(v.images, got)
 			if len(got) > 0 {
-				v.page.TriggerAction(webengine.QWebEnginePage__Reload, false)
+				v.page.TriggerAction(qtwebenginecore.QWebEnginePageReload)
 			}
 			v.showImagesButton()
 		})
@@ -355,58 +363,58 @@ func (v *messageView) forgetImages() {
 // showHeaders shows the subject of the message, and who it is from and to
 // and when, with a button beside the sender to put them in the address book.
 func (v *messageView) showHeaders(m *message.Message) {
-	clearLayout(v.headerGrid.QLayout)
+	clearLayout(v.headerGrid)
 	// The button of the message shown before is gone with the headers.
 	v.loadImages = nil
 	subject := m.Subject
 	if subject == "" {
 		subject = "(no subject)"
 	}
-	title := qt.NewQLabel3(fmt.Sprintf("<div style=\"font-size: large; font-weight: bold\">%s</div>", html.EscapeString(subject)))
-	title.SetTextFormat(qt.RichText)
+	title := qtwidgets.NewQLabelWithText(fmt.Sprintf("<div style=\"font-size: large; font-weight: bold\">%s</div>", html.EscapeString(subject)), nil)
+	title.SetTextFormat(qtcore.RichText)
 	title.SetWordWrap(true)
-	title.SetTextInteractionFlags(qt.TextSelectableByMouse)
-	v.headerGrid.AddWidget3(title.QWidget, 0, 0, 1, 2)
+	title.SetTextInteractionFlags(qtcore.TextSelectableByMouse)
+	v.headerGrid.AddWidgetSpan(title, 0, 0, 1, 2)
 
 	// A grid does not forget the rows it had, so they are counted here.
 	n := 0
-	var text *qt.QLabel
-	row := func(name, value string) *qt.QHBoxLayout {
+	var text *qtwidgets.QLabel
+	row := func(name, value string) *qtwidgets.QHBoxLayout {
 		if value == "" {
 			return nil
 		}
 		n++
-		label := qt.NewQLabel3(fmt.Sprintf("<span style=\"color: gray\">%s</span>", name))
-		label.SetTextFormat(qt.RichText)
-		v.headerGrid.AddWidget4(label.QWidget, n, 0, qt.AlignLeft|qt.AlignTop)
-		text = qt.NewQLabel3(value)
-		text.SetTextFormat(qt.PlainText)
+		label := qtwidgets.NewQLabelWithText(fmt.Sprintf("<span style=\"color: gray\">%s</span>", name), nil)
+		label.SetTextFormat(qtcore.RichText)
+		v.headerGrid.AddWidgetFull(label, n, 0, qtcore.AlignLeft|qtcore.AlignTop)
+		text = qtwidgets.NewQLabelWithText(value, nil)
+		text.SetTextFormat(qtcore.PlainText)
 		text.SetWordWrap(true)
-		text.SetTextInteractionFlags(qt.TextSelectableByMouse)
-		line := qt.NewQHBoxLayout2()
+		text.SetTextInteractionFlags(qtcore.TextSelectableByMouse)
+		line := qtwidgets.NewQHBoxLayout(nil)
 		line.SetSpacing(4)
-		line.AddWidget(text.QWidget)
-		v.headerGrid.AddLayout(line.QLayout, n, 1)
+		line.AddWidget(text)
+		v.headerGrid.AddLayout(line, n, 1)
 		return line
 	}
 	// The button goes beside the addresses it adds.
-	addButton := func(line *qt.QHBoxLayout) {
+	addButton := func(line *qtwidgets.QHBoxLayout) {
 		if line == nil {
 			return
 		}
 		// A label that wraps would be squeezed by the stretch that keeps
 		// the button beside it, and a sender is short.
 		text.SetWordWrap(false)
-		v.addSender = qt.NewQToolButton2()
+		v.addSender = qtwidgets.NewQToolButton(nil)
 		v.addSender.SetIcon(icon(icons.AddContact))
 		v.addSender.SetAutoRaise(true)
-		v.addSender.SetIconSize(qt.NewQSize2(16, 16))
-		v.addSender.OnClicked(func() {
+		v.addSender.SetIconSize(qtcore.QSize{Width: 16, Height: 16})
+		v.addSender.OnClicked(func(bool) {
 			if v.msg != nil && v.addContacts != nil {
 				v.addContacts(replier(v.msg))
 			}
 		})
-		line.AddWidget(v.addSender.QWidget)
+		line.AddWidget(v.addSender)
 		line.AddStretch()
 		v.showAddButton()
 	}
@@ -429,11 +437,11 @@ func (v *messageView) showHeaders(m *message.Message) {
 	// the bottom right of the headers, in a column of its own beside them,
 	// shown once the message asks for some.
 	if m.HTML != "" {
-		v.loadImages = qt.NewQPushButton3("Load Remote Images")
+		v.loadImages = qtwidgets.NewQPushButtonWithText("Load Remote Images", nil)
 		v.loadImages.SetIcon(icon(icons.Image))
 		v.loadImages.SetVisible(false)
-		v.loadImages.OnClicked(v.loadRemoteImages)
-		v.headerGrid.AddWidget5(v.loadImages.QWidget, 0, 2, n+1, 1, qt.AlignRight|qt.AlignBottom)
+		v.loadImages.OnClicked(func(bool) { v.loadRemoteImages() })
+		v.headerGrid.AddWidgetSpanFull(v.loadImages, 0, 2, n+1, 1, qtcore.AlignRight|qtcore.AlignBottom)
 	}
 	v.headers.SetVisible(true)
 }
@@ -470,7 +478,8 @@ func (v *messageView) showAddButton() {
 
 // clearLayout takes everything out of the layout, and deletes the widgets
 // and layouts in it.
-func clearLayout(l *qt.QLayout) {
+func clearLayout(layout qtwidgets.QLayoutLike) {
+	l := layout.AsQLayout()
 	for l.Count() > 0 {
 		item := l.TakeAt(0)
 		if w := item.Widget(); w != nil {

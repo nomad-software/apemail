@@ -1,12 +1,11 @@
 package ui
 
 import (
-	"runtime"
 	"testing"
 
 	"github.com/emersion/go-imap/v2"
-	qt "github.com/mappu/miqt/qt6"
-	"github.com/mappu/miqt/qt6/mainthread"
+	"github.com/nomad-software/qute/qtcore"
+	"github.com/nomad-software/qute/qutetest"
 
 	"github.com/nomad-software/apemail/internal/remote/remotetest"
 )
@@ -18,28 +17,27 @@ func TestDragToFolder(t *testing.T) {
 	wait(t, "the inbox", func() bool { return len(w.list.rows) == 1 && w.folder == "INBOX" })
 
 	var d draggedMessages
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		// What the list gives a drag of the selection says where the
 		// message is.
-		index := w.list.model.Index(0, 0, noParent)
-		if w.list.model.Flags(index)&qt.ItemIsDragEnabled == 0 {
+		index := w.list.model.Index(0, 0)
+		if w.list.model.Flags(index)&qtcore.ItemIsDragEnabled == 0 {
 			t.Error("the message cannot be dragged")
 		}
 		w.list.SetCurrentIndex(index)
-		runtime.KeepAlive(index)
 		var ok bool
 		d, ok = decodeDragged(w.list.draggedSelection().encode())
-		if !ok || d.Account != w.account || d.Folder != "INBOX" || len(d.UIDs) != 1 {
+		if !ok || d.Account != w.account || d.Folder != "INBOX" || len(d.UIDs) != 1 || d.UIDValidity == 0 || d.UIDValidity != w.list.uidValidity {
 			t.Fatalf("dragged = %+v, %v", d, ok)
 		}
 
 		// Folders take drops; accounts do not.
 		account := w.folders.accounts[w.account]
-		if account.Flags()&qt.ItemIsDropEnabled != 0 {
+		if account.Flags()&qtcore.ItemIsDropEnabled != 0 {
 			t.Error("an account takes drops")
 		}
 		projects := w.folders.folders[w.account]["Projects"]
-		if projects.Flags()&qt.ItemIsDropEnabled == 0 {
+		if projects.Flags()&qtcore.ItemIsDropEnabled == 0 {
 			t.Error("a folder does not take drops")
 		}
 

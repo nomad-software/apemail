@@ -8,7 +8,8 @@ import (
 	"os"
 	"path/filepath"
 
-	qt "github.com/mappu/miqt/qt6"
+	"github.com/nomad-software/qute/qtgui"
+	"github.com/nomad-software/qute/qtwidgets"
 
 	"github.com/nomad-software/apemail/internal/message"
 )
@@ -25,7 +26,7 @@ const imageFilter = "Images (*.png *.jpg *.jpeg *.gif *.bmp *.webp)"
 // is.
 func (c *composer) insertImage() {
 	home, _ := os.UserHomeDir()
-	path := qt.QFileDialog_GetOpenFileName4(c.QWidget, "Insert Image", home, imageFilter)
+	path, _ := qtwidgets.QFileDialogGetOpenFileNameFull(c, "Insert Image", home, imageFilter, "", 0)
 	if path == "" {
 		return
 	}
@@ -42,9 +43,9 @@ func (c *composer) insertImage() {
 // putImage puts an image in the message where the cursor is, no wider than
 // maxImageWidth, to go with it as a part the HTML shows as cid:ID.
 func (c *composer) putImage(name string, data []byte) error {
-	img := qt.NewQImage()
+	img := qtgui.NewQImage()
 	defer img.Delete()
-	if !img.LoadFromDataWithData(data) {
+	if !img.LoadFromData(data) {
 		return fmt.Errorf("%s is not an image that can be shown", name)
 	}
 	a := message.Attachment{

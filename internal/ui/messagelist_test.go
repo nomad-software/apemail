@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	qt "github.com/mappu/miqt/qt6"
-	"github.com/mappu/miqt/qt6/mainthread"
+	"github.com/nomad-software/qute/qtcore"
+	"github.com/nomad-software/qute/qutetest"
 
 	"github.com/nomad-software/apemail/internal/store"
 )
@@ -34,8 +34,9 @@ func folderOf(n int) *store.Index {
 }
 
 // withList runs f with a message list of its own, on the UI's thread.
-func withList(f func(l *messageList)) {
-	mainthread.Wait(func() {
+func withList(t testing.TB, f func(l *messageList)) {
+	t.Helper()
+	qutetest.Run(t, func() {
 		l := newMessageList()
 		defer l.Delete()
 		l.Resize(1000, 600)
@@ -51,8 +52,8 @@ func TestSorted(t *testing.T) {
 		ix := folderOf(n)
 		for _, sent := range []bool{false, true} {
 			for _, col := range []int{colAttachment, colSubject, colCorrespondent, colDate} {
-				for _, order := range []qt.SortOrder{qt.AscendingOrder, qt.DescendingOrder} {
-					withList(func(l *messageList) {
+				for _, order := range []qtcore.SortOrder{qtcore.AscendingOrder, qtcore.DescendingOrder} {
+					withList(t, func(l *messageList) {
 						l.sent, l.sortColumn, l.sortOrder = sent, col, order
 						rows := l.sorted(ix.Messages)
 						if len(rows) != n {
@@ -60,7 +61,7 @@ func TestSorted(t *testing.T) {
 						}
 						for i := 1; i < len(rows); i++ {
 							c := compareRows(rows[i-1], rows[i], col, sent)
-							if order == qt.DescendingOrder {
+							if order == qtcore.DescendingOrder {
 								c = -c
 							}
 							if c > 0 {
@@ -122,26 +123,23 @@ func lower(s string) string {
 // its own headed by one, beside each message with attachments, and nothing
 // beside one without.
 func TestAttachmentColumn(t *testing.T) {
-	withList(func(l *messageList) {
+	withList(t, func(l *messageList) {
 		l.setIndex(folderOf(10), false)
-		decorated := func(v *qt.QVariant) bool {
-			defer runtime.KeepAlive(v)
+		decorated := func(v *qtcore.QVariant) bool {
 			return v.IsValid()
 		}
-		if !decorated(l.model.HeaderData(colAttachment, qt.Horizontal, int(qt.DecorationRole))) {
+		if !decorated(l.model.HeaderData(colAttachment, qtcore.Horizontal, int(qtcore.DecorationRole))) {
 			t.Error("the column has no paperclip")
 		}
 		for row, m := range l.rows {
-			index := l.model.Index(row, colAttachment, noParent)
-			if got := decorated(l.model.Data(index, int(qt.DecorationRole))); got != m.Attachments {
+			index := l.model.Index(row, colAttachment)
+			if got := decorated(l.model.Data(index, int(qtcore.DecorationRole))); got != m.Attachments {
 				t.Errorf("message %d, with attachments %v, has a paperclip: %v", m.UID, m.Attachments, got)
 			}
-			runtime.KeepAlive(index)
-			index = l.model.Index(row, colSubject, noParent)
-			if decorated(l.model.Data(index, int(qt.DecorationRole))) {
+			index = l.model.Index(row, colSubject)
+			if decorated(l.model.Data(index, int(qtcore.DecorationRole))) {
 				t.Errorf("message %d has a paperclip by its subject", m.UID)
 			}
-			runtime.KeepAlive(index)
 		}
 	})
 }
@@ -151,7 +149,7 @@ func TestAttachmentColumn(t *testing.T) {
 // made again, and the selection and current message are kept.
 func TestFlagsUpdatedInPlace(t *testing.T) {
 	ix := folderOf(100)
-	withList(func(l *messageList) {
+	withList(t, func(l *messageList) {
 		l.setIndex(ix, false)
 		resets := 0
 		l.model.OnModelReset(func() { resets++ })
@@ -199,11 +197,11 @@ func TestAttachmentsUpdatedInPlace(t *testing.T) {
 	for i := range ix.Messages {
 		ix.Messages[i].Attachments = false
 	}
-	withList(func(l *messageList) {
+	withList(t, func(l *messageList) {
 		l.setIndex(ix, false)
 		resets, drawn := 0, -1
 		l.model.OnModelReset(func() { resets++ })
-		l.model.OnDataChanged(func(from, to *qt.QModelIndex) {
+		l.model.OnDataChanged(func(from, to *qtcore.QModelIndex, _ []int) {
 			if from.Row() == to.Row() {
 				drawn = from.Row()
 			}
@@ -219,7 +217,7 @@ func TestAttachmentsUpdatedInPlace(t *testing.T) {
 		}
 
 		// Sorted by attachments, the message goes to the top.
-		l.SortByColumn(colAttachment, qt.DescendingOrder)
+		l.SortByColumn(colAttachment, qtcore.DescendingOrder)
 		again := changed
 		again.Messages = slices.Clone(changed.Messages)
 		j, _ := again.Find(l.rows[10].UID)
@@ -236,7 +234,7 @@ func TestAttachmentsUpdatedInPlace(t *testing.T) {
 // large folder is kept, and quickly, when the list is made again.
 func TestLargeSelectionKept(t *testing.T) {
 	ix := folderOf(20000)
-	withList(func(l *messageList) {
+	withList(t, func(l *messageList) {
 		l.setIndex(ix, false)
 		l.SelectAll()
 		start := time.Now()
@@ -252,13 +250,12 @@ func TestLargeSelectionKept(t *testing.T) {
 	})
 }
 
-// TestSelectionBeyondMiqt checks that a selection larger than miqt can hand
-// over as a list of indexes (65,535), with the garbage collector running,
-// which frees the indexes miqt's lists are made of, is read and dragged
-// whole. It crashed before.
-func TestSelectionBeyondMiqt(t *testing.T) {
+// TestLargeSelection checks that a selection of more rows than a 16 bit
+// count holds (65,535), with the garbage collector running, is read and
+// dragged whole. Bindings used before crashed on one.
+func TestLargeSelection(t *testing.T) {
 	ix := folderOf(70000)
-	withList(func(l *messageList) {
+	withList(t, func(l *messageList) {
 		l.account, l.folder = "account", "INBOX"
 		l.setIndex(ix, false)
 		l.SelectAll()
@@ -284,7 +281,7 @@ func TestSelectionBeyondMiqt(t *testing.T) {
 // user's, a new list, and messages that go.
 func TestSelectionFollows(t *testing.T) {
 	ix := folderOf(10)
-	withList(func(l *messageList) {
+	withList(t, func(l *messageList) {
 		l.setIndex(ix, false)
 		if got := l.selectedUIDs(); len(got) != 0 {
 			t.Errorf("selected %v at first", got)
@@ -327,7 +324,7 @@ func TestSelectionFollows(t *testing.T) {
 // messages, sorted by the column.
 func benchmarkSetIndex(b *testing.B, col int) {
 	ix := folderOf(100000)
-	withList(func(l *messageList) {
+	withList(b, func(l *messageList) {
 		l.sortColumn = col
 		for b.Loop() {
 			l.clear()
@@ -343,7 +340,7 @@ func BenchmarkSetIndexBySender100k(b *testing.B) { benchmarkSetIndex(b, colCorre
 // being marked read.
 func BenchmarkFlagChange100k(b *testing.B) {
 	ix := folderOf(100000)
-	withList(func(l *messageList) {
+	withList(b, func(l *messageList) {
 		l.setIndex(ix, false)
 		changed := *ix
 		changed.Messages = slices.Clone(ix.Messages)
@@ -356,6 +353,73 @@ func BenchmarkFlagChange100k(b *testing.B) {
 				changed.Messages[500].Flags = []string{`\Seen`}
 			}
 			l.setIndex(&changed, false)
+		}
+	})
+}
+
+// TestNoDateNoToolTip checks that a message with no date has none shown, in
+// its row or as the tool tip of its date, rather than the first there is.
+func TestNoDateNoToolTip(t *testing.T) {
+	withList(t, func(l *messageList) {
+		ix := &store.Index{Folder: "INBOX", UIDValidity: 1, Messages: []store.Summary{
+			{UID: 1, Subject: "Undated"},
+			{UID: 2, Subject: "Dated", Date: time.Date(2016, 1, 2, 15, 4, 0, 0, time.Local)},
+		}}
+		l.setIndex(ix, false)
+		// The newest is first, and one without a date is the oldest.
+		for row, want := range []struct{ shown, tip string }{{"02/01/2016 15:04", "Saturday 2 January 2016 15:04"}, {"", ""}} {
+			index := l.model.Index(row, colDate)
+			if got := l.model.Data(index, int(qtcore.DisplayRole)).ToString(); got != want.shown {
+				t.Errorf("row %d shows %q, want %q", row, got, want.shown)
+			}
+			if got := l.model.Data(index, int(qtcore.ToolTipRole)).ToString(); got != want.tip {
+				t.Errorf("the tool tip of row %d = %q, want %q", row, got, want.tip)
+			}
+		}
+	})
+}
+
+// TestRenumberedDeselects checks that when a folder is numbered anew, the
+// messages that have the UIDs of those that were selected are not selected
+// in their place, as they are other messages, and that this is told, so that
+// the message shown is not left showing.
+func TestRenumberedDeselects(t *testing.T) {
+	withList(t, func(l *messageList) {
+		told := 0
+		l.selected = func() { told++ }
+		l.setIndex(folderOf(5), false)
+		clickRow(l, 1)
+		if len(l.selectedUIDs()) != 1 {
+			t.Fatalf("selected = %v", l.selectedUIDs())
+		}
+		l.next = l.rows[2].UID
+		told = 0
+
+		renumbered := folderOf(5)
+		renumbered.UIDValidity = 2
+		l.setIndex(renumbered, false)
+		if got := l.selectedUIDs(); len(got) != 0 {
+			t.Errorf("selected = %v in a folder numbered anew", got)
+		}
+		if told != 1 {
+			t.Errorf("told of the selection %d times", told)
+		}
+		if l.next != 0 {
+			t.Error("a message is still to be selected next")
+		}
+		if l.uidValidity != 2 || len(l.rows) != 5 {
+			t.Errorf("listed %d rows numbered %d", len(l.rows), l.uidValidity)
+		}
+
+		// Listed again as it is, what is selected stays.
+		clickRow(l, 1)
+		told = 0
+		again := folderOf(5)
+		again.UIDValidity = 2
+		again.Messages = append(again.Messages, store.Summary{UID: 9, Subject: "New"})
+		l.setIndex(again, false)
+		if len(l.selectedUIDs()) != 1 || told != 0 {
+			t.Errorf("selected = %v, told %d times", l.selectedUIDs(), told)
 		}
 	})
 }

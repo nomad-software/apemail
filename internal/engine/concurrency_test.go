@@ -80,7 +80,7 @@ func TestQueuedOpsAnsweredOnClose(t *testing.T) {
 	held, release := s.Hold(t, "BODY.PEEK[]")
 	defer release()
 	got := make(chan error, 1)
-	c.Message("INBOX", uid, func(_ []byte, err error) { got <- err })
+	c.Message("INBOX", c.Validity("INBOX"), uid, func(_ []byte, err error) { got <- err })
 	select {
 	case <-held:
 	case <-time.After(5 * time.Second):
@@ -89,9 +89,9 @@ func TestQueuedOpsAnsweredOnClose(t *testing.T) {
 	drafted := make(chan error, 1)
 	c.SaveDraft([]byte("Subject: unsaved\r\n\r\nx"), func(_ engine.Saved, err error) { drafted <- err })
 	flagged := make(chan error, 1)
-	c.SetFlag("INBOX", []uint32{uid}, `\Flagged`, true, func(err error) { flagged <- err })
+	c.SetFlag("INBOX", c.Validity("INBOX"), []uint32{uid}, `\Flagged`, true, func(err error) { flagged <- err })
 	trashed := make(chan error, 1)
-	c.Trash("INBOX", []uint32{uid}, func(err error) { trashed <- err })
+	c.Trash("INBOX", c.Validity("INBOX"), []uint32{uid}, func(err error) { trashed <- err })
 
 	c.close(t)
 	for what, ch := range map[string]chan error{"the download": got, "the draft": drafted, "the flag": flagged, "the move": trashed} {
@@ -132,9 +132,9 @@ func TestNothingAfterClose(t *testing.T) {
 	c.Start()
 	c.Open("INBOX")
 	c.Refresh("")
-	c.Message("INBOX", uid, func([]byte, error) { answered("Message") })
-	c.SetFlag("INBOX", []uint32{uid}, `\Seen`, true, func(error) { answered("SetFlag") })
-	c.Trash("INBOX", []uint32{uid}, func(error) { answered("Trash") })
+	c.Message("INBOX", c.Validity("INBOX"), uid, func([]byte, error) { answered("Message") })
+	c.SetFlag("INBOX", c.Validity("INBOX"), []uint32{uid}, `\Seen`, true, func(error) { answered("SetFlag") })
+	c.Trash("INBOX", c.Validity("INBOX"), []uint32{uid}, func(error) { answered("Trash") })
 	c.SaveDraft([]byte("Subject: x\r\n\r\nx"), func(engine.Saved, error) { answered("SaveDraft") })
 	c.Send([]byte("Subject: x\r\n\r\nx"), []string{"bob@example.com"}, false, func(error) { answered("Send") })
 	c.SyncAll(func(error) { answered("SyncAll") })
@@ -185,8 +185,8 @@ func TestCloseWhileBusy(t *testing.T) {
 					uid := ix.Messages[(g*5+i)%len(ix.Messages)].UID
 					c.Open("Work")
 					c.Refresh("")
-					c.Message("INBOX", uid, func([]byte, error) {})
-					c.SetFlag("INBOX", []uint32{uid}, `\Seen`, i%2 == 0, func(error) {})
+					c.Message("INBOX", c.Validity("INBOX"), uid, func([]byte, error) {})
+					c.SetFlag("INBOX", c.Validity("INBOX"), []uint32{uid}, `\Seen`, i%2 == 0, func(error) {})
 					c.SaveDraft([]byte(fmt.Sprintf("Subject: draft %d %d\r\n\r\nx", g, i)), func(_ engine.Saved, err error) { keptFor(err) })
 					c.Send([]byte(fmt.Sprintf("Subject: mail %d %d\r\n\r\nx", g, i)), []string{"bob@example.com"}, false, keptFor)
 					c.SyncAll(func(error) {})
@@ -245,7 +245,7 @@ func TestStatusEndsIdle(t *testing.T) {
 		wg.Add(3)
 		e.SyncAll(func(error) { wg.Done() })
 		e.UpdateCounts(func(error) { wg.Done() })
-		e.Message("Work", 1, func([]byte, error) { wg.Done() })
+		e.Message("Work", e.Validity("Work"), 1, func([]byte, error) { wg.Done() })
 		e.Refresh("Work")
 		done := make(chan struct{})
 		go func() {
@@ -484,10 +484,10 @@ func TestChangesWhileFindingAttachments(t *testing.T) {
 	held, release := s.Hold(t, "BODYSTRUCTURE")
 	e, l = startOn(t, st, s.Account())
 	recv(t, held)
-	if err := result(t, func(done func(error)) { e.SetFlag("INBOX", []uint32{pdf}, `\Flagged`, true, done) }); err != nil {
+	if err := result(t, func(done func(error)) { e.SetFlag("INBOX", e.Validity("INBOX"), []uint32{pdf}, `\Flagged`, true, done) }); err != nil {
 		t.Fatal(err)
 	}
-	if err := result(t, func(done func(error)) { e.Move("INBOX", []uint32{plain}, "Trash", done) }); err != nil {
+	if err := result(t, func(done func(error)) { e.Move("INBOX", e.Validity("INBOX"), []uint32{plain}, "Trash", done) }); err != nil {
 		t.Fatal(err)
 	}
 	release()
@@ -499,5 +499,100 @@ func TestChangesWhileFindingAttachments(t *testing.T) {
 	ix := l.index("INBOX")
 	if ix.Messages[0].UID != pdf || !ix.Messages[0].Has(`\Flagged`) {
 		t.Errorf("inbox %+v", ix.Messages)
+	}
+}
+
+// TestOpAfterServerRestarted checks that what the user asks is done on a new
+// connection when the server has closed the one kept from before, as it does
+// one left idle, rather than failing on it: a connection not used for a
+// while is tried first.
+func TestOpAfterServerRestarted(t *testing.T) {
+	t.Cleanup(engine.SetOpIdle(0))
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus))
+	s.Append(t, "INBOX", "first")
+	e, l, _ := start(t, s)
+	wait(t, "the inbox", func() bool { return subjects(l.index("INBOX")) == "first" })
+	uid := l.index("INBOX").Messages[0].UID
+	// The first op makes the connection that is kept.
+	if err := result(t, func(done func(error)) { e.SetFlag("INBOX", e.Validity("INBOX"), []uint32{uid}, `\Flagged`, true, done) }); err != nil {
+		t.Fatal(err)
+	}
+
+	s.Restart(t)
+	if err := result(t, func(done func(error)) { e.SetFlag("INBOX", e.Validity("INBOX"), []uint32{uid}, `\Seen`, true, done) }); err != nil {
+		t.Errorf("the op on a connection the server closed: %v", err)
+	}
+	if msgs := s.Messages(t, "INBOX"); len(msgs) != 1 || !slices.Contains(msgs[0].Flags, `\Seen`) || !slices.Contains(msgs[0].Flags, `\Flagged`) {
+		t.Errorf("the inbox = %+v", msgs)
+	}
+}
+
+// TestSentCopyKeptWhenNotAppended checks that the copy of mail that was sent
+// is not lost when it cannot be put in the sent folder, as when the server
+// drops the connection meanwhile: it is kept, and put there by the next Get
+// Mail, once.
+func TestSentCopyKeptWhenNotAppended(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus), "Sent")
+	smtp := sendtest.Start(t, true)
+	e, l, st := start(t, s, func(a *account.Account) { a.Outgoing = smtp.Account })
+	wait(t, "the folders", func() bool { return listed(e, "Sent") })
+
+	held, release := s.Hold(t, "APPEND")
+	if err := result(t, func(done func(error)) {
+		e.Send([]byte("Subject: gone\r\n\r\nx"), []string{"bob@example.com"}, false, done)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recv(t, held)
+	// The server goes before it has read the copy.
+	s.Restart(t)
+	release()
+	wait(t, "the copy kept to be saved later", func() bool {
+		pending, _ := st.Pending()
+		return len(pending) == 1 && pending[0].Kind == store.PendingAppend && pending[0].Use == "sent"
+	})
+	if len(smtp.Messages()) != 1 {
+		t.Errorf("sent %d messages", len(smtp.Messages()))
+	}
+	if errs := l.errors(); len(errs) != 1 || !strings.Contains(errs[0].Error(), "will be when it can be") {
+		t.Errorf("errors: %v", errs)
+	}
+
+	e.Refresh("")
+	wait(t, "the copy", func() bool { return len(s.Messages(t, "Sent")) == 1 })
+	wait(t, "the outbox empty", func() bool {
+		pending, _ := st.Pending()
+		return len(pending) == 0
+	})
+	if msgs := s.Messages(t, "Sent"); msgs[0].Subject != "gone" || !slices.Contains(msgs[0].Flags, `\Seen`) {
+		t.Errorf("the sent folder = %+v", msgs)
+	}
+	if len(smtp.Messages()) != 1 {
+		t.Errorf("sent %d messages", len(smtp.Messages()))
+	}
+}
+
+// TestFolderFoundBeforeMade checks that mail sent before the folders have
+// ever been listed, as from an account that does not check for mail when it
+// starts, has its copy put in the sent folder the mailbox has, found by
+// listing them, rather than in another made beside it.
+func TestFolderFoundBeforeMade(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus), "Sent Items")
+	smtp := sendtest.Start(t, true)
+	e, _, _ := start(t, s, noCheck, func(a *account.Account) { a.Outgoing = smtp.Account })
+	if len(e.Folders()) != 0 {
+		t.Fatalf("the folders were listed: %v", e.Folders())
+	}
+	if err := result(t, func(done func(error)) {
+		e.Send([]byte("Subject: early\r\n\r\nx"), []string{"bob@example.com"}, false, done)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	wait(t, "the copy", func() bool { return len(s.Messages(t, "Sent Items")) == 1 })
+	if folders := serverFolders(t, s); slices.Contains(folders, "Sent") {
+		t.Errorf("a sent folder was made beside the one there was: %v", folders)
+	}
+	if !listed(e, "Sent Items") || !listed(e, "INBOX") {
+		t.Errorf("the folders listed = %v", e.Folders())
 	}
 }

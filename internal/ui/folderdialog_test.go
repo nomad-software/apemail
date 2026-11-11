@@ -6,8 +6,9 @@ import (
 	"testing"
 
 	"github.com/emersion/go-imap/v2"
-	qt "github.com/mappu/miqt/qt6"
-	"github.com/mappu/miqt/qt6/mainthread"
+	"github.com/nomad-software/qute/qtgui"
+	"github.com/nomad-software/qute/qtwidgets"
+	"github.com/nomad-software/qute/qutetest"
 
 	"github.com/nomad-software/apemail/internal/remote"
 	"github.com/nomad-software/apemail/internal/remote/remotetest"
@@ -18,7 +19,7 @@ import (
 func asked(t *testing.T, yes bool) *[]string {
 	var questions []string
 	old := confirm
-	confirm = func(_ *qt.QWidget, _, text string) bool {
+	confirm = func(_ qtwidgets.QWidgetLike, _, text string) bool {
 		questions = append(questions, text)
 		return yes
 	}
@@ -27,7 +28,7 @@ func asked(t *testing.T, yes bool) *[]string {
 }
 
 // menuAction returns the action of the menu with the text, or nil.
-func menuAction(menu *qt.QMenu, text string) *qt.QAction {
+func menuAction(menu *qtwidgets.QMenu, text string) *qtgui.QAction {
 	for _, a := range menu.Actions() {
 		if a.Text() == text {
 			return a
@@ -40,7 +41,7 @@ func menuAction(menu *qt.QMenu, text string) *qt.QAction {
 // name is empty, or the folder, and then deletes the menu.
 func trigger(t *testing.T, w *Window, name, text string) {
 	t.Helper()
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		folder := name
 		menu := w.sidebarMenu(w.account, name, folder)
 		defer menu.DeleteLater()
@@ -71,7 +72,7 @@ func TestSidebarMenus(t *testing.T) {
 	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Trash", "Work")
 	w := newTestWindow(t, s)
 	wait(t, "the folders", func() bool { return w.folders.folders[w.account]["Work"] != nil })
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		account := w.sidebarMenu(w.account, "", "")
 		defer account.DeleteLater()
 		for _, text := range []string{"New Folder…", "Account Settings…"} {
@@ -143,7 +144,7 @@ func TestDeleteFolderConfirmed(t *testing.T) {
 	w := newTestWindow(t, s)
 	wait(t, "the folders", func() bool { return w.folders.folders[w.account]["Projects"] != nil })
 	// The folder is open, and goes from the list with it.
-	mainthread.Wait(func() { w.folders.selectFolder(w.account, "Projects/Engine") })
+	qutetest.Run(t, func() { w.folders.selectFolder(w.account, "Projects/Engine") })
 	// Its sync is done once its message is listed and the account says
 	// nothing more, which it says once the sync has let the folder go: a
 	// folder being synchronised is not deleted, which the program warns of.
@@ -166,7 +167,7 @@ func TestDeleteFolderConfirmed(t *testing.T) {
 	if msgs := s.Messages(t, "Work"); len(msgs) != 1 {
 		t.Errorf("Work = %+v", msgs)
 	}
-	if mainthread.Wait2(func() bool { return w.folder == "Projects/Engine" }) {
+	if onUI(func() bool { return w.folder == "Projects/Engine" }) {
 		t.Error("the folder deleted is still listed")
 	}
 }
@@ -181,7 +182,7 @@ func TestNewFolder(t *testing.T) {
 		{"Projects", topLevel, "Projects"},
 		{"2026", "Work", "Work/2026"},
 	} {
-		mainthread.Wait(func() {
+		qutetest.Run(t, func() {
 			d := w.newFolderDialog(w.engines[w.account])
 			d.name.SetText(c.name)
 			d.within.SetCurrentIndex(d.within.FindText(c.within))
@@ -194,7 +195,7 @@ func TestNewFolder(t *testing.T) {
 	}
 
 	// A folder there already is warned of, and not made again.
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		d := w.newFolderDialog(w.engines[w.account])
 		d.name.SetText("Work")
 		d.ok()

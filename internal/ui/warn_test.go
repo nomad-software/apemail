@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mappu/miqt/qt6/mainthread"
+	"github.com/nomad-software/qute/qutetest"
 )
 
 // TestWarningsAreTold checks that a warning in a test is kept, rather than
@@ -13,7 +13,7 @@ import (
 func TestWarningsAreTold(t *testing.T) {
 	forgetWarnings()
 	defer forgetWarnings()
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		w := NewWindow(Files{Settings: t.TempDir() + "/settings.json", Accounts: t.TempDir()})
 		defer w.DeleteLater()
 		w.warn("Delete", errors.New("the folder has gone"))

@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	qt "github.com/mappu/miqt/qt6"
+	"github.com/nomad-software/qute/qtcore"
+	"github.com/nomad-software/qute/qtgui"
+	"github.com/nomad-software/qute/qtwidgets"
 
 	"github.com/nomad-software/apemail/internal/icons"
 	"github.com/nomad-software/apemail/internal/message"
@@ -16,43 +18,40 @@ import (
 
 // makeAttachments makes the pane of a message's attachments, which holds a
 // button for each, wrapped onto rows, and one that saves them all.
-func (v *messageView) makeAttachments() *qt.QWidget {
-	v.attachments = qt.NewQWidget2()
+func (v *messageView) makeAttachments() *qtwidgets.QWidget {
+	v.attachPane = qtwidgets.NewQWidget(nil)
+	// It is only as tall as its rows, so that the height the view has to
+	// spare goes to the body.
+	v.attachPane.SetSizePolicy(qtwidgets.NewQSizePolicyWithPolicy(qtwidgets.QSizePolicyPreferred, qtwidgets.QSizePolicyFixed))
+	v.attachments = qtwidgets.NewQWidget(nil)
 	v.attachments.SetStyleSheet(attachmentStyle)
 	v.attachBox = newFlowLayout(v.attachments)
 	// The buttons' own padding lines their icons up with the headers.
-	v.attachBox.SetContentsMargins(2, 2, 8, 4)
-	v.attachScroll = qt.NewQScrollArea2()
-	v.attachScroll.SetFrameShape(qt.QFrame__NoFrame)
-	v.attachScroll.SetHorizontalScrollBarPolicy(qt.ScrollBarAlwaysOff)
+	v.attachBox.SetContentsMargins(qtcore.QMargins{Left: 2, Top: 2, Right: 8, Bottom: 4})
+	v.attachScroll = &resizingScroll{resized: v.fitAttachments}
+	qtwidgets.NewQScrollAreaWith(v.attachScroll, v.attachPane)
+	v.attachScroll.SetFrameShape(qtwidgets.QFrameNoFrame)
+	v.attachScroll.SetHorizontalScrollBarPolicy(qtcore.ScrollBarAlwaysOff)
 	v.attachScroll.SetWidgetResizable(true)
 	// It is as tall as fitAttachments makes it: a scroll area grows to
 	// take what height it can, and would take half the message's.
-	v.attachScroll.SetSizePolicy2(qt.QSizePolicy__Expanding, qt.QSizePolicy__Fixed)
+	v.attachScroll.SetSizePolicy(qtwidgets.NewQSizePolicyWithPolicy(qtwidgets.QSizePolicyExpanding, qtwidgets.QSizePolicyFixed))
 	v.attachScroll.SetWidget(v.attachments)
-	v.attachScroll.OnResizeEvent(func(super func(*qt.QResizeEvent), e *qt.QResizeEvent) {
-		super(e)
-		v.fitAttachments()
-	})
-	v.saveAll = qt.NewQPushButton3("Save All…")
-	v.saveAll.OnClicked(func() { v.saveFiles() })
-	v.attachPane = qt.NewQWidget2()
-	// It is only as tall as its rows, so that the height the view has to
-	// spare goes to the body.
-	v.attachPane.SetSizePolicy2(qt.QSizePolicy__Preferred, qt.QSizePolicy__Fixed)
-	attachRow := qt.NewQHBoxLayout(v.attachPane)
-	attachRow.SetContentsMargins(0, 2, 8, 0)
+	v.saveAll = qtwidgets.NewQPushButtonWithText("Save All…", nil)
+	v.saveAll.OnClicked(func(bool) { v.saveFiles() })
+	attachRow := qtwidgets.NewQHBoxLayout(v.attachPane)
+	attachRow.SetContentsMargins(qtcore.QMargins{Top: 2, Right: 8})
 	attachRow.SetSpacing(0)
-	attachRow.AddWidget2(v.attachScroll.QWidget, 1)
+	attachRow.AddWidgetFull(v.attachScroll, 1, 0)
 	// The button stays in sight at the top while the attachments scroll.
-	attachRow.AddWidget3(v.saveAll.QWidget, 0, qt.AlignTop)
+	attachRow.AddWidgetFull(v.saveAll, 0, qtcore.AlignTop)
 	return v.attachPane
 }
 
 // setAttachments shows a button for each attachment, which saves it, on as
 // many rows as they need.
 func (v *messageView) setAttachments(files []message.Attachment) {
-	clearLayout(v.attachBox.QLayout)
+	clearLayout(v.attachBox)
 	v.files = files
 	v.attachPane.SetVisible(len(files) > 0)
 	// One attachment is saved by clicking it.
@@ -63,16 +62,25 @@ func (v *messageView) setAttachments(files []message.Attachment) {
 	defer v.fitAttachments()
 	// Each button copies the icon and the cursor.
 	paperclip := icon(icons.Attachment)
-	defer paperclip.Delete()
-	hand := qt.NewQCursor2(qt.PointingHandCursor)
-	defer hand.Delete()
+	hand := qtgui.NewQCursorWithCursorShape(qtcore.PointingHandCursor)
 	for _, a := range files {
-		b := qt.NewQPushButton3(fmt.Sprintf("%s (%s)", a.Filename, size(len(a.Data))))
+		b := qtwidgets.NewQPushButtonWithText(fmt.Sprintf("%s (%s)", a.Filename, size(len(a.Data))), nil)
 		b.SetIcon(paperclip)
 		b.SetCursor(hand)
-		b.OnClicked(func() { v.save(a) })
-		v.attachBox.addWidget(b.QWidget)
+		b.OnClicked(func(bool) { v.save(a) })
+		v.attachBox.addWidget(b)
 	}
+}
+
+// resizingScroll is a scroll area which says when its size has changed.
+type resizingScroll struct {
+	qtwidgets.QScrollAreaBase
+	resized func()
+}
+
+func (s *resizingScroll) ResizeEvent(e *qtgui.QResizeEvent) {
+	s.Super().ResizeEvent(e)
+	s.resized()
 }
 
 // attachmentStyle is that of the buttons of the attachments: flat, and shaded
@@ -95,12 +103,12 @@ func (v *messageView) fitAttachments() {
 
 // save asks where to save an attachment and saves it there.
 func (v *messageView) save(a message.Attachment) {
-	path := chooseFile(v.QWidget, "Save Attachment", filepath.Join(downloads(), fileName(a)))
+	path := chooseFile(v, "Save Attachment", filepath.Join(downloads(), fileName(a)))
 	if path == "" {
 		return
 	}
 	if err := os.WriteFile(path, a.Data, 0o600); err != nil {
-		warning(v.QWidget, "Save Attachment", err.Error())
+		warning(v, "Save Attachment", err.Error())
 	}
 }
 
@@ -108,7 +116,7 @@ func (v *messageView) save(a message.Attachment) {
 // already there is never written over: the attachment is given a name of its
 // own, as name (2).pdf.
 func (v *messageView) saveFiles() {
-	dir := chooseFolder(v.QWidget, "Save All Attachments", downloads())
+	dir := chooseFolder(v, "Save All Attachments", downloads())
 	if dir == "" {
 		return
 	}
@@ -119,7 +127,7 @@ func (v *messageView) saveFiles() {
 		}
 	}
 	if len(failed) > 0 {
-		warning(v.QWidget, "Save All Attachments", "Some attachments could not be saved:\n\n"+strings.Join(failed, "\n"))
+		warning(v, "Save All Attachments", "Some attachments could not be saved:\n\n"+strings.Join(failed, "\n"))
 	}
 }
 
@@ -128,11 +136,12 @@ func (v *messageView) saveFiles() {
 // over. chooseFolder asks for a folder. Tests replace them rather than let
 // the dialogs open.
 var (
-	chooseFile = func(parent *qt.QWidget, title, start string) string {
-		return qt.QFileDialog_GetSaveFileName3(parent, title, start)
+	chooseFile = func(parent qtwidgets.QWidgetLike, title, start string) string {
+		path, _ := qtwidgets.QFileDialogGetSaveFileNameFull(parent, title, start, "", "", 0)
+		return path
 	}
-	chooseFolder = func(parent *qt.QWidget, title, start string) string {
-		return qt.QFileDialog_GetExistingDirectory3(parent, title, start)
+	chooseFolder = func(parent qtwidgets.QWidgetLike, title, start string) string {
+		return qtwidgets.QFileDialogGetExistingDirectoryFull(parent, title, start, qtwidgets.QFileDialogShowDirsOnly)
 	}
 )
 

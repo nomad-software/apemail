@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"slices"
 
-	qt "github.com/mappu/miqt/qt6"
-	"github.com/mappu/miqt/qt6/mainthread"
+	"github.com/nomad-software/qute"
+	"github.com/nomad-software/qute/qtwidgets"
 
 	"github.com/nomad-software/apemail/internal/account"
 	"github.com/nomad-software/apemail/internal/crypt"
@@ -24,9 +24,8 @@ const needKeys = "ApeMail needs a pair of SSH keys to encrypt your accounts and 
 
 // askHidden asks for a passphrase or password in a dialog which does not
 // show what is typed. It is an error if the user cancels.
-func askHidden(parent *qt.QWidget, title, label string) (string, error) {
-	ok := false
-	value := qt.QInputDialog_GetText4(parent, title, label, qt.QLineEdit__Password, "", &ok)
+func askHidden(parent qtwidgets.QWidgetLike, title, label string) (string, error) {
+	value, ok := qtwidgets.QInputDialogGetTextFull(parent, title, label, qtwidgets.QLineEditPassword, "", 0, 0)
 	if !ok {
 		return "", errors.New("none was given")
 	}
@@ -35,7 +34,7 @@ func askHidden(parent *qt.QWidget, title, label string) (string, error) {
 
 // openKeysOf opens the keys the paths name, asking for the passphrase of the
 // private key if it has one.
-func openKeysOf(parent *qt.QWidget, public, private string) (*crypt.Keys, error) {
+func openKeysOf(parent qtwidgets.QWidgetLike, public, private string) (*crypt.Keys, error) {
 	return crypt.Open(public, private, func() ([]byte, error) {
 		passphrase, err := askHidden(parent, "Private Key", "Passphrase of "+private)
 		if err != nil {
@@ -49,11 +48,11 @@ func openKeysOf(parent *qt.QWidget, public, private string) (*crypt.Keys, error)
 // asks for keys if there are none.
 func (w *Window) openKeys() {
 	if w.config.PublicKey == "" || w.config.PrivateKey == "" {
-		qt.QMessageBox_Information(w.QWidget, "Keys Needed", needKeys)
+		information(w, "Keys Needed", needKeys)
 		w.editSettings()
 		return
 	}
-	keys, err := openKeysOf(w.QWidget, w.config.PublicKey, w.config.PrivateKey)
+	keys, err := openKeysOf(w, w.config.PublicKey, w.config.PrivateKey)
 	if err != nil {
 		w.warn("Keys", fmt.Errorf("the keys of the settings cannot be used: %w\n\n%s", err, needKeys))
 		return
@@ -89,7 +88,7 @@ func (w *Window) startAccount(a account.Account) {
 		w.showError(err)
 		return
 	}
-	e := engine.New(a, st, w, mainthread.Start)
+	e := engine.New(a, st, w, qute.Post)
 	w.engines[a.ID] = e
 	if !slices.Contains(w.order, a.ID) {
 		w.order = append(w.order, a.ID)
@@ -109,7 +108,7 @@ func (w *Window) editCurrentAccount() {
 // it if they are changed.
 func (w *Window) editAccountDialog(a account.Account, isNew bool) {
 	if w.keys == nil {
-		qt.QMessageBox_Information(w.QWidget, "Keys Needed", needKeys)
+		information(w, "Keys Needed", needKeys)
 		return
 	}
 	var folders []string
@@ -120,7 +119,7 @@ func (w *Window) editAccountDialog(a account.Account, isNew bool) {
 			}
 		}
 	}
-	newAccountDialog(w.QWidget, a, isNew, folders, func(changed account.Account) {
+	newAccountDialog(w, a, isNew, folders, func(changed account.Account) {
 		if err := account.Save(w.accountsDir(), changed, w.keys); err != nil {
 			w.warn("Account", fmt.Errorf("the account could not be saved: %w", err))
 			return
@@ -140,7 +139,7 @@ func (w *Window) removeCurrentAccount() {
 		return
 	}
 	a := e.Account()
-	if !confirm(w.QWidget, "Remove Account",
+	if !confirm(w, "Remove Account",
 		fmt.Sprintf("Remove %s from ApeMail?\n\nIts settings and the copy of its mail kept on this computer are deleted, "+
 			"along with any mail waiting in its outbox. The mailbox on the server is not touched.", a.Title())) {
 		return
@@ -174,7 +173,7 @@ func (w *Window) accountsDir() string {
 
 // editSettings shows the settings, and puts what is changed into effect.
 func (w *Window) editSettings() {
-	newSettingsDialog(w.QWidget, w.config, w.files.Accounts, func(changed settings.Settings) {
+	newSettingsDialog(w, w.config, w.files.Accounts, func(changed settings.Settings) {
 		w.applyInterface(changed)
 		keysChanged := changed.PublicKey != w.config.PublicKey || changed.PrivateKey != w.config.PrivateKey || w.keys == nil
 		from, to := w.accountsDir(), changed.AccountsDir(w.files.Accounts)
@@ -185,14 +184,14 @@ func (w *Window) editSettings() {
 
 		var keys *crypt.Keys
 		if keysChanged {
-			k, err := openKeysOf(w.QWidget, changed.PublicKey, changed.PrivateKey)
+			k, err := openKeysOf(w, changed.PublicKey, changed.PrivateKey)
 			if err != nil {
 				w.warn("Keys", err)
 				return
 			}
 			keys = k
 		}
-		if dirChanged && !confirm(w.QWidget, "Move Accounts and Mail",
+		if dirChanged && !confirm(w, "Move Accounts and Mail",
 			fmt.Sprintf("Move your accounts and the copy of your mail from\n%s\nto\n%s?", from, to)) {
 			return
 		}
@@ -246,7 +245,7 @@ func (w *Window) applySettings(changed settings.Settings, keys *crypt.Keys, from
 				failed = append(failed, fmt.Errorf("some files could not be encrypted with the new keys: %w", err))
 			}
 		}
-		mainthread.Start(func() {
+		qute.Post(func() {
 			w.setDoing("")
 			if keys != nil {
 				w.keys = keys

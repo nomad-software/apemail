@@ -9,7 +9,8 @@ import (
 	"time"
 
 	"github.com/emersion/go-imap/v2"
-	"github.com/mappu/miqt/qt6/mainthread"
+	"github.com/nomad-software/qute"
+	"github.com/nomad-software/qute/qutetest"
 
 	"github.com/nomad-software/apemail/internal/account"
 	"github.com/nomad-software/apemail/internal/crypt"
@@ -139,16 +140,16 @@ func TestScreenshot(t *testing.T) {
 	}
 
 	var w *Window
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		w = NewWindow(files)
 		w.Start()
 	})
-	t.Cleanup(func() { mainthread.Wait(func() { w.Close() }) })
+	t.Cleanup(func() { qutetest.Run(t, func() { w.Close() }) })
 	// The message is drawn only where it is seen.
-	mainthread.Wait(w.Show)
+	qute.PostSync(w.Show)
 	wait(t, "the inbox", func() bool { return w.folder == "INBOX" && len(w.list.rows) == len(sampleMail) })
 
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		clickRow(w.list, 0)
 	})
 	wait(t, "the message", func() bool { return w.view.msg != nil && strings.Contains(w.view.msg.Subject, "Difference Engine") })
@@ -157,7 +158,7 @@ func TestScreenshot(t *testing.T) {
 	// It is drawn a moment after it has loaded.
 	time.Sleep(time.Second)
 
-	saved := mainthread.Wait2(func() bool { return w.Grab().Save(path) })
+	saved := onUI(func() bool { return w.Grab().Save(path) == nil })
 	if !saved {
 		t.Fatalf("the screenshot could not be saved to %s", path)
 	}

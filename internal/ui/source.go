@@ -1,10 +1,11 @@
 package ui
 
 import (
-	"runtime"
 	"strings"
 
-	qt "github.com/mappu/miqt/qt6"
+	"github.com/nomad-software/qute/qtcore"
+	"github.com/nomad-software/qute/qtgui"
+	"github.com/nomad-software/qute/qtwidgets"
 
 	"github.com/nomad-software/apemail/internal/settings"
 )
@@ -13,7 +14,7 @@ import (
 // as the server has it, as plain text, so nothing in it is rendered or
 // fetched.
 type sourceWindow struct {
-	*qt.QPlainTextEdit
+	*qtwidgets.QPlainTextEdit
 }
 
 // sources are the windows of the sources of messages that are open.
@@ -30,7 +31,7 @@ func (w *Window) showMessageSource() {
 	if subject == "" {
 		subject = "(no subject)"
 	}
-	e.Message(w.view.folder, w.view.uid, func(raw []byte, err error) {
+	e.Message(w.view.folder, w.view.validity, w.view.uid, func(raw []byte, err error) {
 		if err != nil {
 			w.showError(err)
 			return
@@ -42,34 +43,32 @@ func (w *Window) showMessageSource() {
 // showSource opens a window showing the source of a message with the
 // subject. It belongs to the main window, so that it closes with it.
 func (w *Window) showSource(subject string, raw []byte) *sourceWindow {
-	s := &sourceWindow{QPlainTextEdit: qt.NewQPlainTextEdit(w.QWidget)}
-	s.SetWindowFlags(qt.Window)
-	s.SetAttribute(qt.WA_DeleteOnClose)
+	s := &sourceWindow{QPlainTextEdit: qtwidgets.NewQPlainTextEdit(w)}
+	s.SetWindowFlags(qtcore.Window)
+	s.SetAttribute(qtcore.WA_DeleteOnClose)
 	s.SetWindowTitle("Source of " + subject)
 	s.SetReadOnly(true)
 	font := codeFont(w.config)
 	s.SetFont(font)
-	runtime.KeepAlive(font)
 	// A message need not be UTF-8: what is not is shown as replacement
 	// characters rather than not at all.
 	s.SetPlainText(strings.ToValidUTF8(strings.ReplaceAll(string(raw), "\r\n", "\n"), "�"))
 	s.Resize(800, 600)
 
-	escape := qt.NewQAction2("Close")
-	escape.SetShortcut(qt.NewQKeySequence2("Esc"))
-	escape.OnTriggered(func() { s.Close() })
-	s.QWidget.AddAction(escape)
-	s.OnDestroyed(func() { delete(sources, s) })
+	escape := qtgui.NewQActionWithText("Close", s)
+	escape.SetShortcut(qtgui.NewQKeySequenceWithKey("Esc"))
+	escape.OnTriggered(func(bool) { s.Close() })
+	s.AddAction(escape)
+	s.OnDestroyed(func(*qtcore.QObject) { delete(sources, s) })
 	sources[s] = true
 	s.Show()
 	return s
 }
 
 // codeFont returns the code font the settings choose, or the system's
-// monospaced font, in the family or size they leave empty. It is a value
-// miqt frees itself, to be kept while it is used.
-func codeFont(config settings.Settings) *qt.QFont {
-	font := qt.QFontDatabase_SystemFont(qt.QFontDatabase__FixedFont)
+// monospaced font, in the family or size they leave empty.
+func codeFont(config settings.Settings) *qtgui.QFont {
+	font := qtgui.QFontDatabaseGetSystemFont(qtgui.QFontDatabaseFixedFont)
 	if config.CodeFont != "" {
 		font.SetFamily(config.CodeFont)
 	}
@@ -83,7 +82,6 @@ func codeFont(config settings.Settings) *qt.QFont {
 // the settings.
 func (w *Window) setSourceFont() {
 	font := codeFont(w.config)
-	defer runtime.KeepAlive(font)
 	for s := range sources {
 		s.SetFont(font)
 	}

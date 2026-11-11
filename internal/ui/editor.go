@@ -12,9 +12,10 @@ import (
 	"strings"
 	"unicode/utf16"
 
-	qt "github.com/mappu/miqt/qt6"
-	"github.com/mappu/miqt/qt6/mainthread"
-	"github.com/mappu/miqt/qt6/webengine"
+	"github.com/nomad-software/qute"
+	"github.com/nomad-software/qute/qtcore"
+	"github.com/nomad-software/qute/qtwebenginecore"
+	"github.com/nomad-software/qute/qtwidgets"
 
 	"github.com/nomad-software/apemail/internal/images"
 	"github.com/nomad-software/apemail/internal/message"
@@ -150,49 +151,45 @@ const editorScript = `(() => {
 
 // newBodyEditor makes the body of a message written as HTML, or as plain
 // text, which the parent owns.
-func newBodyEditor(parent *qt.QObject, asHTML bool) *bodyEditor {
+func newBodyEditor(parent qtwidgets.QWidgetLike, asHTML bool) *bodyEditor {
 	e := &bodyEditor{html: asHTML, answers: map[int]func(string, string){}, webImages: map[string][]byte{}, tried: map[string]bool{}}
 	e.ctx, e.stop = context.WithCancel(context.Background())
 	e.webPage = newWebPage(e, parent, !asHTML)
-	parent.OnDestroyed(e.stop)
-	script := webengine.NewQWebEngineScript()
+	parent.AsQWidget().OnDestroyed(func(*qtcore.QObject) { e.stop() })
+	script := qtwebenginecore.NewQWebEngineScript()
 	script.SetName("editor")
-	script.SetWorldId(uint(webengine.QWebEngineScript__ApplicationWorld))
-	script.SetInjectionPoint(webengine.QWebEngineScript__DocumentReady)
+	script.SetWorldId(uint(qtwebenginecore.QWebEngineScriptApplicationWorld))
+	script.SetInjectionPoint(qtwebenginecore.QWebEngineScriptDocumentReady)
 	script.SetSourceCode(editorScript)
 	e.page.Scripts().Insert(script)
-	script.Delete()
 
-	e.page.OnJavaScriptConsoleMessage(func(_ func(webengine.QWebEnginePage__JavaScriptConsoleMessageLevel, string, int, string), _ webengine.QWebEnginePage__JavaScriptConsoleMessageLevel, msg string, _ int, _ string) {
+	e.page.console = func(msg string) {
 		// What else is written there is Chromium's own.
 		if rest, ok := strings.CutPrefix(msg, consoleMark); ok {
 			e.received(rest)
 		}
-	})
+	}
 	// Nothing in the body is followed, nor anything loaded in its place.
-	e.page.OnAcceptNavigationRequest(func(_ func(*qt.QUrl, webengine.QWebEnginePage__NavigationType, bool) bool, u *qt.QUrl, typ webengine.QWebEnginePage__NavigationType, mainFrame bool) bool {
-		return mainFrame && encoded(u) == e.pageURL("edit") && typ != webengine.QWebEnginePage__NavigationTypeLinkClicked &&
-			typ != webengine.QWebEnginePage__NavigationTypeFormSubmitted
-	})
+	e.page.navigate = func(address string, typ qtwebenginecore.QWebEnginePageNavigationType, mainFrame bool) bool {
+		return mainFrame && address == e.pageURL("edit") && typ != qtwebenginecore.QWebEnginePageNavigationTypeLinkClicked &&
+			typ != qtwebenginecore.QWebEnginePageNavigationTypeFormSubmitted
+	}
 	e.page.OnLoadFinished(func(bool) {
 		if e.gone || shownBy(encoded(e.page.Url())) != webHost(e) {
 			return
 		}
 		e.loaded = true
 		for _, s := range e.pending {
-			e.page.RunJavaScript2(s, uint(webengine.QWebEngineScript__ApplicationWorld))
+			e.page.RunJavaScriptFull(s, uint(qtwebenginecore.QWebEngineScriptApplicationWorld), nil)
 		}
 		e.pending = nil
 	})
 	// A change of theme is shown at once, without loading the body again,
 	// which would lose what is written.
-	e.web.OnChangeEvent(func(super func(*qt.QEvent), ev *qt.QEvent) {
-		super(ev)
-		if ev.Type() == qt.QEvent__PaletteChange {
-			e.paint()
-			e.call("colours", themeCSS())
-		}
-	})
+	e.web.themed = func() {
+		e.paint()
+		e.call("colours", themeCSS())
+	}
 	e.paint()
 	return e
 }
@@ -244,7 +241,7 @@ func (e *bodyEditor) call(name string, args ...any) {
 		e.pending = append(e.pending, s)
 		return
 	}
-	e.page.RunJavaScript2(s, uint(webengine.QWebEngineScript__ApplicationWorld))
+	e.page.RunJavaScriptFull(s, uint(qtwebenginecore.QWebEngineScriptApplicationWorld), nil)
 }
 
 // content calls got with what the body holds, as HTML (as a page, if it is
@@ -294,21 +291,25 @@ func (e *bodyEditor) received(msg string) {
 
 // The Edit menu's commands, for the body (editor).
 
-func (e *bodyEditor) Undo()      { e.page.TriggerAction(webengine.QWebEnginePage__Undo, false) }
-func (e *bodyEditor) Redo()      { e.page.TriggerAction(webengine.QWebEnginePage__Redo, false) }
-func (e *bodyEditor) Cut()       { e.page.TriggerAction(webengine.QWebEnginePage__Cut, false) }
-func (e *bodyEditor) Copy()      { e.page.TriggerAction(webengine.QWebEnginePage__Copy, false) }
-func (e *bodyEditor) Paste()     { e.page.TriggerAction(webengine.QWebEnginePage__Paste, false) }
-func (e *bodyEditor) SelectAll() { e.page.TriggerAction(webengine.QWebEnginePage__SelectAll, false) }
+func (e *bodyEditor) Undo()      { e.page.TriggerAction(qtwebenginecore.QWebEnginePageUndo) }
+func (e *bodyEditor) Redo()      { e.page.TriggerAction(qtwebenginecore.QWebEnginePageRedo) }
+func (e *bodyEditor) Cut()       { e.page.TriggerAction(qtwebenginecore.QWebEnginePageCut) }
+func (e *bodyEditor) Copy()      { e.page.TriggerAction(qtwebenginecore.QWebEnginePageCopy) }
+func (e *bodyEditor) Paste()     { e.page.TriggerAction(qtwebenginecore.QWebEnginePagePaste) }
+func (e *bodyEditor) SelectAll() { e.page.TriggerAction(qtwebenginecore.QWebEnginePageSelectAll) }
 
 // pastePlain pastes the text of the clipboard without its formatting.
 func (e *bodyEditor) pastePlain() {
-	e.page.TriggerAction(webengine.QWebEnginePage__PasteAndMatchStyle, false)
+	e.page.TriggerAction(qtwebenginecore.QWebEnginePagePasteAndMatchStyle)
 }
 
 // canUndo and canRedo report if there is something to undo and to redo.
-func (e *bodyEditor) canUndo() bool { return e.page.Action(webengine.QWebEnginePage__Undo).IsEnabled() }
-func (e *bodyEditor) canRedo() bool { return e.page.Action(webengine.QWebEnginePage__Redo).IsEnabled() }
+func (e *bodyEditor) canUndo() bool {
+	return e.page.Action(qtwebenginecore.QWebEnginePageUndo).IsEnabled()
+}
+func (e *bodyEditor) canRedo() bool {
+	return e.page.Action(qtwebenginecore.QWebEnginePageRedo).IsEnabled()
+}
 
 // base returns the page of the body.
 func (e *bodyEditor) base() *webPage { return e.webPage }
@@ -347,7 +348,7 @@ func (e *bodyEditor) webImage(address string) string {
 		// Those the page asks for together are fetched together, once
 		// it has asked for them all.
 		if len(e.queued) == 1 {
-			mainthread.Start(e.fetchImages)
+			qute.Post(e.fetchImages)
 		}
 	}
 	return ""
@@ -364,7 +365,7 @@ func (e *bodyEditor) fetchImages() {
 	}
 	go func() {
 		got := images.Fetch(ctx, srcs)
-		mainthread.Start(func() {
+		qute.Post(func() {
 			if e.gone || ctx.Err() != nil || len(got) == 0 {
 				return
 			}

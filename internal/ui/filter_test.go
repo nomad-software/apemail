@@ -6,8 +6,10 @@ import (
 	"testing"
 
 	"github.com/emersion/go-imap/v2"
-	qt "github.com/mappu/miqt/qt6"
-	"github.com/mappu/miqt/qt6/mainthread"
+	"github.com/nomad-software/qute/qtcore"
+	"github.com/nomad-software/qute/qtgui"
+	"github.com/nomad-software/qute/qtwidgets"
+	"github.com/nomad-software/qute/qutetest"
 
 	"github.com/nomad-software/apemail/internal/remote/remotetest"
 	"github.com/nomad-software/apemail/internal/store"
@@ -37,7 +39,7 @@ func shownUIDs(l *messageList) []uint32 {
 // TestFilterHeaders checks what the filter looks at, the subject, sender and
 // recipients, whatever the case, and that every word must be in them.
 func TestFilterHeaders(t *testing.T) {
-	withList(func(l *messageList) {
+	withList(t, func(l *messageList) {
 		l.setIndex(filterFolder(), false)
 		for text, want := range map[string][]uint32{
 			"report":      {1, 2, 3},
@@ -61,7 +63,7 @@ func TestFilterHeaders(t *testing.T) {
 			if got := shownUIDs(l); !slices.Equal(got, want) {
 				t.Errorf("filter %q shows %v, want %v", text, got, want)
 			}
-			if got := l.model.RowCount(noParent); got != len(want) {
+			if got := l.model.RowCount(qtcore.NewQModelIndex()); got != len(want) {
 				t.Errorf("filter %q: the model has %d rows", text, got)
 			}
 		}
@@ -72,10 +74,10 @@ func TestFilterHeaders(t *testing.T) {
 // that sorting while filtered keeps to the filter, and that taking the filter
 // away shows the sort made meanwhile.
 func TestFilterOrder(t *testing.T) {
-	withList(func(l *messageList) {
+	withList(t, func(l *messageList) {
 		l.setIndex(filterFolder(), false)
 		l.setFilter("report")
-		l.SortByColumn(colSubject, qt.AscendingOrder)
+		l.SortByColumn(colSubject, qtcore.AscendingOrder)
 		subjects := func() (got []string) {
 			for _, r := range l.rows {
 				got = append(got, r.Subject)
@@ -97,14 +99,14 @@ func TestFilterOrder(t *testing.T) {
 // message is among them all, the message filtered out is changed too, and new
 // messages are filtered.
 func TestFilterFollowsFolder(t *testing.T) {
-	withList(func(l *messageList) {
+	withList(t, func(l *messageList) {
 		ix := filterFolder()
 		l.setIndex(ix, false)
 		l.setFilter("lunch")
 
 		resets, drawn := 0, -1
 		l.model.OnModelReset(func() { resets++ })
-		l.model.OnDataChanged(func(from, _ *qt.QModelIndex) { drawn = from.Row() })
+		l.model.OnDataChanged(func(from, _ *qtcore.QModelIndex, _ []int) { drawn = from.Row() })
 		changed := *ix
 		changed.Messages = slices.Clone(ix.Messages)
 		changed.Messages[1].Flags = []string{`\Seen`}
@@ -150,7 +152,7 @@ func TestFilterFollowsFolder(t *testing.T) {
 // TestFilterKeepsSelection checks that a message selected and still shown
 // stays selected, in its new row, and that one filtered out does not.
 func TestFilterKeepsSelection(t *testing.T) {
-	withList(func(l *messageList) {
+	withList(t, func(l *messageList) {
 		l.setIndex(filterFolder(), false)
 		clickRow(l, l.row[2])
 		addRow(l, l.row[4])
@@ -177,7 +179,7 @@ func TestFilterProtectsHidden(t *testing.T) {
 	w := newTestWindow(t, s)
 	wait(t, "the inbox", func() bool { return len(w.list.rows) == 5 && w.folder == "INBOX" })
 
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		// A message selected before the filter hides it is not deleted.
 		for i, r := range w.list.rows {
 			if r.Subject == "Keep one" {
@@ -197,7 +199,7 @@ func TestFilterProtectsHidden(t *testing.T) {
 	wait(t, "the next to be selected", func() bool {
 		return len(w.list.all) == 4 && len(w.list.rows) == 2 && len(w.list.selectedUIDs()) == 1
 	})
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		next, _ := w.list.summary(w.list.selectedUIDs()[0])
 		if !strings.HasPrefix(next.Subject, "Drop") {
 			t.Errorf("selected next: %q", next.Subject)
@@ -218,7 +220,7 @@ func TestFilterProtectsHidden(t *testing.T) {
 	if trash := s.Messages(t, "Trash"); len(trash) != 3 {
 		t.Errorf("trash = %+v", trash)
 	}
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if len(w.list.rows) != 0 || len(w.list.selectedUIDs()) != 0 {
 			t.Errorf("rows %+v, selected %v", w.list.rows, w.list.selectedUIDs())
 		}
@@ -238,14 +240,14 @@ func TestFilterField(t *testing.T) {
 	w := newTestWindow(t, s)
 	wait(t, "the inbox", func() bool { return len(w.list.rows) == 3 && w.folder == "INBOX" })
 
-	var clearButton *qt.QAction
-	mainthread.Wait(func() {
+	var clearButton *qtgui.QAction
+	qutetest.Run(t, func() {
 		clearButton = w.filter.Actions()[0]
-		if w.filter.IsVisibleTo(w.QWidget) || clearButton.IsVisible() {
-			t.Errorf("before it is asked for, field shown %v, clear shown %v", w.filter.IsVisibleTo(w.QWidget), clearButton.IsVisible())
+		if w.filter.IsVisibleTo(w) || clearButton.IsVisible() {
+			t.Errorf("before it is asked for, field shown %v, clear shown %v", w.filter.IsVisibleTo(w), clearButton.IsVisible())
 		}
 		w.openFilter()
-		if !w.filter.IsVisibleTo(w.QWidget) {
+		if !w.filter.IsVisibleTo(w) {
 			t.Errorf("the field is not shown when asked for")
 		}
 		w.filter.SetText("p")
@@ -263,14 +265,14 @@ func TestFilterField(t *testing.T) {
 		if w.filter.Text() != "" || len(w.list.rows) != 3 || clearButton.IsVisible() {
 			t.Errorf("cleared: %q, rows %+v, clear shown %v", w.filter.Text(), w.list.rows, clearButton.IsVisible())
 		}
-		if w.filter.IsVisibleTo(w.QWidget) {
+		if w.filter.IsVisibleTo(w) {
 			t.Errorf("the field is shown once cleared")
 		}
 		w.openFilter()
 
 		w.filter.SetText("plu")
 		w.folders.selectFolder(w.account, "Other")
-		if w.filter.IsVisibleTo(w.QWidget) {
+		if w.filter.IsVisibleTo(w) {
 			t.Errorf("the field is shown in another folder")
 		}
 		if w.filter.Text() != "" || len(w.list.filter) != 0 {
@@ -279,10 +281,10 @@ func TestFilterField(t *testing.T) {
 	})
 	wait(t, "the other folder", func() bool { return len(w.list.rows) == 1 && w.list.rows[0].Subject == "Figs" })
 
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		w.openFilter()
 		w.folders.SetCurrentItem(w.folders.accounts[w.account])
-		if w.filter.IsVisibleTo(w.QWidget) {
+		if w.filter.IsVisibleTo(w) {
 			t.Errorf("the field is shown with no folder")
 		}
 	})
@@ -298,11 +300,11 @@ func TestFilterShortcut(t *testing.T) {
 	w := newTestWindow(t, s)
 	wait(t, "the inbox", func() bool { return len(w.list.rows) == 1 && w.folder == "INBOX" })
 
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		w.Resize(1280, 800)
 		w.Show()
 		w.ActivateWindow()
-		qt.QCoreApplication_ProcessEvents()
+		qtcore.QCoreApplicationProcessEvents()
 		if got := w.filterMessages.Shortcut().ToString(); got != "Ctrl+F" {
 			t.Errorf("shortcut = %q", got)
 		}
@@ -329,9 +331,7 @@ func TestFilterShortcut(t *testing.T) {
 			t.Errorf("disabled with a folder listed")
 		}
 
-		e := qt.NewQKeyEvent3(qt.QEvent__KeyPress, int(qt.Key_Escape), qt.NoModifier, "")
-		qt.QCoreApplication_SendEvent(w.filter.QObject, e.QEvent)
-		e.Delete()
+		qtcore.QCoreApplicationSendEvent(w.filter, qtgui.NewQKeyEvent(qtcore.QEventKeyPress, int(qtcore.Key_Escape), qtcore.NoModifier))
 		if w.filter.IsVisible() || w.filter.Text() != "" || len(w.list.filter) != 0 {
 			t.Errorf("after Escape the field is shown %v with %q", w.filter.IsVisible(), w.filter.Text())
 		}
@@ -355,12 +355,12 @@ func TestFilterHalfRow(t *testing.T) {
 	w := newTestWindow(t, s)
 	wait(t, "the inbox", func() bool { return w.folder == "INBOX" && len(w.list.rows) == 1 })
 
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		w.Show()
 		w.openFilter()
 		for _, width := range []int{1000, 1280, 1600} {
 			w.Resize(width, 800)
-			qt.QCoreApplication_ProcessEvents()
+			qtcore.QCoreApplicationProcessEvents()
 			field, title := w.filter.Width(), w.folderTitle.Width()
 			if field-title > 1 || title-field > 1 {
 				t.Errorf("at %d the field is %d wide and the title %d", width, field, title)
@@ -368,7 +368,7 @@ func TestFilterHalfRow(t *testing.T) {
 		}
 		half := w.filter.Width()
 		w.folderTitle.SetText(strings.Repeat("A long name ", 20))
-		qt.QCoreApplication_ProcessEvents()
+		qtcore.QCoreApplicationProcessEvents()
 		if got := w.filter.Width(); got >= half {
 			t.Errorf("beside a long title the field is %d wide, was %d", got, half)
 		}
@@ -380,19 +380,19 @@ func TestFilterHalfRow(t *testing.T) {
 // Qt asks the widget with the focus first, by this event, and a shortcut only
 // fires if it is ignored.
 func TestFilterKeepsDeleteKey(t *testing.T) {
-	withList(func(l *messageList) {
+	withList(t, func(l *messageList) {
+		window := qtwidgets.NewQWidget(nil)
+		defer window.DeleteLater()
 		w := &Window{list: l}
-		w.makeFilter()
-		defer w.filter.Delete()
+		w.makeFilter(window)
 		w.filter.SetText("text")
-		for _, key := range []qt.Key{qt.Key_Delete, qt.Key_Backspace} {
-			e := qt.NewQKeyEvent3(qt.QEvent__ShortcutOverride, int(key), qt.NoModifier, "")
+		for _, key := range []qtcore.Key{qtcore.Key_Delete, qtcore.Key_Backspace} {
+			e := qtgui.NewQKeyEvent(qtcore.QEventShortcutOverride, int(key), qtcore.NoModifier)
 			e.Ignore()
-			qt.QCoreApplication_SendEvent(w.filter.QObject, e.QEvent)
+			qtcore.QCoreApplicationSendEvent(w.filter, e)
 			if !e.IsAccepted() {
 				t.Errorf("key %v is left to the shortcuts", key)
 			}
-			e.Delete()
 		}
 	})
 }
@@ -402,7 +402,7 @@ func TestFilterKeepsDeleteKey(t *testing.T) {
 // most, as each gets a row.
 func BenchmarkFilter100k(b *testing.B) {
 	ix := folderOf(100000)
-	withList(func(l *messageList) {
+	withList(b, func(l *messageList) {
 		l.setIndex(ix, false)
 		filters := []string{"example", "example.com"}
 		i := 0

@@ -8,11 +8,14 @@ import (
 	"time"
 
 	"github.com/emersion/go-imap/v2"
-	qt "github.com/mappu/miqt/qt6"
-	"github.com/mappu/miqt/qt6/mainthread"
+	"github.com/nomad-software/qute"
+	"github.com/nomad-software/qute/qtcore"
+	"github.com/nomad-software/qute/qtwidgets"
+	"github.com/nomad-software/qute/qutetest"
 
 	"github.com/nomad-software/apemail/internal/account"
 	"github.com/nomad-software/apemail/internal/addressbook"
+	"github.com/nomad-software/apemail/internal/engine"
 	"github.com/nomad-software/apemail/internal/message"
 	"github.com/nomad-software/apemail/internal/remote/remotetest"
 	"github.com/nomad-software/apemail/internal/send/sendtest"
@@ -25,11 +28,11 @@ func TestInBackground(t *testing.T) {
 	for _, destroy := range []bool{false, true} {
 		release := make(chan struct{})
 		worked, answered := false, false
-		var w *qt.QWidget
-		mainthread.Wait(func() {
-			w = qt.NewQWidget2()
+		var w *qtwidgets.QWidget
+		qutetest.Run(t, func() {
+			w = qtwidgets.NewQWidget(nil)
 			// A widget within it goes with it.
-			inner := qt.NewQWidget(w)
+			inner := qtwidgets.NewQWidget(w)
 			inBackground(inner, func() {
 				<-release
 				worked = true
@@ -42,8 +45,8 @@ func TestInBackground(t *testing.T) {
 		// Whatever is posted to the UI's thread is run by the time
 		// something posted after it is.
 		time.Sleep(50 * time.Millisecond)
-		mainthread.Wait(func() {})
-		mainthread.Wait(func() {
+		qutetest.Run(t, func() {})
+		qutetest.Run(t, func() {
 			if answered == destroy {
 				t.Errorf("destroyed %v: answered %v", destroy, answered)
 			}
@@ -55,11 +58,11 @@ func TestInBackground(t *testing.T) {
 }
 
 // findButton returns the push button within the widget with the text.
-func findButton(t *testing.T, within *qt.QWidget, text string) *qt.QPushButton {
+func findButton(t *testing.T, within qtwidgets.QWidgetLike, text string) *qtwidgets.QPushButton {
 	t.Helper()
-	for _, w := range qt.QApplication_AllWidgets() {
-		if w.Inherits("QPushButton") && within.IsAncestorOf(w) {
-			if b := qt.UnsafeNewQPushButton(w.UnsafePointer()); b.Text() == text {
+	for _, w := range qtwidgets.QApplicationAllWidgets() {
+		if w.Inherits("QPushButton") && within.AsQWidget().IsAncestorOf(w) {
+			if b := qtwidgets.QPushButtonCast(w); b.Text() == text {
 				return b
 			}
 		}
@@ -90,14 +93,14 @@ func TestAccountDialogClosedWhileTesting(t *testing.T) {
 	// Each server has a button to test it, and either is the one found.
 	a.Outgoing = a.Incoming
 
-	var d *qt.QDialog
+	var d *qtwidgets.QDialog
 	gone := false
-	mainthread.Wait(func() {
-		parent := qt.NewQWidget2()
-		t.Cleanup(func() { mainthread.Wait(parent.Delete) })
+	qutetest.Run(t, func() {
+		parent := qtwidgets.NewQWidget(nil)
+		t.Cleanup(func() { qute.PostSync(parent.Delete) })
 		d = newAccountDialog(parent, a, false, nil, func(account.Account) {})
-		d.OnDestroyed(func() { gone = true })
-		findButton(t, d.QWidget, "Test Connection").Click()
+		d.OnDestroyed(func(*qtcore.QObject) { gone = true })
+		findButton(t, d, "Test Connection").Click()
 	})
 	var conn net.Conn
 	select {
@@ -105,12 +108,12 @@ func TestAccountDialogClosedWhileTesting(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the server was not reached")
 	}
-	mainthread.Wait(func() { d.Reject() })
+	qutetest.Run(t, func() { d.Reject() })
 	wait(t, "the dialog deleted", func() bool { return gone })
 	// The test fails now, and its answer has no dialog to be shown in.
 	conn.Close()
 	time.Sleep(100 * time.Millisecond)
-	mainthread.Wait(func() {})
+	qutetest.Run(t, func() {})
 }
 
 // TestCloseWhileSavingDraft checks that the window to write a message in
@@ -123,13 +126,13 @@ func TestCloseWhileSavingDraft(t *testing.T) {
 	c := openComposer(t, w)
 	held, release := s.Hold(t, "APPEND")
 	typeInBody(t, c, "Not finished.")
-	mainthread.Wait(func() { c.saveDraft(nil) })
+	qutetest.Run(t, func() { c.saveDraft(nil) })
 	select {
 	case <-held:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the draft was not appended")
 	}
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		// Were it asked, the question would wait for an answer: it
 		// is not, as the window does not close while saving.
 		c.Close()
@@ -139,7 +142,7 @@ func TestCloseWhileSavingDraft(t *testing.T) {
 	})
 	release()
 	wait(t, "the draft saved", func() bool { return !c.savingDraft && len(c.saved) == 1 })
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if !strings.Contains(c.StatusBar().CurrentMessage(), "saved") {
 			t.Errorf("status = %q", c.StatusBar().CurrentMessage())
 		}
@@ -158,7 +161,7 @@ func TestStatusOfWindow(t *testing.T) {
 	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus))
 	w := newTestWindow(t, s, func(a *account.Account) { a.CheckOnStart = false })
 	wait(t, "the account", func() bool { return len(w.engines) == 1 })
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		w.stopAccounts()
 		w.setDoing("Applying the settings…")
 		if got := w.statusText.Text(); got != "Applying the settings…" {
@@ -188,7 +191,7 @@ func TestManyAddressBookSaves(t *testing.T) {
 	w := newTestWindow(t, s, func(a *account.Account) { a.CheckOnStart = false })
 	waitForBook(t, w)
 	const n = 30
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		for i := range n {
 			if err := w.changeAddressBook(func(b *addressbook.Book) (bool, error) {
 				return b.Add(addressbook.Contact{Email: fmt.Sprintf("c%02d@example.com", i)})
@@ -216,14 +219,14 @@ func TestOtherMessageChosenWhileDownloading(t *testing.T) {
 	w := newTestWindow(t, s)
 	wait(t, "the messages", func() bool { return len(w.list.rows) == 2 })
 	held, release := s.Hold(t, "BODY.PEEK[]")
-	mainthread.Wait(func() { clickRow(w.list, 0) })
+	qutetest.Run(t, func() { clickRow(w.list, 0) })
 	select {
 	case <-held:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the message was not asked for")
 	}
 	var want string
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		want = w.list.rows[1].Subject
 		clickRow(w.list, 1)
 	})
@@ -231,7 +234,7 @@ func TestOtherMessageChosenWhileDownloading(t *testing.T) {
 	wait(t, "the second message", func() bool { return w.view.msg != nil && w.view.msg.Subject == want })
 	// What was asked for first has arrived by now, and is not shown.
 	time.Sleep(100 * time.Millisecond)
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if w.view.msg.Subject != want {
 			t.Errorf("shown %q, not %q", w.view.msg.Subject, want)
 		}
@@ -245,24 +248,24 @@ func TestImagesOfAnotherMessage(t *testing.T) {
 	s := newImageServer(t)
 	s.hold = make(chan struct{})
 	var v *messageView
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		v = newMessageView()
-		v.show(imageMessage(s, "/a.png"), "INBOX", 1)
+		v.show(imageMessage(s, "/a.png"), "INBOX", 1, 1)
 		v.loadImages.Click()
 	})
-	t.Cleanup(func() { mainthread.Wait(func() { v.DeleteLater() }) })
+	t.Cleanup(func() { qutetest.Run(t, func() { v.DeleteLater() }) })
 	eventually(t, "the image to be asked for", func() bool { return s.count("/a.png") == 1 })
 
 	// The images arrive while the UI's thread is busy, and are shown
 	// after the other message is.
 	other := imageMessage(s, "/b.png")
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		close(s.hold)
 		time.Sleep(300 * time.Millisecond)
-		v.show(other, "INBOX", 2)
+		v.show(other, "INBOX", 1, 2)
 	})
 	time.Sleep(100 * time.Millisecond)
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if len(v.images) != 0 || v.msg != other {
 			t.Errorf("the images of the first are kept with the other: %d", len(v.images))
 		}
@@ -278,17 +281,17 @@ func TestImagesAfterViewGone(t *testing.T) {
 	s := newImageServer(t)
 	s.hold = make(chan struct{})
 	var v *messageView
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		v = newMessageView()
-		v.show(imageMessage(s, "/a.png"), "INBOX", 1)
+		v.show(imageMessage(s, "/a.png"), "INBOX", 1, 1)
 		v.loadImages.Click()
 	})
 	eventually(t, "the image to be asked for", func() bool { return s.count("/a.png") == 1 })
-	mainthread.Wait(func() { v.Delete() })
+	qutetest.Run(t, func() { v.Delete() })
 	close(s.hold)
 	time.Sleep(200 * time.Millisecond)
 	// Had the view been touched, the test would have crashed.
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if !v.gone {
 			t.Error("the view does not know it is gone")
 		}
@@ -305,7 +308,7 @@ func TestCloseWhileBodyAnswers(t *testing.T) {
 	wait(t, "the account", func() bool { return len(w.engines) == 1 })
 	c := openComposer(t, w)
 	typeInBody(t, c, "Written")
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		// Were it to close, it would not ask about what is written.
 		c.body.modified = false
 		c.send()
@@ -329,7 +332,7 @@ func TestDraftBeforeBodyLoads(t *testing.T) {
 	var c *composer
 	var text string
 	done := false
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		w.composeNew("bob@example.com", "Early")
 		for c = range composers {
 		}
@@ -363,8 +366,8 @@ func TestBodyImagesAfterClose(t *testing.T) {
 	})
 	wait(t, "the account", func() bool { return len(w.engines) == 1 })
 	var c *composer
-	mainthread.Wait(func() {
-		w.composeDraft(w.engines[w.order[0]], imageMessage(images, "/a.png"), "Drafts", 1)
+	qutetest.Run(t, func() {
+		w.composeDraft(w.engines[w.order[0]], imageMessage(images, "/a.png"), engine.Saved{Folder: "Drafts", UID: 1})
 		for c = range composers {
 		}
 	})
@@ -375,7 +378,7 @@ func TestBodyImagesAfterClose(t *testing.T) {
 	close(images.hold)
 	time.Sleep(200 * time.Millisecond)
 	// Had the body been touched, the test would have crashed.
-	mainthread.Wait(func() {
+	qutetest.Run(t, func() {
 		if len(body.webImages) != 0 {
 			t.Errorf("%d images were kept by the body gone", len(body.webImages))
 		}

@@ -9,3 +9,20 @@ func SetWatchRetry(d time.Duration) (restore func()) {
 	watchRetry, watchRetryMost = d, 4*d
 	return func() { watchRetry, watchRetryMost = old, oldMost }
 }
+
+// Validity returns the UIDVALIDITY of the index of the folder, which a test
+// gives with the UIDs it read from that index, as the UI does.
+func (e *Engine) Validity(folder string) uint32 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.index(folder).UIDValidity
+}
+
+// SetOpIdle has the connection of the op worker tried once it has been
+// unused for d, rather than a minute, until the test ends, when it is put
+// back.
+func SetOpIdle(d time.Duration) (restore func()) {
+	old := opIdle
+	opIdle = d
+	return func() { opIdle = old }
+}

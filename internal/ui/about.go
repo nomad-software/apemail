@@ -1,11 +1,12 @@
 package ui
 
 import (
-	qt "github.com/mappu/miqt/qt6"
-	"runtime"
 	"runtime/debug"
 	"strconv"
 	"strings"
+
+	"github.com/nomad-software/qute/qtcore"
+	"github.com/nomad-software/qute/qtwidgets"
 )
 
 // aboutWidth is the narrowest the about box is, so that the notices of the
@@ -52,29 +53,27 @@ func aboutText() string {
 // newAboutTitle returns the name of the program with its version to the
 // right of it, smaller and half transparent, on one baseline, and the label
 // of the version.
-func newAboutTitle() (*qt.QHBoxLayout, *qt.QLabel) {
-	name := qt.NewQLabel3("ApeMail")
+func newAboutTitle() (*qtwidgets.QHBoxLayout, *qtwidgets.QLabel) {
+	name := qtwidgets.NewQLabelWithText("ApeMail", nil)
 	font := name.Font()
 	font.SetBold(true)
 	font.SetPointSizeF(font.PointSizeF() * 1.5)
 	name.SetFont(font)
 
-	version := qt.NewQLabel3(appVersion())
-	version.SetTextFormat(qt.PlainText)
+	version := qtwidgets.NewQLabelWithText(appVersion(), nil)
+	version.SetTextFormat(qtcore.PlainText)
 	small := version.Font()
 	small.SetPointSizeF(small.PointSizeF() * 0.8)
 	version.SetFont(small)
 	nameMetrics, versionMetrics := name.FontMetrics(), version.FontMetrics()
-	version.SetContentsMargins(0, 0, 0, nameMetrics.Descent()-versionMetrics.Descent())
-	runtime.KeepAlive(nameMetrics)
-	runtime.KeepAlive(versionMetrics)
-	faded := qt.NewQGraphicsOpacityEffect()
+	version.SetContentsMargins(qtcore.QMargins{Bottom: nameMetrics.Descent() - versionMetrics.Descent()})
+	faded := qtwidgets.NewQGraphicsOpacityEffect(nil)
 	faded.SetOpacity(0.5)
-	version.SetGraphicsEffect(faded.QGraphicsEffect)
+	version.SetGraphicsEffect(faded)
 
-	title := qt.NewQHBoxLayout2()
-	title.AddWidget3(name.QWidget, 0, qt.AlignBottom)
-	title.AddWidget3(version.QWidget, 0, qt.AlignBottom)
+	title := qtwidgets.NewQHBoxLayout(nil)
+	title.AddWidgetFull(name, 0, qtcore.AlignBottom)
+	title.AddWidgetFull(version, 0, qtcore.AlignBottom)
 	title.AddStretch()
 	return title, version
 }
@@ -97,8 +96,8 @@ func licenceText() string {
 		"<a href=\"https://www.chromium.org\">Chromium</a>, under its own BSD licence and those of the " +
 		"third party code within it, listed at " +
 		"<a href=\"https://doc.qt.io/qt-6/qtwebengine-licensing.html\">doc.qt.io/qt-6/qtwebengine-licensing.html</a>.</p>" +
-		"<p>The Go bindings for Qt are provided by <a href=\"https://github.com/mappu/miqt\">miqt</a>, " +
-		"used under the MIT licence.</p>" +
+		"<p>The Go bindings for Qt are provided by <a href=\"https://github.com/nomad-software/qute\">qute</a>, " +
+		"used under the GNU General Public License version 3.</p>" +
 		"<p>It is also built with the Go libraries " +
 		"<a href=\"https://github.com/emersion/go-imap\">go-imap</a> (MIT) for IMAP, " +
 		"<a href=\"https://github.com/emersion/go-smtp\">go-smtp</a> (MIT) for SMTP, " +
@@ -107,7 +106,8 @@ func licenceText() string {
 		"<a href=\"https://age-encryption.org\">age</a> (BSD) for encryption, with " +
 		"<a href=\"https://github.com/FiloSottile/edwards25519\">edwards25519</a> (BSD) and " +
 		"<a href=\"https://github.com/FiloSottile/hpke\">hpke</a> (BSD), " +
-		"<a href=\"https://pkg.go.dev/golang.org/x/crypto\">x/crypto</a> (BSD) and " +
+		"<a href=\"https://pkg.go.dev/golang.org/x/crypto\">x/crypto</a> (BSD), " +
+		"<a href=\"https://pkg.go.dev/golang.org/x/sys\">x/sys</a> (BSD) and " +
 		"<a href=\"https://pkg.go.dev/golang.org/x/text\">x/text</a> (BSD).</p>"
 }
 
@@ -115,37 +115,36 @@ func licenceText() string {
 // the notices of the licences beneath in a frame of the style's own, in the
 // colours of the theme.
 type aboutDialog struct {
-	*qt.QDialog
+	*qtwidgets.QDialog
 	// notices is the frame around the notices of the licences.
-	notices *qt.QFrame
+	notices *qtwidgets.QFrame
 	// version is the label of the version of the program.
-	version *qt.QLabel
+	version *qtwidgets.QLabel
 }
 
-func newAboutDialog(parent *qt.QWidget) *aboutDialog {
-	d := &aboutDialog{QDialog: qt.NewQDialog(parent)}
+func newAboutDialog(parent qtwidgets.QWidgetLike) *aboutDialog {
+	d := &aboutDialog{QDialog: qtwidgets.NewQDialog(parent)}
 	d.SetWindowTitle("About ApeMail")
 	d.SetMinimumWidth(aboutWidth)
 
-	ic := qt.NewQLabel2()
-	pixmap := appIcon().PixmapWithExtent(aboutIconSize)
+	ic := qtwidgets.NewQLabel(nil)
+	pixmap := appIcon().PixmapExtent(aboutIconSize)
 	ic.SetPixmap(pixmap)
-	runtime.KeepAlive(pixmap)
-	ic.SetAlignment(qt.AlignTop)
+	ic.SetAlignment(qtcore.AlignTop)
 
 	title, version := newAboutTitle()
 	d.version = version
 
-	about := qt.NewQVBoxLayout2()
+	about := qtwidgets.NewQVBoxLayout(nil)
 	about.SetSpacing(12)
-	about.AddLayout(title.QLayout)
-	about.AddWidget(newRichLabel(aboutText()).QWidget)
+	about.AddLayout(title)
+	about.AddWidget(newRichLabel(aboutText()))
 	about.AddStretch()
 
-	top := qt.NewQHBoxLayout2()
+	top := qtwidgets.NewQHBoxLayout(nil)
 	top.SetSpacing(20)
-	top.AddWidget(ic.QWidget)
-	top.AddLayout2(about.QLayout, 1)
+	top.AddWidget(ic)
+	top.AddLayoutFull(about, 1)
 
 	// The notices are smaller than the rest, as on a label of the style.
 	licences := newRichLabel(licenceText())
@@ -153,40 +152,40 @@ func newAboutDialog(parent *qt.QWidget) *aboutDialog {
 	font.SetPointSizeF(font.PointSizeF() * 0.9)
 	licences.SetFont(font)
 
-	d.notices = qt.NewQFrame2()
-	d.notices.SetFrameShape(qt.QFrame__StyledPanel)
-	d.notices.SetFrameShadow(qt.QFrame__Sunken)
-	frameLayout := qt.NewQVBoxLayout(d.notices.QWidget)
-	frameLayout.SetContentsMargins(12, 8, 12, 8)
-	frameLayout.AddWidget(licences.QWidget)
+	d.notices = qtwidgets.NewQFrame(nil)
+	d.notices.SetFrameShape(qtwidgets.QFrameStyledPanel)
+	d.notices.SetFrameShadow(qtwidgets.QFrameSunken)
+	frameLayout := qtwidgets.NewQVBoxLayout(d.notices)
+	frameLayout.SetContentsMargins(qtcore.QMargins{Left: 12, Top: 8, Right: 12, Bottom: 8})
+	frameLayout.AddWidget(licences)
 
-	buttons := qt.NewQDialogButtonBox4(qt.QDialogButtonBox__Ok)
+	buttons := qtwidgets.NewQDialogButtonBoxWithStandardButton(qtwidgets.QDialogButtonBoxOk, nil)
 	buttons.OnAccepted(d.Accept)
 
-	layout := qt.NewQVBoxLayout(d.QWidget)
-	layout.SetContentsMargins(20, 20, 20, 16)
+	layout := qtwidgets.NewQVBoxLayout(d)
+	layout.SetContentsMargins(qtcore.QMargins{Left: 20, Top: 20, Right: 20, Bottom: 16})
 	layout.SetSpacing(16)
-	layout.AddLayout(top.QLayout)
-	layout.AddWidget(d.notices.QWidget)
-	layout.AddWidget(buttons.QWidget)
+	layout.AddLayout(top)
+	layout.AddWidget(d.notices)
+	layout.AddWidget(buttons)
 
-	fitDialog(d.QDialog, aboutWidth)
+	fitDialog(d, aboutWidth)
 	return d
 }
 
 // newRichLabel returns a label of rich text which wraps, and whose links
 // open in the browser.
-func newRichLabel(text string) *qt.QLabel {
-	label := qt.NewQLabel3(text)
-	label.SetTextFormat(qt.RichText)
+func newRichLabel(text string) *qtwidgets.QLabel {
+	label := qtwidgets.NewQLabelWithText(text, nil)
+	label.SetTextFormat(qtcore.RichText)
 	label.SetWordWrap(true)
 	label.SetOpenExternalLinks(true)
-	label.SetTextInteractionFlags(qt.TextBrowserInteraction)
+	label.SetTextInteractionFlags(qtcore.TextBrowserInteraction)
 	return label
 }
 
 // showAbout shows the about box until it is closed.
-func showAbout(parent *qt.QWidget) {
+func showAbout(parent qtwidgets.QWidgetLike) {
 	d := newAboutDialog(parent)
 	// A dialog is not destroyed by being closed.
 	defer d.DeleteLater()
@@ -195,7 +194,6 @@ func showAbout(parent *qt.QWidget) {
 
 // qtVersion returns the version of Qt the program runs with.
 func qtVersion() string {
-	v := qt.QLibraryInfo_Version()
-	defer runtime.KeepAlive(v)
+	v := qtcore.QLibraryInfoVersion()
 	return v.ToString()
 }
