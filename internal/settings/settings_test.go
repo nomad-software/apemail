@@ -151,3 +151,64 @@ func TestMoveDirMissing(t *testing.T) {
 		t.Errorf("the new folder was not made: %v", err)
 	}
 }
+
+// TestFolderKey checks that a folder is known by a hash, the same each time
+// and another for another folder, which does not give away its name in the
+// settings file, which is not encrypted.
+func TestFolderKey(t *testing.T) {
+	key := FolderKey("Clients/Acme")
+	if key == "" || key != FolderKey("Clients/Acme") || key == FolderKey("Clients/Other") {
+		t.Errorf("key = %q, and of another folder %q", key, FolderKey("Clients/Other"))
+	}
+	if strings.Contains(key, "Acme") || strings.Contains(key, "Clients") {
+		t.Errorf("key = %q, which names the folder", key)
+	}
+	if got := FolderKey(""); got != "" {
+		t.Errorf("key of no folder = %q", got)
+	}
+}
+
+// TestPlaces checks where the settings and the data are kept: where the
+// desktop says (XDG), or the usual places in the home folder if it does not,
+// or says a path that is not absolute, which is to be ignored.
+func TestPlaces(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
+
+	if got, err := Path(); err != nil || got != filepath.Join(home, ".config", "apemail", "settings.json") {
+		t.Errorf("settings = %q, err = %v", got, err)
+	}
+	if got, err := DataDir(); err != nil || got != filepath.Join(home, ".local", "share", "apemail") {
+		t.Errorf("data = %q, err = %v", got, err)
+	}
+
+	t.Setenv("XDG_DATA_HOME", "relative/data")
+	if got, err := DataDir(); err != nil || got != filepath.Join(home, ".local", "share", "apemail") {
+		t.Errorf("data with a relative XDG_DATA_HOME = %q, err = %v", got, err)
+	}
+
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(xdg, "config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(xdg, "data"))
+	path, err := Path()
+	if err != nil || path != filepath.Join(xdg, "config", "apemail", "settings.json") {
+		t.Errorf("settings = %q, err = %v", path, err)
+	}
+	if got, err := DataDir(); err != nil || got != filepath.Join(xdg, "data", "apemail") {
+		t.Errorf("data = %q, err = %v", got, err)
+	}
+
+	// The folder of the settings is made for the user alone, and the
+	// settings can then be saved in it.
+	if err := Prepare(path); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(filepath.Dir(path)); err != nil || info.Mode().Perm() != 0o700 {
+		t.Errorf("mode = %v, err = %v", info.Mode().Perm(), err)
+	}
+	if err := Load(path).Save(path); err != nil {
+		t.Error(err)
+	}
+}

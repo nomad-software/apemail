@@ -156,3 +156,110 @@ func TestSentThoughGoodbyeFails(t *testing.T) {
 		t.Fatal("waiting for the server to be given the message")
 	}
 }
+
+// TestLogin checks that mail is sent logged in with the account's password,
+// by PLAIN, or by LOGIN where that is all the server has, and that with the
+// wrong password nothing is sent, nor said to be kept for later, as trying
+// again would fare no better.
+func TestLogin(t *testing.T) {
+	for _, mech := range []string{"PLAIN", "LOGIN"} {
+		t.Run(mech, func(t *testing.T) {
+			s := sendtest.Start(t, true)
+			s.Login("me", "hunter2", mech)
+			server := s.Account
+			server.Username, server.Password = "me", "wrong"
+			err := send.Send(server, "me@example.com", []string{"bob@example.com"}, []byte(raw), false)
+			if err == nil || errors.Is(err, send.ErrUnreachable) {
+				t.Errorf("with the wrong password: err = %v", err)
+			}
+			if err := send.Test(server); err == nil {
+				t.Error("the connection was said to work with the wrong password")
+			}
+			if msgs := s.Messages(); len(msgs) != 0 {
+				t.Fatalf("the server was given %+v", msgs)
+			}
+
+			server.Password = "hunter2"
+			if err := send.Test(server); err != nil {
+				t.Errorf("testing the connection: %v", err)
+			}
+			if msgs := s.Messages(); len(msgs) != 0 {
+				t.Fatalf("testing the connection sent %+v", msgs)
+			}
+			if err := send.Send(server, "me@example.com", []string{"bob@example.com"}, []byte(raw), false); err != nil {
+				t.Fatal(err)
+			}
+			if m := sent(t, s); m.From != "me@example.com" || string(m.Data) != raw {
+				t.Errorf("sent %+v", m)
+			}
+		})
+	}
+}
+
+// TestNotLoggedIn checks that an account with no user name does not log in,
+// as to a relay which trusts where it is reached from, and that a server
+// which wants a login then takes nothing.
+func TestNotLoggedIn(t *testing.T) {
+	s := sendtest.Start(t, true)
+	if err := send.Test(s.Account); err != nil {
+		t.Errorf("testing the connection: %v", err)
+	}
+	s.Login("me", "hunter2", "PLAIN")
+	err := send.Send(s.Account, "me@example.com", []string{"bob@example.com"}, []byte(raw), false)
+	if err == nil || errors.Is(err, send.ErrUnreachable) {
+		t.Errorf("err = %v", err)
+	}
+	if msgs := s.Messages(); len(msgs) != 0 {
+		t.Errorf("the server was given %+v", msgs)
+	}
+}
+
+// TestCannotLogIn checks that mail is not sent where the account cannot log
+// in as it says to: the server has no such way, or the account is not filled
+// in. None of these is the server being out of reach, so the mail is not
+// kept to be tried again.
+func TestCannotLogIn(t *testing.T) {
+	tests := map[string]func(*account.Server){
+		"no way of logging in with a password": func(a *account.Server) { a.Username, a.Password = "me", "hunter2" },
+		"no encrypted passwords": func(a *account.Server) {
+			a.Auth, a.Username, a.Password = account.AuthEncryptedPassword, "me", "hunter2"
+		},
+		"no client certificate": func(a *account.Server) { a.Auth = account.AuthTLSCert },
+		"a client certificate that is not there": func(a *account.Server) {
+			a.Auth, a.ClientCert, a.ClientKey = account.AuthTLSCert, "/nowhere/cert.pem", "/nowhere/key.pem"
+		},
+		"an unknown kind of authentication": func(a *account.Server) { a.Auth = "kerberos" },
+		"an unknown kind of security":       func(a *account.Server) { a.Security = "other" },
+		"no server":                         func(a *account.Server) { a.Host = "" },
+	}
+	for name, change := range tests {
+		t.Run(name, func(t *testing.T) {
+			s := sendtest.Start(t, true)
+			server := s.Account
+			change(&server)
+			err := send.Send(server, "me@example.com", []string{"bob@example.com"}, []byte(raw), false)
+			if err == nil || errors.Is(err, send.ErrUnreachable) {
+				t.Errorf("sending: err = %v", err)
+			}
+			if err := send.Test(server); err == nil {
+				t.Error("the connection was said to work")
+			}
+			if msgs := s.Messages(); len(msgs) != 0 {
+				t.Errorf("the server was given %+v", msgs)
+			}
+		})
+	}
+}
+
+// TestAddressesNotASCII checks that mail to an address that is not ASCII is
+// not sent through a server that cannot take one (no SMTPUTF8), rather than
+// the address being sent as it is.
+func TestAddressesNotASCII(t *testing.T) {
+	s := sendtest.Start(t, true)
+	if err := send.Send(s.Account, "me@example.com", []string{"jürgen@example.com"}, []byte(raw), false); err == nil {
+		t.Error("mail to an address that is not ASCII was sent")
+	}
+	if msgs := s.Messages(); len(msgs) != 0 {
+		t.Errorf("the server was given %+v", msgs)
+	}
+}

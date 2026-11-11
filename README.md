@@ -396,7 +396,7 @@ If your distribution's Go is older than 1.27, install Go from
 Check that Qt can be found with:
 
 ```sh
-pkg-config --modversion Qt6Widgets Qt6SvgWidgets Qt6WebEngineWidgets
+pkg-config --modversion Qt6Widgets Qt6Svg Qt6WebEngineWidgets
 ```
 
 This should print three versions, of 6.12 or later. Where the distribution's
@@ -407,9 +407,9 @@ builds the AppImage does.
 
 Running a built binary on another machine only needs the runtime libraries
 of the same Qt or a later one (`qt6-base`, `qt6-svg` and `qt6-webengine` on Arch,
-`libqt6widgets6`, `libqt6svgwidgets6` and `libqt6webenginewidgets6` on Debian
+`libqt6widgets6`, `libqt6svg6` and `libqt6webenginewidgets6` on Debian
 and Ubuntu, `qt6-qtbase`, `qt6-qtsvg` and `qt6-qtwebengine` on Fedora,
-`libQt6Widgets6`, `libQt6SvgWidgets6` and `libQt6WebEngineWidgets6` on
+`libQt6Widgets6`, `libQt6Svg6` and `libQt6WebEngineWidgets6` on
 openSUSE). The icons
 are ApeMail's own, built into the binary, so no icon theme is needed.
 
@@ -462,6 +462,10 @@ starts the AppImage.
 On GNOME it takes its colours, light or dark, from the desktop, through Qt's
 GTK theme plugin, which is in the AppImage. GTK itself is not, and is the
 desktop's own.
+
+Qt's plugins that find where the computer is (GeoClue, a GPS on a serial
+port) are left out of it: mail has no use for them, and no message is ever
+told where you are.
 
 The C library of the system (glibc) is not put in the AppImage, as it cannot
 be reliably: it has to match the system's graphics drivers. It runs on any

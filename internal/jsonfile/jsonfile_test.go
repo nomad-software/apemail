@@ -187,3 +187,42 @@ func TestFilePermissions(t *testing.T) {
 		t.Errorf("mode after converting = %v, %v", info.Mode().Perm(), err)
 	}
 }
+
+// TestRaw checks that what is saved as it is (a message, not JSON) is
+// encrypted on disk and read back as it was, that it is not read with other
+// keys, and that a missing file is an error rather than nothing.
+func TestRaw(t *testing.T) {
+	keys := openKeys(t, "id")
+	path := filepath.Join(t.TempDir(), "1.eml")
+	raw := []byte("Subject: secret\r\n\r\nThe body.\r\n")
+
+	if err := SaveRaw(path, raw, keys); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(path); !crypt.Encrypted(data) || strings.Contains(string(data), "secret") {
+		t.Errorf("file = %s", data)
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %v, err = %v", info.Mode().Perm(), err)
+	}
+	if got, err := LoadRaw(path, keys); err != nil || string(got) != string(raw) {
+		t.Errorf("read %q, err = %v", got, err)
+	}
+	if got, err := LoadRaw(path, openKeys(t, "other")); err == nil {
+		t.Errorf("read %q with other keys", got)
+	}
+	if _, err := LoadRaw(path+".missing", keys); !os.IsNotExist(err) {
+		t.Errorf("a missing file: err = %v", err)
+	}
+
+	// Saving again replaces the file, leaving nothing beside it.
+	if err := SaveRaw(path, []byte("second"), keys); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := LoadRaw(path, keys); err != nil || string(got) != "second" {
+		t.Errorf("read %q, err = %v", got, err)
+	}
+	if entries, _ := os.ReadDir(filepath.Dir(path)); len(entries) != 1 {
+		t.Errorf("%d files are left", len(entries))
+	}
+}

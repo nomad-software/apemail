@@ -55,34 +55,39 @@ export APPIMAGE_EXTRACT_AND_RUN=1
 # and libraries come without them, so nothing is lost by leaving it out.
 export NO_STRIP=1
 export QMAKE="${QMAKE:-$(command -v qmake6 || command -v qmake)}"
-# On a desktop system the folder of Qt's plugins also has those of the
-# desktop (KDE's image formats, theme and style, for one), which would all go
-# into the AppImage with everything they use, and stop it being made if one
-# of them is broken. Qt's own are all named lib*.so, so where there are
-# others a copy of the folder with only Qt's is made, and the tool is given
-# a qmake which says that is where the plugins are.
+# The tool is given a copy of the folder of Qt's plugins, by a qmake which
+# says that is where they are, as two kinds of plugin there must not go into
+# the AppImage:
+#
+# On a desktop system the folder also has the plugins of the desktop (KDE's
+# image formats, theme and style, for one), which would all go in with
+# everything they use, and stop the AppImage being made if one of them is
+# broken. Qt's own are all named lib*.so, so only those are copied.
+#
+# Qt Positioning, which Qt WebEngine uses, has plugins that find where the
+# computer is (GeoClue, a GPS on a serial port). The tool puts them in for
+# the module, and stops if what one of them uses is not there, as Qt
+# SerialPort is not in Qt's own build unless asked for. Mail has no use for
+# them, and a page is never told where it is, so their folder (position) is
+# not copied, which the tool only warns of.
 PLUGINS="$("$QMAKE" -query QT_INSTALL_PLUGINS)"
-if [ -n "$(find "$PLUGINS" -mindepth 2 -maxdepth 2 -name '*.so' ! -name 'lib*' | head -n 1)" ]; then
-	STAGE="$BUILD/qt-plugins"
-	rm -rf "$STAGE"
-	for dir in "$PLUGINS"/*/; do
-		name="$(basename "$dir")"
-		if ls "$dir"lib*.so >/dev/null 2>&1; then
-			mkdir -p "$STAGE/$name"
-			cp "$dir"lib*.so "$STAGE/$name/"
-		fi
-	done
+STAGE="$BUILD/qt-plugins"
+for dir in "$PLUGINS"/*/; do
+	name="$(basename "$dir")"
+	if [ "$name" != position ] && ls "$dir"lib*.so >/dev/null 2>&1; then
+		mkdir -p "$STAGE/$name"
+		cp "$dir"lib*.so "$STAGE/$name/"
+	fi
+done
 
-	REAL_QMAKE="$QMAKE"
-	QMAKE="$TOOLS/qmake"
-	cat > "$QMAKE" <<WRAPPER
+REAL_QMAKE="$QMAKE"
+QMAKE="$TOOLS/qmake"
+cat > "$QMAKE" <<WRAPPER
 #!/bin/sh
 "$REAL_QMAKE" "\$@" | sed "s|$PLUGINS|$STAGE|"
 WRAPPER
-	chmod +x "$QMAKE"
-	export QMAKE
-	echo "Using only Qt's own plugins, from $STAGE"
-fi
+chmod +x "$QMAKE"
+export QMAKE
 
 # The AppImage has to run under both X11 and Wayland. The Qt plugin takes
 # what X11 needs (xcb) by default, and Wayland has to be asked for: its
