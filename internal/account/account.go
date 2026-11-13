@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/nomad-software/apemail/internal/crypt"
@@ -93,7 +95,7 @@ type Server struct {
 
 // Address returns the host and port of the server, as net.Dial takes them.
 func (s Server) Address() string {
-	return fmt.Sprintf("%s:%d", s.Host, s.Port)
+	return net.JoinHostPort(s.Host, strconv.Itoa(s.Port))
 }
 
 // Folders are the folders that operations use. One that is empty is found

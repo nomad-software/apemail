@@ -28,8 +28,13 @@ func (v *messageView) makeAttachments() *qtwidgets.QWidget {
 	v.attachBox = newFlowLayout(v.attachments)
 	// The buttons' own padding lines their icons up with the headers.
 	v.attachBox.SetContentsMargins(qtcore.QMargins{Left: 2, Top: 2, Right: 8, Bottom: 4})
-	v.attachScroll = &resizingScroll{resized: v.fitAttachments}
-	qtwidgets.NewQScrollAreaWith(v.attachScroll, v.attachPane)
+	v.attachScroll = qtwidgets.NewQScrollArea(v.attachPane)
+	// The rows are fitted again whenever the area is resized, as how
+	// many there are depends on its width.
+	v.attachScroll.OverrideResizeEvent(func(super func(*qtgui.QResizeEvent), e *qtgui.QResizeEvent) {
+		super(e)
+		v.fitAttachments()
+	})
 	v.attachScroll.SetFrameShape(qtwidgets.QFrameNoFrame)
 	v.attachScroll.SetHorizontalScrollBarPolicy(qtcore.ScrollBarAlwaysOff)
 	v.attachScroll.SetWidgetResizable(true)
@@ -70,17 +75,6 @@ func (v *messageView) setAttachments(files []message.Attachment) {
 		b.OnClicked(func(bool) { v.save(a) })
 		v.attachBox.addWidget(b)
 	}
-}
-
-// resizingScroll is a scroll area which says when its size has changed.
-type resizingScroll struct {
-	qtwidgets.QScrollAreaBase
-	resized func()
-}
-
-func (s *resizingScroll) ResizeEvent(e *qtgui.QResizeEvent) {
-	s.Super().ResizeEvent(e)
-	s.resized()
 }
 
 // attachmentStyle is that of the buttons of the attachments: flat, and shaded

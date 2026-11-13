@@ -23,6 +23,7 @@ import (
 	"github.com/nomad-software/apemail/internal/remote/remotetest"
 	"github.com/nomad-software/apemail/internal/send/sendtest"
 	"github.com/nomad-software/apemail/internal/settings"
+	"github.com/nomad-software/apemail/internal/store"
 )
 
 // TestMain runs the Qt event loop on the main thread and the tests on another
@@ -486,6 +487,44 @@ func TestGetMailSelected(t *testing.T) {
 	wait(t, "the new message in the trash", func() bool { return len(w.list.rows) == 2 })
 }
 
+// TestInboxSelectedAfterFocus checks that the inbox is shown when the client
+// starts though the side bar took the focus before the folders were listed,
+// which makes the account, its only item then, the one selected.
+func TestInboxSelectedAfterFocus(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Sent")
+	s.Append(t, "INBOX", "Analytical engine")
+	held, release := s.Hold(t, "LIST")
+	w := newTestWindow(t, s)
+	<-held
+	qutetest.Run(t, func() {
+		w.Show()
+		w.ActivateWindow()
+		w.folders.SetFocus()
+		// Qt selects the first item of a tree that takes the focus
+		// with none selected; where the platform gives no focus, it is
+		// selected as Qt would.
+		if w.account == "" {
+			w.folders.SetCurrentItem(w.folders.accounts[w.order[0]])
+		}
+		if w.account == "" || w.folder != "" {
+			t.Fatalf("selected %q %q before the folders were listed", w.account, w.folder)
+		}
+	})
+	release()
+	wait(t, "the inbox", func() bool { return w.folder == "INBOX" && len(w.list.rows) == 1 })
+
+	// Only when the client starts: the account chosen later stays chosen
+	// when its folders are listed again.
+	qutetest.Run(t, func() {
+		id := w.account
+		w.folders.SetCurrentItem(w.folders.accounts[id])
+		w.FoldersChanged(id, []store.Folder{{Name: "INBOX", Delim: "/"}, {Name: "Sent", Delim: "/"}})
+		if w.folder != "" {
+			t.Errorf("folder = %q, not the account chosen", w.folder)
+		}
+	})
+}
+
 // folderText returns what the tree shows of a folder of the account that is
 // shown.
 func folderText(w *Window, folder string) string {
@@ -595,6 +634,25 @@ func TestDeepTablesShownQuickly(t *testing.T) {
 	if got := pageText(t, v); !strings.Contains(got, "Your booking details.") {
 		t.Errorf("shown %q", got)
 	}
+}
+
+// TestRestartKeepsFolderListed checks that the folder listed is opened again
+// on the engine an account is restarted with when its settings change, so
+// that the list keeps up with the server, as the old engine did.
+func TestRestartKeepsFolderListed(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Work")
+	s.Append(t, "Work", "first")
+	w := newTestWindow(t, s)
+	wait(t, "the folders", func() bool { return w.folders.folders[w.account]["Work"] != nil })
+	qutetest.Run(t, func() { w.folders.selectFolder(w.account, "Work") })
+	wait(t, "the folder", func() bool { return w.folder == "Work" && len(w.list.rows) == 1 })
+
+	s.Append(t, "Work", "second")
+	qutetest.Run(t, func() {
+		// As the account's settings are saved.
+		w.startAccount(w.engines[w.account].Account())
+	})
+	wait(t, "the new message", func() bool { return w.folder == "Work" && len(w.list.rows) == 2 })
 }
 
 // TestRemoveAccount checks that Remove Account in the Accounts menu removes

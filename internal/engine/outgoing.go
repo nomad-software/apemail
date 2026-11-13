@@ -138,9 +138,12 @@ var sentFlags = []string{`\Seen`}
 // to be put there later if it cannot be now, for want of a connection or
 // because the server would not take it.
 func (e *Engine) keepSent(raw []byte) {
-	e.do(func(c *remote.Conn) error {
-		return e.appendSent(c, store.Pending{Use: useNames[Sent], Raw: raw})
-	})
+	p := store.Pending{Use: useNames[Sent], Raw: raw}
+	// It is called by send, which Close waits for, so that if the engine
+	// has been closed the copy is still kept before Close returns.
+	if !e.do(func(c *remote.Conn) error { return e.appendSent(c, p) }) {
+		e.appendSent(nil, p)
+	}
 }
 
 // appendSent puts a copy of mail that was sent in the folder p names, with

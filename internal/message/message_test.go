@@ -276,6 +276,18 @@ func TestFlowed(t *testing.T) {
 	if !strings.HasPrefix(m.Text, "A long line.\nNext") {
 		t.Errorf("text = %q", m.Text)
 	}
+
+	// A second part of text is joined as the first is.
+	raw = "Content-Type: multipart/mixed; boundary=b\r\n\r\n" +
+		"--b\r\nContent-Type: text/plain; format=flowed\r\n\r\nFirst \r\npart.\r\n" +
+		"--b\r\nContent-Type: text/plain; format=flowed\r\n\r\nSecond \r\npart.\r\n" +
+		"--b--\r\n"
+	if m, err = message.Parse([]byte(raw)); err != nil {
+		t.Fatal(err)
+	}
+	if want := "First part.\nSecond part."; strings.TrimSpace(m.Text) != want {
+		t.Errorf("text = %q, want %q", m.Text, want)
+	}
 }
 
 // TestFormatAddressQuotes checks that a name which would be read as more
@@ -319,6 +331,24 @@ func TestParseLineEnds(t *testing.T) {
 	// The CRLF before a boundary is the boundary's, not the part's.
 	if want := "\nHello,\n\nThe body.\nMore\nlines"; m.Text != want {
 		t.Errorf("text = %q, want %q", m.Text, want)
+	}
+}
+
+// TestParseUnknownEncoding checks that a message whose transfer encoding is
+// not known is read, its body as it is, rather than failing or crashing, as
+// go-message's mail reader gives none for it.
+func TestParseUnknownEncoding(t *testing.T) {
+	for _, raw := range []string{
+		"From: a@example.com\r\nSubject: Encoded\r\nContent-Transfer-Encoding: x-uuencode\r\n\r\nThe body.\r\n",
+		"From: a@example.com\r\nSubject: Encoded\r\nContent-Type: text/plain; charset=x-unknown\r\nContent-Transfer-Encoding: 8-bit\r\n\r\nThe body.\r\n",
+	} {
+		m, err := message.Parse([]byte(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m.Subject != "Encoded" || !strings.Contains(m.Text, "The body.") {
+			t.Errorf("subject = %q, text = %q", m.Subject, m.Text)
+		}
 	}
 }
 

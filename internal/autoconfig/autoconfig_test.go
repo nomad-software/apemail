@@ -66,6 +66,22 @@ func TestParse(t *testing.T) {
 	}
 }
 
+// TestParseNoHostname checks that a server named without a host is passed
+// over for one that has one, though it is more secure.
+func TestParseNoHostname(t *testing.T) {
+	data := `<clientConfig><emailProvider id="example.com">
+<incomingServer type="imap"><hostname></hostname><port>993</port><socketType>SSL</socketType><username>%EMAILADDRESS%</username><authentication>password-cleartext</authentication></incomingServer>
+<incomingServer type="imap"><hostname>imap.example.com</hostname><port>143</port><socketType>STARTTLS</socketType><username>%EMAILADDRESS%</username><authentication>password-cleartext</authentication></incomingServer>
+</emailProvider></clientConfig>`
+	c, err := Parse([]byte(data), "me@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Incoming.Host != "imap.example.com" || c.Incoming.Port != 143 {
+		t.Errorf("incoming = %+v", c.Incoming)
+	}
+}
+
 type fakeResolver struct {
 	mx  map[string]string
 	srv map[string]net.SRV

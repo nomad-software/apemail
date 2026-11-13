@@ -327,13 +327,14 @@ type Update struct {
 
 // Sync finds what has changed in the folder since the index was made. It
 // opens the folder read-only, and so changes nothing. progress, if it is not
-// nil, is given the summaries of new messages as they arrive.
+// nil, is given the summaries of new messages as they arrive, with the UID
+// validity they are numbered by.
 //
 // A server with CONDSTORE (RFC 7162) is asked only for the messages that
 // have changed since the index was made, and nothing at all if none has, so
 // that a large folder costs little to keep up to date. Any other is asked
 // for the flags of every message.
-func (c *Conn) Sync(ix *store.Index, progress func([]store.Summary)) (*Update, error) {
+func (c *Conn) Sync(ix *store.Index, progress func(uidValidity uint32, s []store.Summary)) (*Update, error) {
 	// The folder is opened anew, so that what it holds is up to date.
 	c.selected = ""
 	data, err := c.examine(ix.Folder)
@@ -385,7 +386,7 @@ func (c *Conn) Sync(ix *store.Index, progress func([]store.Summary)) (*Update, e
 		}
 		u.Added = append(u.Added, summaries...)
 		if progress != nil {
-			progress(summaries)
+			progress(u.UIDValidity, summaries)
 		}
 	}
 
@@ -635,11 +636,14 @@ func flagStrings(flags []imap.Flag) []string {
 // the index the UIDs are from; if the server has numbered the messages anew
 // since, nothing is fetched, as the UIDs could be of other messages.
 func (c *Conn) Fetch(folder string, uidValidity uint32, uids []uint32, got func(uid uint32, raw []byte) error) error {
+	// The folder is opened again though it is open, as it may have been
+	// made again since, and numbered anew (checkUIDs).
+	c.selected = ""
 	if _, err := c.examine(folder); err != nil {
 		return err
 	}
 	if c.uidValidity != uidValidity {
-		return fmt.Errorf("the messages of %s have been numbered anew; it needs to be synchronised", folder)
+		return renumbered(folder)
 	}
 	section := &imap.FetchItemBodySection{Peek: true}
 	for chunk := range slices.Chunk(uids, downloadChunk) {
@@ -685,13 +689,24 @@ func (c *Conn) checkUIDs(folder string, uidValidity uint32, uids []uint32) error
 	if len(uids) == 0 {
 		return errors.New("no messages were given")
 	}
+	// The folder is opened again though it is open: the numbering it was
+	// opened with is not taken for the server's, as another client may
+	// have made it again since, which a server need not say
+	// (TestRenumberedWhileOpen). Opening it again expunges nothing.
+	c.selected = ""
 	if err := c.open(folder); err != nil {
 		return err
 	}
 	if c.uidValidity != uidValidity {
-		return fmt.Errorf("the messages of %s have been numbered anew; it needs to be synchronised", folder)
+		return renumbered(folder)
 	}
 	return nil
+}
+
+// renumbered is the error of UIDs given for a folder the server has
+// numbered anew since they were listed.
+func renumbered(folder string) error {
+	return fmt.Errorf("the messages of %s have been numbered anew; it needs to be synchronised", folder)
 }
 
 // SetFlags adds the flags to the messages, or takes them away if add is
@@ -737,11 +752,24 @@ func (c *Conn) Move(folder string, uidValidity uint32, uids []uint32, to string)
 	if err := c.checkUIDs(folder, uidValidity, uids); err != nil {
 		return err
 	}
-	if !c.c.Caps().Has(imap.CapMove) && !c.canExpungeByUID() {
+	if c.c.Caps().Has(imap.CapMove) {
+		if _, err := c.c.Move(uidSet(uids), to).Wait(); err != nil {
+			return fmt.Errorf("moving messages from %s to %s: %w", folder, to, err)
+		}
+		return nil
+	}
+	if !c.canExpungeByUID() {
 		return errors.New("the server can neither move messages (MOVE) nor expunge particular ones (UIDPLUS), so it is not asked to")
 	}
-	if _, err := c.c.Move(uidSet(uids), to).Wait(); err != nil {
-		return fmt.Errorf("moving messages from %s to %s: %w", folder, to, err)
+	// Without MOVE the messages are copied, and only once the server has
+	// taken the copy are they deleted, by UID. go-imap's own fallback is
+	// not used: it sends the copy, the \Deleted and the expunge at once, so
+	// a copy refused (the folder gone, over quota) still lost them.
+	if _, err := c.c.Copy(uidSet(uids), to).Wait(); err != nil {
+		return fmt.Errorf("copying messages from %s to %s: %w", folder, to, err)
+	}
+	if err := c.Delete(folder, uidValidity, uids); err != nil {
+		return fmt.Errorf("the messages were copied to %s, but %w", to, err)
 	}
 	return nil
 }

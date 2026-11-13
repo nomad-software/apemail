@@ -20,3 +20,16 @@ func TestExpand(t *testing.T) {
 		}
 	}
 }
+
+func TestDataHome(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", "/data/home")
+	if got, err := DataHome(); err != nil || got != "/data/home" {
+		t.Errorf("with XDG_DATA_HOME: %q, %v", got, err)
+	}
+	// A relative one is ignored, as the specification says.
+	t.Setenv("XDG_DATA_HOME", "relative")
+	t.Setenv("HOME", "/home/me")
+	if got, err := DataHome(); err != nil || got != "/home/me/.local/share" {
+		t.Errorf("without XDG_DATA_HOME: %q, %v", got, err)
+	}
+}

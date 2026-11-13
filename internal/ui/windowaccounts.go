@@ -95,6 +95,11 @@ func (w *Window) startAccount(a account.Account) {
 	}
 	w.folders.setAccount(a)
 	e.Start()
+	// The folder listed is opened on the new engine, as it was on the old,
+	// so that the list keeps up with the server.
+	if w.account == a.ID && w.folder != "" {
+		e.Open(w.folder)
+	}
 }
 
 // editCurrentAccount edits the account that is selected.
@@ -276,6 +281,7 @@ func (w *Window) stopAccounts() {
 	w.order = nil
 	clear(w.statuses)
 	w.account, w.folder = "", ""
+	w.startListed = false
 	w.folders.clear()
 	w.list.clear()
 	w.view.clear()

@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 
 	"github.com/nomad-software/apemail/internal/jsonfile"
+
+	"github.com/nomad-software/apemail/internal/homedir"
 )
 
 const (
@@ -112,16 +114,11 @@ func Path() (string, error) {
 // folder for the program in the place the system has for the data of
 // programs, which is ~/.local/share on Linux (or $XDG_DATA_HOME).
 func DataDir() (string, error) {
-	// By the XDG base directory specification, a path that is not absolute
-	// is to be ignored.
-	if dir := os.Getenv("XDG_DATA_HOME"); filepath.IsAbs(dir) {
-		return filepath.Join(dir, appName), nil
-	}
-	home, err := os.UserHomeDir()
+	dir, err := homedir.DataHome()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".local", "share", appName), nil
+	return filepath.Join(dir, appName), nil
 }
 
 // Prepare makes the folder the settings file at path is kept in.

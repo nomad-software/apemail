@@ -200,6 +200,70 @@ func TestMoveOnlyExpungesItsOwn(t *testing.T) {
 	}
 }
 
+// TestMoveKeepsWhatCouldNotBeCopied checks that, without MOVE, a message the
+// server would not copy is neither marked as deleted nor expunged: go-imap's
+// own fallback sends all three commands at once, and expunged it whatever
+// became of the copy.
+func TestMoveKeepsWhatCouldNotBeCopied(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus))
+	s.Append(t, "INBOX", "precious")
+	c := dial(t, s, true)
+	u, err := c.Sync(&store.Index{Folder: "INBOX"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Commands()
+	if err := c.Move("INBOX", u.UIDValidity, []uint32{u.Added[0].UID}, "Gone"); err == nil {
+		t.Fatal("a move to a folder that is not there succeeded")
+	}
+	msgs := s.Messages(t, "INBOX")
+	if len(msgs) != 1 || msgs[0].Subject != "precious" || slices.Contains(msgs[0].Flags, imap.FlagDeleted) {
+		t.Errorf("inbox = %+v", msgs)
+	}
+	for _, cmd := range s.Commands() {
+		if strings.Contains(cmd, "STORE") || strings.Contains(cmd, "EXPUNGE") {
+			t.Errorf("sent %q after the copy failed", cmd)
+		}
+	}
+}
+
+// TestRenumberedWhileOpen checks that messages are not acted on by UIDs from
+// before the folder was made again by another client while this one had it
+// open, as the numbering it was opened with is not taken for the server's.
+func TestRenumberedWhileOpen(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Work")
+	s.Append(t, "Work", "old")
+	c := dial(t, s, true)
+	u, err := c.Sync(&store.Index{Folder: "Work"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uids := []uint32{u.Added[0].UID}
+	// The folder is open to be changed.
+	if err := c.SetFlags("Work", u.UIDValidity, uids, true, string(imap.FlagSeen)); err != nil {
+		t.Fatal(err)
+	}
+
+	other := s.Client(t)
+	if err := other.Delete("Work").Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if err := other.Create("Work", nil).Wait(); err != nil {
+		t.Fatal(err)
+	}
+	s.Append(t, "Work", "new")
+
+	if err := c.Move("Work", u.UIDValidity, uids, "INBOX"); err == nil {
+		t.Error("moved by UIDs of a folder made again")
+	}
+	if msgs := s.Messages(t, "Work"); len(msgs) != 1 || msgs[0].Subject != "new" {
+		t.Errorf("work = %+v", msgs)
+	}
+	if msgs := s.Messages(t, "INBOX"); len(msgs) != 0 {
+		t.Errorf("inbox = %+v", msgs)
+	}
+}
+
 func TestRefusesUnsafeExpunge(t *testing.T) {
 	s := remotetest.Start(t, remotetest.Caps(), "Trash")
 	s.Append(t, "INBOX", "first")

@@ -65,10 +65,14 @@ type Message struct {
 
 // Parse reads a message as the server sent it.
 func Parse(raw []byte) (*Message, error) {
-	r, err := mail.CreateReader(bytes.NewReader(raw))
+	// The message is read as go-message reads it, and then for mail, as
+	// mail.CreateReader gives no reader for a transfer encoding it does
+	// not know, where this gives the body as it is.
+	e, err := gomessage.Read(bytes.NewReader(raw))
 	if err != nil && !gomessage.IsUnknownCharset(err) && !gomessage.IsUnknownEncoding(err) {
 		return nil, fmt.Errorf("reading the message: %w", err)
 	}
+	r := mail.NewReader(e)
 	defer r.Close()
 
 	m := &Message{}
@@ -123,14 +127,12 @@ func Parse(raw []byte) (*Message, error) {
 				m.Text = flowed(unixLines(string(data)), params)
 			case t == "text/html" && m.HTML == "":
 				m.HTML = string(data)
-			case t == "text/plain" || t == "text/html":
-				// A second body is kept, as some mailers split one
-				// into several parts.
-				if t == "text/plain" {
-					m.Text += "\n" + unixLines(string(data))
-				} else {
-					m.HTML += string(data)
-				}
+			// A second body is kept, as some mailers split one into
+			// several parts.
+			case t == "text/plain":
+				m.Text += "\n" + flowed(unixLines(string(data)), params)
+			case t == "text/html":
+				m.HTML += string(data)
 			default:
 				m.Attachments = append(m.Attachments, Attachment{
 					Filename:    partName(ph.Header, params, len(m.Attachments)),

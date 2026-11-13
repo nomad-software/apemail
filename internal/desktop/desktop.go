@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/nomad-software/apemail/internal/homedir"
 )
 
 // Name is the name of the desktop entry, without its extension, and of the
@@ -32,20 +34,6 @@ func Executable() (string, error) {
 		path = resolved
 	}
 	return path, nil
-}
-
-// Dir returns the folder desktop entries of the user's own are kept in:
-// applications in $XDG_DATA_HOME, or in ~/.local/share without it.
-func Dir() (string, error) {
-	data := os.Getenv("XDG_DATA_HOME")
-	if data == "" || !filepath.IsAbs(data) {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		data = filepath.Join(home, ".local", "share")
-	}
-	return data, nil
 }
 
 // Entry returns the desktop entry for a program started by the file at exec.
@@ -100,7 +88,9 @@ func Install(icon []byte) error {
 	if err != nil {
 		return err
 	}
-	data, err := Dir()
+	// Desktop entries of the user's own are kept in applications within
+	// the folder of the data of the user's programs.
+	data, err := homedir.DataHome()
 	if err != nil {
 		return err
 	}

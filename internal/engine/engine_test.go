@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1000,5 +1001,43 @@ func TestArchiveChosen(t *testing.T) {
 	}
 	if msgs := s.Messages(t, "INBOX"); len(msgs) != 0 {
 		t.Errorf("inbox = %+v", msgs)
+	}
+}
+
+// TestOpenWhileFirstFetched checks that a message shown while the headers of
+// a folder are first fetched is numbered as the server numbers it, so that
+// it can be opened before the sync ends: it was shown as numbered by nothing
+// (0), and opening it was refused as of a folder numbered anew.
+func TestOpenWhileFirstFetched(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Work")
+	s.Append(t, "Work", "early")
+	e, l, _ := start(t, s)
+	wait(t, "the folders", func() bool { return listed(e, "Work") })
+
+	// The headers arrive over a second after the sync starts, when what
+	// has arrived is shown, and the sync is then held before it ends.
+	held, release := s.Hold(t, "ENVELOPE")
+	e.Open("Work")
+	recv(t, held)
+	time.Sleep(1100 * time.Millisecond)
+	heldEnd, releaseEnd := s.Hold(t, "BODYSTRUCTURE")
+	release()
+	recv(t, heldEnd)
+	defer releaseEnd()
+
+	wait(t, "the message shown", func() bool { return subjects(l.index("Work")) == "early" })
+	ix := l.index("Work")
+	if ix.UIDValidity == 0 {
+		t.Fatal("shown numbered by nothing")
+	}
+	got := make(chan error, 1)
+	e.Message("Work", ix.UIDValidity, ix.Messages[0].UID, func(raw []byte, err error) {
+		if err == nil && !strings.Contains(string(raw), "early") {
+			err = fmt.Errorf("opened %q", raw)
+		}
+		got <- err
+	})
+	if err := recv(t, got); err != nil {
+		t.Fatal(err)
 	}
 }

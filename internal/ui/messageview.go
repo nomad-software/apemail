@@ -42,7 +42,7 @@ type messageView struct {
 	// saveAll, which saves every one.
 	attachments  *qtwidgets.QWidget
 	attachBox    *flowLayout
-	attachScroll *resizingScroll
+	attachScroll *qtwidgets.QScrollArea
 	attachPane   *qtwidgets.QWidget
 	saveAll      *qtwidgets.QPushButton
 	files        []message.Attachment

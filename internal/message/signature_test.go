@@ -101,6 +101,27 @@ func TestHTMLFileSignature(t *testing.T) {
 	}
 }
 
+// TestSignatureImageQuotes checks that the source of an image ends at the
+// quote it starts with, so that a name with the other in it is read whole.
+func TestSignatureImageQuotes(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "Bob's logo.png", "PNG logo")
+	write(t, dir, `say "hi".png`, "PNG hi")
+	path := write(t, dir, "sig.html", `<img src="Bob's logo.png"> <img src='say "hi".png'>`)
+	sig, err := message.LoadSignature("", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sig.Images) != 2 || string(sig.Images[0].Data) != "PNG logo" || string(sig.Images[1].Data) != "PNG hi" {
+		t.Fatalf("images = %+v", sig.Images)
+	}
+	for _, want := range []string{`src="cid:` + sig.Images[0].ContentID + `"`, `src='cid:` + sig.Images[1].ContentID + `'`} {
+		if !strings.Contains(sig.HTML, want) {
+			t.Errorf("no %s in %q", want, sig.HTML)
+		}
+	}
+}
+
 // TestHTMLFragmentSignature checks that HTML without a body is taken whole.
 func TestHTMLFragmentSignature(t *testing.T) {
 	path := write(t, t.TempDir(), "sig.htm", "<i>Ada</i>\n")

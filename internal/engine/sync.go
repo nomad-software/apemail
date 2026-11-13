@@ -187,24 +187,40 @@ func (e *Engine) syncFolder(conn *remote.Conn, folder string, say func(format st
 	// While a large folder is first fetched, what has arrived is shown
 	// every second or so.
 	last := time.Now()
-	var arrived []store.Summary
-	progress := func(s []store.Summary) {
-		arrived = append(arrived, s...)
-		say("Fetching the headers of %s… %d", folder, len(arrived))
+	// unshown are those that have arrived since what had was shown.
+	arrived := 0
+	var unshown []store.Summary
+	progress := func(uidValidity uint32, s []store.Summary) {
+		arrived += len(s)
+		unshown = append(unshown, s...)
+		say("Fetching the headers of %s… %d", folder, arrived)
 		if time.Since(last) < time.Second {
 			return
 		}
 		last = time.Now()
+		e.saveMu.Lock()
+		defer e.saveMu.Unlock()
 		e.mu.Lock()
+		defer e.mu.Unlock()
 		ix := e.index(folder)
-		if ix.UIDValidity == known.UIDValidity {
-			for _, m := range s {
-				e.put(ix, m, edits)
+		// What is shown is numbered as the server numbers it now, so
+		// that a message can be opened or deleted before the sync ends:
+		// a folder first fetched has no numbering yet, and one numbered
+		// anew has its local copy thrown away first, as at the end, so
+		// that no message kept is taken for another of the same UID.
+		if ix.UIDValidity != uidValidity {
+			if err := e.store.ResetFolder(folder); err != nil {
+				e.failed(err)
 			}
-			s := snapshot(ix)
-			e.post(func() { e.listener.FolderChanged(e.acct.ID, s) })
+			ix = &store.Index{Folder: folder, UIDValidity: uidValidity}
+			e.indexes[folder] = ix
 		}
-		e.mu.Unlock()
+		for _, m := range unshown {
+			e.put(ix, m, edits)
+		}
+		unshown = nil
+		snap := snapshot(ix)
+		e.post(func() { e.listener.FolderChanged(e.acct.ID, snap) })
 	}
 
 	u, err := conn.Sync(known, progress)
@@ -221,7 +237,10 @@ func (e *Engine) syncFolder(conn *remote.Conn, folder string, say func(format st
 	// Only a sync that changes something has the index saved and shown
 	// again, as most find nothing new, and a large folder takes a while.
 	changed := ix.HighestModSeq != u.HighestModSeq
-	if u.Reset || ix.UIDValidity != u.UIDValidity {
+	// A folder numbered anew has its local copy thrown away, unless that
+	// was done while what arrived was shown (progress), when messages
+	// opened since are kept.
+	if ix.UIDValidity != u.UIDValidity {
 		if err := e.store.ResetFolder(folder); err != nil {
 			e.failed(err)
 		}
@@ -300,13 +319,8 @@ var watchRetry, watchRetryMost = 10 * time.Second, 5 * time.Minute
 // mail. When it connects again, after its connection ended, the inbox is
 // synchronised, as mail may have arrived while it was not watching.
 func (e *Engine) watcher() {
-	inbox := ""
-	for _, f := range e.Folders() {
-		if remote.IsInbox(f.Name) {
-			inbox = f.Name
-		}
-	}
-	if inbox == "" {
+	inbox, ok := e.listedInbox()
+	if !ok {
 		return
 	}
 

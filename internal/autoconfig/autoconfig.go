@@ -273,7 +273,8 @@ func best(servers []server, typ, email string) (account.Server, bool) {
 	var chosen account.Server
 	rank := -1
 	for _, s := range servers {
-		if !strings.EqualFold(s.Type, typ) {
+		// A server named without a host cannot be used, however secure.
+		if !strings.EqualFold(s.Type, typ) || strings.TrimSpace(s.Hostname) == "" {
 			continue
 		}
 		port, err := strconv.Atoi(strings.TrimSpace(s.Port))
@@ -307,7 +308,7 @@ func best(servers []server, typ, email string) (account.Server, bool) {
 			}
 		}
 	}
-	return chosen, rank >= 0 && chosen.Host != ""
+	return chosen, rank >= 0
 }
 
 // authOf returns the first of the ways of logging in that is supported.

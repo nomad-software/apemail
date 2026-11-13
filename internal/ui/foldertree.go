@@ -217,9 +217,8 @@ func (t *folderTree) setFolders(a account.Account, folders []store.Folder) {
 	t.selected = nil
 
 	t.forgetChildren(parent)
-	for _, child := range parent.TakeChildren() {
-		child.Delete()
-	}
+	// The items taken out are Go's, and freed once nothing refers to them.
+	parent.TakeChildren()
 	items := map[string]*qtwidgets.QTreeWidgetItem{}
 	t.folders[a.ID] = items
 

@@ -1,7 +1,9 @@
 package engine
 
 import (
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/nomad-software/apemail/internal/account"
 	"github.com/nomad-software/apemail/internal/crypt"
@@ -110,5 +112,40 @@ func TestSpawnAfterClose(t *testing.T) {
 	}
 	if len(ran) != 1 {
 		t.Error("it ran")
+	}
+}
+
+// TestFetchAnsweredAfterClose checks that a message being opened, whose
+// goroutine had started when the engine was closed and which finds the op
+// worker gone, is answered rather than left waiting for ever, as the view
+// that asked would be.
+func TestFetchAnsweredAfterClose(t *testing.T) {
+	e, _ := newQuiet(t)
+	e.Close()
+	answer := make(chan error, 1)
+	e.fetchMessage("INBOX", 1, 1, func(_ []byte, err error) { answer <- err })
+	select {
+	case err := <-answer:
+		if !errors.Is(err, errClosed) {
+			t.Errorf("err = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("not answered")
+	}
+}
+
+// TestSentCopyKeptAfterClose checks that the copy of mail sent just as the
+// engine is closed, which the op worker will no longer put in the sent
+// folder, is kept to be put there later rather than lost.
+func TestSentCopyKeptAfterClose(t *testing.T) {
+	e, st := newQuiet(t)
+	e.Close()
+	e.keepSent([]byte("Subject: sent\r\n\r\nbody\r\n"))
+	pending, err := st.Pending()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 || pending[0].Kind != store.PendingAppend || pending[0].Use != useNames[Sent] {
+		t.Errorf("pending = %+v", pending)
 	}
 }

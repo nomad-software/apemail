@@ -257,12 +257,21 @@ func (e *Engine) Refresh(folder string) {
 // inbox returns the name of the inbox as the server lists it, or INBOX, as
 // every IMAP mailbox has, if the folders have not been listed.
 func (e *Engine) inbox() string {
-	for _, f := range e.Folders() {
-		if remote.IsInbox(f.Name) {
-			return f.Name
-		}
+	if name, ok := e.listedInbox(); ok {
+		return name
 	}
 	return "INBOX"
+}
+
+// listedInbox returns the name of the inbox as the server lists it, if the
+// folders have been listed.
+func (e *Engine) listedInbox() (string, bool) {
+	for _, f := range e.Folders() {
+		if remote.IsInbox(f.Name) {
+			return f.Name, true
+		}
+	}
+	return "", false
 }
 
 // requestSync asks the sync worker to synchronise a folder, or to list the
@@ -333,13 +342,16 @@ func (e *Engine) disconnect(c *remote.Conn) {
 	}
 }
 
-// do asks the op worker to do something with its connection. Nothing is
-// done once the engine has been closed.
-func (e *Engine) do(op func(*remote.Conn) error) {
+// do asks the op worker to do something with its connection, and reports if
+// it will. Nothing is done once the engine has been closed: op is not given
+// even no connection then, as the local copy is not touched once Close has
+// returned, so a caller that waits to hear back is told by whoever called
+// do.
+func (e *Engine) do(op func(*remote.Conn) error) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.stopped() {
-		return
+		return false
 	}
 	e.ops = append(e.ops, op)
 	select {
@@ -347,6 +359,7 @@ func (e *Engine) do(op func(*remote.Conn) error) {
 	default:
 		// The worker has been told already.
 	}
+	return true
 }
 
 // nextOp returns what the op worker is to do next, if anything.
@@ -426,6 +439,10 @@ var opIdle = time.Minute
 
 // errNoConn is given to an op which there is no connection for.
 var errNoConn = errors.New("the server could not be reached")
+
+// errClosed is given to what was started before the engine was closed, as
+// its account is restarted or removed, and found the op worker gone.
+var errClosed = errors.New("the account was closed before this could be done")
 
 // isConnErr reports if the error is one of the connection, after which
 // another is made.

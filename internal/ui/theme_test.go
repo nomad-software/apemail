@@ -107,13 +107,13 @@ func boxEdge() int {
 	pixmap := box.Grab()
 	img := pixmap.ToImage()
 	palette := qtgui.QGuiApplicationPalette()
-	base := lightnessOf(palette.GroupColor(qtgui.QPaletteActive, qtgui.QPaletteBase))
+	base := palette.GroupColor(qtgui.QPaletteActive, qtgui.QPaletteBase).Lightness()
 	// The box is at the left, before the space and the text.
 	width := box.Style().PixelMetricFull(qtwidgets.QStylePM_IndicatorWidth, nil, box)
 	most := 0
 	for y := range img.Height() {
 		for x := range width {
-			most = max(most, abs(lightnessOf(colourOf(img.Pixel(x, y)))-base))
+			most = max(most, abs(colourOf(img.Pixel(x, y)).Lightness()-base))
 		}
 	}
 	return most
@@ -281,7 +281,7 @@ func TestThemesAreWhole(t *testing.T) {
 		qtgui.QPaletteHighlightedText, qtgui.QPaletteLink, qtgui.QPaletteLinkVisited,
 		qtgui.QPaletteLight, qtgui.QPaletteMidlight, qtgui.QPaletteMid, qtgui.QPaletteDark, qtgui.QPaletteShadow,
 	}
-	lightness := func(colour string) int { return lightnessOf(parseColour(colour)) }
+	lightness := func(colour string) int { return parseColour(colour).Lightness() }
 	for name, cs := range map[string]colours{"light": lightColours, "dark": darkColours} {
 		for _, role := range roles {
 			if _, ok := cs.roles[role]; !ok {

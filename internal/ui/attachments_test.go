@@ -86,7 +86,7 @@ func lightness(w qtwidgets.QWidgetLike) int {
 	total := 0
 	for y := range img.Height() {
 		for x := range img.Width() {
-			total += lightnessOf(img.PixelColor(x, y))
+			total += img.PixelColor(x, y).Lightness()
 		}
 	}
 	return total / (img.Width() * img.Height())

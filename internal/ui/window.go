@@ -61,13 +61,17 @@ type Window struct {
 	split, right *qtwidgets.QSplitter
 	folders      *folderTree
 	folderTitle  *qtwidgets.QLabel
-	filter       *filterField
+	filter       *qtwidgets.QLineEdit
 	list         *messageList
 	view         *messageView
 	statusText   *qtwidgets.QLabel
 
 	// account and folder are those whose messages are listed.
 	account, folder string
+	// startListed is whether the inbox of the first account has been
+	// listed since the accounts were started. It is shown when it first
+	// is, unless a folder was chosen before.
+	startListed bool
 	// statuses are what each account is doing, and doing what the window
 	// itself is, as applying the settings.
 	statuses map[string]string
@@ -448,15 +452,23 @@ func (w *Window) FoldersChanged(id string, folders []store.Folder) {
 		return
 	}
 	w.folders.setFolders(e.Account(), folders)
-	if w.account == "" && len(w.order) > 0 && id == w.order[0] {
-		// The inbox of the first account is shown when the client
-		// starts.
-		for _, f := range folders {
-			if remote.IsInbox(f.Name) {
-				w.folders.selectFolder(id, f.Name)
-				break
-			}
+	if w.startListed || len(w.order) == 0 || id != w.order[0] {
+		return
+	}
+	// The inbox of the first account is shown when the client starts,
+	// once it is listed, unless a folder was chosen first. The account
+	// itself may be selected already: Qt selects the first item of the
+	// side bar when it takes the focus, which is the account until its
+	// folders are listed.
+	for _, f := range folders {
+		if !remote.IsInbox(f.Name) {
+			continue
 		}
+		w.startListed = true
+		if w.folder == "" && (w.account == "" || w.account == id) {
+			w.folders.selectFolder(id, f.Name)
+		}
+		return
 	}
 }
 
@@ -468,8 +480,14 @@ const titlePadding = 6
 // for, within the parent. Its clear button is an action of our own, as the
 // field's own has an icon from the style. That button and Escape close it.
 func (w *Window) makeFilter(parent qtwidgets.QWidgetLike) {
-	w.filter = &filterField{escaped: w.closeFilter}
-	qtwidgets.NewQLineEditWith(w.filter, parent)
+	w.filter = qtwidgets.NewQLineEdit(parent)
+	w.filter.OverrideKeyPressEvent(func(super func(*qtgui.QKeyEvent), e *qtgui.QKeyEvent) {
+		if e.Key() == qtcore.Key_Escape {
+			w.closeFilter()
+			return
+		}
+		super(e)
+	})
 	w.filter.SetVisible(false)
 	w.filter.SetPlaceholderText("Filter")
 	w.filter.SetToolTip("Show only the messages with all of these words in their subject, sender or recipients (Ctrl+F)")
@@ -481,20 +499,6 @@ func (w *Window) makeFilter(parent qtwidgets.QWidgetLike) {
 		clearFilter.SetVisible(text != "")
 		w.list.setFilter(text)
 	})
-}
-
-// filterField is the field that filters the list, which Escape closes.
-type filterField struct {
-	qtwidgets.QLineEditBase
-	escaped func()
-}
-
-func (f *filterField) KeyPressEvent(e *qtgui.QKeyEvent) {
-	if e.Key() == int(qtcore.Key_Escape) {
-		f.escaped()
-		return
-	}
-	f.Super().KeyPressEvent(e)
 }
 
 // openFilter shows the filter and puts the keyboard in it, with what is there

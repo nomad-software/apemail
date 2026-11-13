@@ -92,8 +92,9 @@ func bodyOf(s string) string {
 }
 
 // imagePattern finds the source of each image of HTML: what comes before it,
-// its quote and the source.
-var imagePattern = regexp.MustCompile(`(?is)(<img\b[^>]*?\bsrc\s*=\s*)(["'])(.*?)(["'])`)
+// and the source in double quotes or in single, each ending at the quote it
+// starts with (Go's expressions cannot refer back to the one found).
+var imagePattern = regexp.MustCompile(`(?is)(<img\b[^>]*?\bsrc\s*=\s*)(?:"([^"]*)"|'([^']*)')`)
 
 // embedImages has the images of the HTML that are files on this computer,
 // named by a path relative to dir or by a file: URL, shown from parts that
@@ -104,7 +105,11 @@ func embedImages(body, dir string) (string, []Attachment, error) {
 	var errs []error
 	body = imagePattern.ReplaceAllStringFunc(body, func(tag string) string {
 		m := imagePattern.FindStringSubmatch(tag)
-		src := html.UnescapeString(m[3])
+		quote, raw := m[0][len(m[1]):len(m[1])+1], m[2]
+		if quote == "'" {
+			raw = m[3]
+		}
+		src := html.UnescapeString(raw)
 		path, ok := localPath(src, dir)
 		if !ok {
 			return tag
@@ -121,7 +126,7 @@ func embedImages(body, dir string) (string, []Attachment, error) {
 		}
 		a := Attachment{Filename: filepath.Base(path), ContentType: t, ContentID: NewContentID(), Inline: true, Data: data}
 		images = append(images, a)
-		return m[1] + m[2] + "cid:" + a.ContentID + m[4]
+		return m[1] + quote + "cid:" + a.ContentID + quote
 	})
 	return body, images, errors.Join(errs...)
 }

@@ -54,28 +54,38 @@ func (e *Engine) Message(folder string, validity, uid uint32, got func(raw []byt
 		if !errors.Is(err, fs.ErrNotExist) {
 			e.failed(fmt.Errorf("reading the message kept: %w", err))
 		}
-		e.do(func(c *remote.Conn) error {
-			if c == nil {
-				e.post(func() { got(nil, errNoConn) })
-				return nil
-			}
-			var raw []byte
-			err := c.Fetch(folder, validity, []uint32{uid}, func(u uint32, r []byte) error {
-				if u == uid {
-					raw = r
-				}
-				return nil
-			})
-			if err == nil && raw == nil {
-				err = errors.New("the message is no longer on the server")
-			}
-			if err == nil {
-				e.keepMessage(folder, validity, uid, raw)
-			}
-			e.post(func() { got(raw, err) })
-			return err
-		})
+		e.fetchMessage(folder, validity, uid, got)
 	})
+}
+
+// fetchMessage downloads the message for Message, which has no copy of it.
+// It is called by Message's goroutine, which Close waits for, so that if
+// the engine was closed meanwhile got is still told, before Close returns.
+func (e *Engine) fetchMessage(folder string, validity, uid uint32, got func(raw []byte, err error)) {
+	queued := e.do(func(c *remote.Conn) error {
+		if c == nil {
+			e.post(func() { got(nil, errNoConn) })
+			return nil
+		}
+		var raw []byte
+		err := c.Fetch(folder, validity, []uint32{uid}, func(u uint32, r []byte) error {
+			if u == uid {
+				raw = r
+			}
+			return nil
+		})
+		if err == nil && raw == nil {
+			err = errors.New("the message is no longer on the server")
+		}
+		if err == nil {
+			e.keepMessage(folder, validity, uid, raw)
+		}
+		e.post(func() { got(raw, err) })
+		return err
+	})
+	if !queued {
+		e.post(func() { got(nil, errClosed) })
+	}
 }
 
 // keepMessage keeps a message that was downloaded from the folder when its

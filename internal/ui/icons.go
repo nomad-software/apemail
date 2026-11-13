@@ -73,9 +73,9 @@ func (e *iconEngine) Paint(p *qtgui.QPainter, rect qtcore.QRect, mode qtgui.QIco
 func (e *iconEngine) Pixmap(size qtcore.QSize, mode qtgui.QIconMode, _ qtgui.QIconState) *qtgui.QPixmap {
 	img := qtgui.NewQImageWithSize(size, qtgui.QImageFormat_ARGB32_Premultiplied)
 	img.FillColor(qtgui.QColor{})
-	p := qtgui.NewQPainterOn(img)
-	e.paint(p, qtcore.QRectF{Width: float64(size.Width), Height: float64(size.Height)}, mode)
-	p.End()
+	qtgui.PaintOn(img, func(p *qtgui.QPainter) {
+		e.paint(p, qtcore.QRectF{Width: float64(size.Width), Height: float64(size.Height)}, mode)
+	})
 	return qtgui.QPixmapFromImage(img)
 }
 
@@ -112,16 +112,10 @@ func iconColour(mode qtgui.QIconMode, t *tint) string {
 	switch {
 	case t == nil:
 		return text.Name()
-	case lightnessOf(text) > 127:
+	case text.Lightness() > 127:
 		return t.dark
 	}
 	return t.light
-}
-
-// lightnessOf returns how light the colour is, from 0 to 255, as Qt reckons
-// it: half way between its strongest and its weakest part.
-func lightnessOf(c qtgui.QColor) int {
-	return (int(max(c.R, c.G, c.B)) + int(min(c.R, c.G, c.B))) / 2
 }
 
 // fillOpacity is how much of the colour of a tinted icon its fill has.

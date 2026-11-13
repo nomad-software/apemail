@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -44,7 +45,7 @@ type Folder struct {
 // Has reports if the folder has the attribute, which is matched without
 // regard to case, as IMAP does.
 func (f Folder) Has(attr string) bool {
-	return slices.ContainsFunc(f.Attrs, func(a string) bool { return equalFold(a, attr) })
+	return slices.ContainsFunc(f.Attrs, func(a string) bool { return strings.EqualFold(a, attr) })
 }
 
 // Selectable reports if the folder can hold messages.
@@ -71,7 +72,7 @@ type Summary struct {
 // Has reports if the message has the flag, which is matched without regard
 // to case, as IMAP does.
 func (s Summary) Has(flag string) bool {
-	return slices.ContainsFunc(s.Flags, func(f string) bool { return equalFold(f, flag) })
+	return slices.ContainsFunc(s.Flags, func(f string) bool { return strings.EqualFold(f, flag) })
 }
 
 // Index is the list of the messages of a folder.
@@ -350,24 +351,4 @@ func (s *Store) RemovePending(id string) error {
 		return nil
 	}
 	return err
-}
-
-// equalFold compares ASCII strings without regard to case.
-func equalFold(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range len(a) {
-		x, y := a[i], b[i]
-		if 'A' <= x && x <= 'Z' {
-			x += 'a' - 'A'
-		}
-		if 'A' <= y && y <= 'Z' {
-			y += 'a' - 'A'
-		}
-		if x != y {
-			return false
-		}
-	}
-	return true
 }

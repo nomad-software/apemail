@@ -93,6 +93,10 @@ func TestNames(t *testing.T) {
 			t.Errorf("name = %q, want %q", got, want)
 		}
 	}
+	// An IPv6 address is put in brackets, as net.Dial takes it.
+	if got := (account.Server{Host: "::1", Port: 993}).Address(); got != "[::1]:993" {
+		t.Errorf("IPv6 address = %q", got)
+	}
 	if got := (account.Server{Host: "imap.example.com", Port: 993}).Address(); got != "imap.example.com:993" {
 		t.Errorf("address = %q", got)
 	}

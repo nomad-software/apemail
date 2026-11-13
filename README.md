@@ -574,6 +574,10 @@ ApeMail treats your mailbox as yours, not its own:
 - Mail is only ever expunged by its UID, so messages that another client has
   marked as deleted are left alone. A server that cannot expunge particular
   messages (no UIDPLUS) is never asked to expunge at all.
+- On a server that cannot move mail itself (no MOVE), moving is a copy and
+  then a delete of the originals, and the originals are only deleted once
+  the server has taken the copy. A copy refused, as to a folder that has
+  gone or a mailbox over its quota, leaves the messages where they were.
 - Before anything is done to messages, ApeMail checks that the server has
   not numbered the folder anew since they were listed, so it can never act
   on the wrong messages: what you select is named by how the folder was
