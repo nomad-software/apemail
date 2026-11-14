@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -333,5 +334,39 @@ func TestSaveAttachment(t *testing.T) {
 	})
 	if data, err := os.ReadFile(filepath.Join(dir, "saved.pdf")); err != nil || string(data) != "report" {
 		t.Errorf("saved %q, %v", data, err)
+	}
+}
+
+// TestSaveAllWhileShownChanges checks that Save All saves the attachments
+// shown when it was pressed, though another message is shown while the
+// folder is chosen, as what arrives meanwhile is shown then.
+func TestSaveAllWhileShownChanges(t *testing.T) {
+	dir := t.TempDir()
+	var v *messageView
+	old := chooseFolder
+	chooseFolder = func(_ qtwidgets.QWidgetLike, _, _ string) string {
+		v.setAttachments([]message.Attachment{{Filename: "other.pdf", Data: []byte("other")}})
+		return dir
+	}
+	t.Cleanup(func() { chooseFolder = old })
+	qutetest.Run(t, func() {
+		v = newMessageView()
+		defer v.DeleteLater()
+		v.setAttachments([]message.Attachment{
+			{Filename: "a.pdf", Data: []byte("a")},
+			{Filename: "b.pdf", Data: []byte("b")},
+		})
+		v.saveAll.Click()
+	})
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	if !slices.Equal(names, []string{"a.pdf", "b.pdf"}) {
+		t.Errorf("saved %v", names)
 	}
 }

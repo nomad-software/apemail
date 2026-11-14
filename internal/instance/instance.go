@@ -106,8 +106,12 @@ func handOver(path, token string) error {
 		if err == nil {
 			defer conn.Close()
 			conn.SetDeadline(time.Now().Add(answerWait))
-			_, err = io.WriteString(conn, token+"\n")
-			return err
+			// The copy that holds the lock is still running, though it
+			// did not take the token: this one does not start beside it.
+			if _, err := io.WriteString(conn, token+"\n"); err != nil {
+				return fmt.Errorf("%w: %w", ErrNoAnswer, err)
+			}
+			return nil
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("%w: %w", ErrNoAnswer, err)

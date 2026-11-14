@@ -28,6 +28,7 @@ import (
 
 	"github.com/nomad-software/apemail/internal/crypt"
 	"github.com/nomad-software/apemail/internal/jsonfile"
+	"github.com/nomad-software/apemail/internal/message"
 )
 
 // Folder is a mail folder of the mailbox.
@@ -197,6 +198,15 @@ func (s *Store) Index(folder string) (*Index, error) {
 	// name kept inside tells apart.
 	if ix.Folder != folder {
 		return &Index{Folder: folder}, nil
+	}
+	// Indexes saved before summaries were written as FormatAddresses does
+	// have names that are not ASCII encoded, which the list would show as
+	// they are, and a sync that asks only for what has changed (CONDSTORE)
+	// would never write again.
+	for i := range ix.Messages {
+		m := &ix.Messages[i]
+		m.From = message.DecodeAddresses(m.From)
+		m.To = message.DecodeAddresses(m.To)
 	}
 	return ix, nil
 }

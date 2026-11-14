@@ -10,7 +10,10 @@ import (
 
 func TestLoadAndSave(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
-	s := Load(path)
+	s, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if s.Width != defaultWidth || s.Height != defaultHeight ||
 		s.ComposeWidth != defaultComposeWidth || s.ComposeHeight != defaultComposeHeight {
 		t.Errorf("defaults = %+v", s)
@@ -23,7 +26,7 @@ func TestLoadAndSave(t *testing.T) {
 	if err := s.Save(path); err != nil {
 		t.Fatal(err)
 	}
-	read := Load(path)
+	read, _ := Load(path)
 	if read.PublicKey != "~/.ssh/id.pub" || read.DataDir != "~/mail" || read.SidebarWidth != 0 ||
 		read.CorrespondentWidth != 240 || read.DateWidth != 0 ||
 		read.ComposeWidth != 700 || read.ComposeHeight != 500 ||
@@ -36,14 +39,26 @@ func TestLoadAndSave(t *testing.T) {
 	if err := read.Save(path); err != nil {
 		t.Fatal(err)
 	}
-	if s := Load(path); s.ComposeWidth != defaultComposeWidth || s.ComposeHeight != defaultComposeHeight || s.CodeFontSize != 0 || s.Theme != "" {
+	if s, _ := Load(path); s.ComposeWidth != defaultComposeWidth || s.ComposeHeight != defaultComposeHeight || s.CodeFontSize != 0 || s.Theme != "" {
 		t.Errorf("too small = %+v", s)
 	}
 
-	// A file that cannot be read gives the defaults.
-	os.WriteFile(path, []byte("{"), 0o600)
-	if s := Load(path); s.PublicKey != "" || s.Width != defaultWidth {
+	// A file that cannot be read gives the defaults, and is kept beside
+	// it, so that saving the settings does not lose the keys it names.
+	broken := `{"publicKey": "~/.ssh/id.pub",}`
+	os.WriteFile(path, []byte(broken), 0o600)
+	s, err = Load(path)
+	if s.PublicKey != "" || s.Width != defaultWidth {
 		t.Errorf("broken = %+v", s)
+	}
+	if err == nil || !strings.Contains(err.Error(), path+".bad") {
+		t.Errorf("err = %v", err)
+	}
+	if err := s.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	if kept, err := os.ReadFile(path + ".bad"); err != nil || string(kept) != broken {
+		t.Errorf("kept %q, %v", kept, err)
 	}
 }
 
@@ -208,7 +223,8 @@ func TestPlaces(t *testing.T) {
 	if info, err := os.Stat(filepath.Dir(path)); err != nil || info.Mode().Perm() != 0o700 {
 		t.Errorf("mode = %v, err = %v", info.Mode().Perm(), err)
 	}
-	if err := Load(path).Save(path); err != nil {
+	s, _ := Load(path)
+	if err := s.Save(path); err != nil {
 		t.Error(err)
 	}
 }

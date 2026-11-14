@@ -310,7 +310,7 @@ func TestCloseWhileBodyAnswers(t *testing.T) {
 	typeInBody(t, c, "Written")
 	qutetest.Run(t, func() {
 		// Were it to close, it would not ask about what is written.
-		c.body.modified = false
+		c.body.unmodified()
 		c.send()
 		// The body answers on a later turn of the event loop.
 		if c.Close() || !composers[c] {
@@ -383,4 +383,88 @@ func TestBodyImagesAfterClose(t *testing.T) {
 			t.Errorf("%d images were kept by the body gone", len(body.webImages))
 		}
 	})
+}
+
+// TestTypedWhileSavingDraft checks that what is typed while a draft is being
+// saved is not taken as saved when it has been, as it is not in the draft:
+// closing the window then asks what to do with it.
+func TestTypedWhileSavingDraft(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Drafts")
+	w := newTestWindow(t, s)
+	wait(t, "the account", func() bool { return len(w.engines) == 1 })
+	c := openComposer(t, w)
+	typeInBody(t, c, "Saved.")
+	held, release := s.Hold(t, "APPEND")
+	qutetest.Run(t, func() { c.saveDraft(nil) })
+	select {
+	case <-held:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the draft was not appended")
+	}
+	typeInBody(t, c, " Not saved.")
+	release()
+	wait(t, "the draft saved", func() bool { return !c.savingDraft && len(c.saved) == 1 })
+	if !onUI(c.body.modified) {
+		t.Error("what was typed while saving is taken as saved")
+	}
+	asked := answerSave(t, qtwidgets.QMessageBoxDiscard)
+	qutetest.Run(t, func() { c.Close() })
+	if *asked != 1 {
+		t.Errorf("asked %d times on closing", *asked)
+	}
+}
+
+// TestFieldEditedIsChange checks that what is typed in a field, as the
+// subject, is a change that closing the window asks about, as what is
+// written in the body is, while what the program puts in one is not.
+func TestFieldEditedIsChange(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Drafts")
+	w := newTestWindow(t, s)
+	wait(t, "the account", func() bool { return len(w.engines) == 1 })
+	c := openComposer(t, w)
+	qutetest.Run(t, func() {
+		c.to.SetText("bob@example.com")
+		if c.body.modified() {
+			t.Error("an address the program put in is taken as a change")
+		}
+		qutetest.Type(c.subject, "Plans")
+		if !c.body.modified() {
+			t.Error("the subject typed is not taken as a change")
+		}
+	})
+	closeUnchanged(c)
+}
+
+// TestSendWhileSavingDraft checks that a message is not sent while a draft
+// of it is being saved, as the window would stay open once it was sent, to
+// be sent again, and that it is sent once the draft has been saved.
+func TestSendWhileSavingDraft(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Drafts", "Sent")
+	smtp := sendtest.Start(t, true)
+	w := newTestWindow(t, s, func(a *account.Account) { a.Outgoing = smtp.Account })
+	wait(t, "the account", func() bool { return len(w.engines) == 1 })
+	c := openComposer(t, w)
+	qutetest.Run(t, func() {
+		c.to.SetText("bob@example.com")
+		c.subject.SetText("Plans")
+	})
+	held, release := s.Hold(t, "APPEND")
+	qutetest.Run(t, func() { c.saveDraft(nil) })
+	select {
+	case <-held:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the draft was not appended")
+	}
+	qutetest.Run(t, func() { c.send() })
+	time.Sleep(200 * time.Millisecond)
+	if msgs := smtp.Messages(); len(msgs) != 0 {
+		t.Errorf("sent while the draft was saved: %d", len(msgs))
+	}
+	release()
+	wait(t, "the draft saved", func() bool { return !c.savingDraft })
+	qutetest.Run(t, func() { c.send() })
+	wait(t, "the window closed", func() bool { return !composers[c] })
+	if msgs := smtp.Messages(); len(msgs) != 1 {
+		t.Errorf("the server was given %d messages", len(msgs))
+	}
 }

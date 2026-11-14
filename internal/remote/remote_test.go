@@ -319,6 +319,12 @@ func TestNoDeletedFlag(t *testing.T) {
 	if err := c.SetFlags("INBOX", u.UIDValidity, []uint32{u.Added[0].UID}, true, `\deleted`); err == nil {
 		t.Error(`\Deleted was set`)
 	}
+	if _, _, err := c.Append("INBOX", []byte("Subject: s\r\n\r\nbody\r\n"), []string{`\Seen`, `\Deleted`}); err == nil {
+		t.Error(`a message was put in a folder with \Deleted`)
+	}
+	if msgs := s.Messages(t, "INBOX"); len(msgs) != 1 || len(msgs[0].Flags) != 0 {
+		t.Errorf("inbox = %+v", msgs)
+	}
 }
 
 func TestCramMD5(t *testing.T) {
@@ -528,5 +534,53 @@ func TestDeleteFolder(t *testing.T) {
 
 	if err := c.DeleteFolder("Missing"); err == nil {
 		t.Error("a folder that is not there was deleted")
+	}
+}
+
+// A name that is not ASCII is listed as it is, not encoded as the header has
+// it, so that the list shows it and the filter finds it; a name with a comma
+// is quoted, so that the list splits the addresses where they end.
+func TestSummaryNamesNotEncoded(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps())
+	s.AppendRaw(t, "INBOX", "From: =?utf-8?q?Jos=C3=A9_M=C3=BCller?= <jose@example.com>\r\n"+
+		"To: \"Smith, John\" <john@example.com>, ann@example.com\r\n"+
+		"Subject: names\r\nDate: Mon, 02 Jan 2006 15:04:05 +0000\r\n\r\nBody.\r\n")
+
+	c := dial(t, s, true)
+	u, err := c.Sync(&store.Index{Folder: "INBOX"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(u.Added) != 1 {
+		t.Fatalf("update = %+v", u)
+	}
+	if got, want := u.Added[0].From, "José Müller <jose@example.com>"; got != want {
+		t.Errorf("From = %q, want %q", got, want)
+	}
+	if got, want := u.Added[0].To, `"Smith, John" <john@example.com>, ann@example.com`; got != want {
+		t.Errorf("To = %q, want %q", got, want)
+	}
+}
+
+// TestMoveToSameFolder checks that messages are not moved to the folder they
+// are in, the inbox whatever the case of its name, which would copy them and
+// then delete the originals.
+func TestMoveToSameFolder(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus))
+	s.Append(t, "INBOX", "first")
+	c := dial(t, s, true)
+	u, err := c.Sync(&store.Index{Folder: "INBOX"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Commands()
+	for _, to := range []string{"INBOX", "inbox"} {
+		if err := c.Move("INBOX", u.UIDValidity, []uint32{u.Added[0].UID}, to); err == nil {
+			t.Errorf("moved to %s", to)
+		}
+	}
+	unchanged(t, s.Commands())
+	if msgs := s.Messages(t, "INBOX"); len(msgs) != 1 || msgs[0].UID != u.Added[0].UID {
+		t.Errorf("inbox = %+v", msgs)
 	}
 }

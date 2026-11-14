@@ -157,6 +157,31 @@ func TestNothingAfterClose(t *testing.T) {
 	}
 }
 
+// TestSyncAllClosed checks that Synchronise All Folders, closed part way by
+// the engine closing, says so rather than that it finished, or that the
+// connection failed.
+func TestSyncAllClosed(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Work")
+	s.Append(t, "Work", "first")
+	c := startClosing(t, s)
+	wait(t, "the inbox", func() bool { return c.l.index("INBOX") != nil })
+
+	held, release := s.Hold(t, "Work")
+	got := make(chan error, 1)
+	c.SyncAll(func(err error) { got <- err })
+	recv(t, held)
+	closed := make(chan struct{})
+	go func() {
+		c.Close()
+		close(closed)
+	}()
+	recv(t, closed)
+	release()
+	if err := recv(t, got); err == nil || !strings.Contains(err.Error(), "closed") {
+		t.Errorf("err = %v", err)
+	}
+}
+
 // TestCloseWhileBusy closes engines while every kind of work is being done
 // at once, from several goroutines, so that the race detector sees them
 // together: nothing is posted after Close returns, and every message that
@@ -595,4 +620,23 @@ func TestFolderFoundBeforeMade(t *testing.T) {
 	if !listed(e, "Sent Items") || !listed(e, "INBOX") {
 		t.Errorf("the folders listed = %v", e.Folders())
 	}
+}
+
+// TestWatchOnceInboxListed checks that the inbox is watched once it is
+// listed, though the first sync, of another folder kept from before without
+// the inbox, came before it was.
+func TestWatchOnceInboxListed(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapIdle), "Work")
+	s.Append(t, "Work", "work")
+	st := openStore(t)
+	if err := st.SaveFolders([]store.Folder{{Name: "Work", Delim: "/"}}); err != nil {
+		t.Fatal(err)
+	}
+	e, l := startOn(t, st, s.Account(), func(a *account.Account) { a.CheckOnStart = false })
+	wait(t, "the folders kept", func() bool { return len(e.Folders()) == 1 })
+	e.Open("Work")
+	wait(t, "the folder", func() bool { return subjects(l.index("Work")) == "work" })
+
+	e.Refresh("")
+	wait(t, "the engine idling in the inbox", func() bool { return slices.Contains(s.Commands(), "IDLE") })
 }

@@ -30,6 +30,7 @@ func errRenumbered(folder string) error {
 
 // numbered reports if the index of the folder is numbered as validity says.
 func (e *Engine) numbered(folder string, validity uint32) bool {
+	e.preload(folder)
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.index(folder).UIDValidity == validity
@@ -127,6 +128,7 @@ func (e *Engine) SetFlag(folder string, validity uint32, uids []uint32, flag str
 // setFlag adds the flag to the messages in the index, or takes it away, as
 // has been done on the server, if the index is numbered as validity says.
 func (e *Engine) setFlag(folder string, validity uint32, uids []uint32, flag string, add bool) {
+	e.preload(folder)
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	ix := e.index(folder)
@@ -146,13 +148,7 @@ func (e *Engine) setFlag(folder string, validity uint32, uids []uint32, flag str
 		}
 		ix.Messages[i].Flags = flags
 	}
-	e.flagEdits[folder]++
-	if e.edited[folder] == nil {
-		e.edited[folder] = map[uint32]uint64{}
-	}
-	for _, uid := range uids {
-		e.edited[folder][uid] = e.flagEdits[folder]
-	}
+	e.edit(folder, uids, e.edited)
 	e.changed(ix)
 }
 
@@ -160,6 +156,7 @@ func (e *Engine) setFlag(folder string, validity uint32, uids []uint32, flag str
 // local copy, if the index is numbered as validity says, as it was when they
 // were taken from the folder.
 func (e *Engine) removed(folder string, validity uint32, uids []uint32) {
+	e.preload(folder)
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	ix := e.index(folder)
@@ -170,6 +167,7 @@ func (e *Engine) removed(folder string, validity uint32, uids []uint32) {
 		ix.Remove(uid)
 		e.store.RemoveMessage(folder, uid)
 	}
+	e.edit(folder, uids, e.taken)
 	e.changed(ix)
 }
 
@@ -232,6 +230,7 @@ func (e *Engine) archive(c *remote.Conn, folder string, validity uint32, uids []
 	// is found before the lock is taken, as finding it takes the lock too.
 	delim := e.delim(archive)
 	byFolder := map[string][]uint32{}
+	e.preload(folder)
 	e.mu.Lock()
 	ix := e.index(folder)
 	for _, uid := range uids {

@@ -285,7 +285,7 @@ func TestDeleteFolderKept(t *testing.T) {
 		if _, err := folderContents(t, e, folder); err == nil {
 			t.Errorf("%s can be deleted", folder)
 		}
-		if err := e.Deletable(folder); err == nil && folder != "Mail" {
+		if err := e.Deletable(folder); err == nil {
 			t.Errorf("%s is deletable", folder)
 		}
 	}
@@ -306,5 +306,52 @@ func TestDeleteFolderKept(t *testing.T) {
 	}
 	if got := serverFolders(t, s); !slices.Equal(got, []string{"INBOX", "Mail", "Mail/Kept", "Projects", "Trash"}) {
 		t.Errorf("the server has %q", got)
+	}
+}
+
+// saveDraft saves a draft with the subject, and returns where it was put.
+func saveDraft(t *testing.T, e *engine.Engine, subject string) engine.Saved {
+	t.Helper()
+	type answer struct {
+		saved engine.Saved
+		err   error
+	}
+	got := make(chan answer, 1)
+	e.SaveDraft([]byte("Subject: "+subject+"\r\n\r\nx\r\n"), func(s engine.Saved, err error) { got <- answer{s, err} })
+	a := recv(t, got)
+	if a.err != nil {
+		t.Fatal(a.err)
+	}
+	return a.saved
+}
+
+// TestTrashSaved checks that drafts a compose window replaced are moved to
+// the trash, which is made as there is none, and the other drafts are left
+// alone; and that drafts never put on the server, which have no UID, have no
+// trash made for them.
+func TestTrashSaved(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Drafts")
+	e, _, _ := started(t, s)
+
+	s.Commands()
+	if err := result(t, func(done func(error)) {
+		e.TrashSaved([]engine.Saved{{Folder: "Drafts"}}, done)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if sent(s.Commands(), "CREATE") || slices.Contains(serverFolders(t, s), "Trash") {
+		t.Error("a trash was made for drafts that were never saved on the server")
+	}
+
+	old := saveDraft(t, e, "old")
+	saveDraft(t, e, "latest")
+	if err := result(t, func(done func(error)) { e.TrashSaved([]engine.Saved{old, {}}, done) }); err != nil {
+		t.Fatal(err)
+	}
+	if msgs := s.Messages(t, "Trash"); len(msgs) != 1 || msgs[0].Subject != "old" {
+		t.Errorf("trash = %+v", msgs)
+	}
+	if msgs := s.Messages(t, "Drafts"); len(msgs) != 1 || msgs[0].Subject != "latest" {
+		t.Errorf("drafts = %+v", msgs)
 	}
 }

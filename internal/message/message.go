@@ -101,8 +101,15 @@ func Parse(raw []byte) (*Message, error) {
 		if err == io.EOF {
 			break
 		}
+		// A part in a character set not known is given as it is, as the
+		// message is.
+		if p != nil && gomessage.IsUnknownCharset(err) {
+			err = nil
+		}
 		if err != nil {
-			if gomessage.IsUnknownCharset(err) || gomessage.IsUnknownEncoding(err) {
+			// go-message gives no part in a transfer encoding it does
+			// not know, but goes on to the next.
+			if gomessage.IsUnknownEncoding(err) {
 				continue
 			}
 			// What has been read is shown, rather than nothing.
@@ -122,7 +129,19 @@ func Parse(raw []byte) (*Message, error) {
 			if t == "" {
 				t = "text/plain"
 			}
+			_, disposition, _ := ph.ContentDisposition()
 			switch {
+			// A file of text sent inline, as Apple Mail sends one, is an
+			// attachment to be saved, not more of the body, once there
+			// is one.
+			case disposition["filename"] != "" && (m.Text != "" || m.HTML != ""):
+				m.Attachments = append(m.Attachments, Attachment{
+					Filename:    disposition["filename"],
+					ContentType: t,
+					ContentID:   contentID(ph.Header),
+					Inline:      true,
+					Data:        data,
+				})
 			case t == "text/plain" && m.Text == "":
 				m.Text = flowed(unixLines(string(data)), params)
 			case t == "text/html" && m.HTML == "":
@@ -287,6 +306,21 @@ func FormatAddresses(list []*mail.Address) string {
 	return strings.Join(parts, ", ")
 }
 
+// DecodeAddresses returns a list of addresses written as a header has them,
+// names that are not ASCII encoded (RFC 2047), as FormatAddresses writes
+// them. A list with nothing encoded, or that cannot be read, is returned as
+// it is.
+func DecodeAddresses(list string) string {
+	if !strings.Contains(list, "=?") {
+		return list
+	}
+	addrs, err := mail.ParseAddressList(list)
+	if err != nil {
+		return list
+	}
+	return FormatAddresses(addrs)
+}
+
 // FormatAddress returns the address as a person would write it, without the
 // encoding a header gives a name that is not ASCII. A name with a comma or
 // another character that would end it is quoted, so that ParseAddresses
@@ -395,16 +429,44 @@ type Draft struct {
 // ParseAddresses reads a list of addresses as they are typed, separated by
 // commas or semicolons.
 func ParseAddresses(list string) ([]*mail.Address, error) {
-	list = strings.TrimSpace(strings.ReplaceAll(list, ";", ","))
-	list = strings.Trim(list, ", ")
-	if list == "" {
+	var parts []string
+	for _, span := range AddressSpans(list) {
+		if part := strings.TrimSpace(list[span[0]:span[1]]); part != "" {
+			parts = append(parts, part)
+		}
+	}
+	if len(parts) == 0 {
 		return nil, nil
 	}
-	addrs, err := mail.ParseAddressList(list)
+	joined := strings.Join(parts, ", ")
+	addrs, err := mail.ParseAddressList(joined)
 	if err != nil {
-		return nil, fmt.Errorf("%q is not a list of addresses: %w", list, err)
+		return nil, fmt.Errorf("%q is not a list of addresses: %w", joined, err)
 	}
 	return addrs, nil
+}
+
+// AddressSpans returns where each address of a list begins and ends, as byte
+// offsets, the list being split at the commas and semicolons that are not
+// within a quoted name (where a backslash escapes the character after it).
+// The spans are as written, spaces and all, and may be empty.
+func AddressSpans(list string) [][2]int {
+	var spans [][2]int
+	quoted, escaped, start := false, false, 0
+	for i := 0; i < len(list); i++ {
+		switch ch := list[i]; {
+		case escaped:
+			escaped = false
+		case quoted && ch == '\\':
+			escaped = true
+		case ch == '"':
+			quoted = !quoted
+		case !quoted && (ch == ',' || ch == ';'):
+			spans = append(spans, [2]int{start, i})
+			start = i + 1
+		}
+	}
+	return append(spans, [2]int{start, len(list)})
 }
 
 // Recipients returns the addresses the draft is to be sent to: those of To,

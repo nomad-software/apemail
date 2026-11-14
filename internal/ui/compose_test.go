@@ -264,7 +264,7 @@ func TestComposeSizeIsKept(t *testing.T) {
 			c.Close()
 		}
 	})
-	if config := settings.Load(w.files.Settings); config.ComposeWidth != 720 || config.ComposeHeight != 540 {
+	if config, _ := settings.Load(w.files.Settings); config.ComposeWidth != 720 || config.ComposeHeight != 540 {
 		t.Fatalf("saved = %dx%d", config.ComposeWidth, config.ComposeHeight)
 	}
 
@@ -377,7 +377,7 @@ func typeInBody(t *testing.T, c *composer, text string) {
 func closeUnchanged(c *composer) {
 	qute.PostSync(func() {
 		if composers[c] {
-			c.body.modified = false
+			c.body.unmodified()
 			c.Close()
 		}
 	})
@@ -909,11 +909,11 @@ func TestRoomAboveSignature(t *testing.T) {
 				}
 			})
 			bodyLoaded(t, c)
-			if c.body.modified {
+			if c.body.modified() {
 				t.Errorf("%s: the body is taken as changed", name)
 			}
 			typeInBody(t, c, "X")
-			if !onUI(func() bool { return c.body.modified }) {
+			if !onUI(func() bool { return c.body.modified() }) {
 				t.Errorf("%s: typing is not taken as a change", name)
 			}
 			body, text := bodyOf(t, c)
@@ -1181,7 +1181,7 @@ func TestDraftFetchesImages(t *testing.T) {
 		t.Errorf("the image was fetched %d times", n)
 	}
 	// Nothing was typed: the images are not a change to what is written.
-	if onUI(func() bool { return c.body.modified }) {
+	if onUI(func() bool { return c.body.modified() }) {
 		t.Error("the draft is taken as changed")
 	}
 }
@@ -1240,5 +1240,28 @@ func TestRoomAroundBody(t *testing.T) {
 			}
 		})
 		closeUnchanged(c)
+	}
+}
+
+// TestTextDraftInHTML checks that a draft written as text, continued by an
+// account that writes HTML, keeps its lines.
+func TestTextDraftInHTML(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove))
+	w := newTestWindow(t, s, func(a *account.Account) { a.ComposeHTML = true })
+	wait(t, "the account", func() bool { return len(w.engines) == 1 })
+	m, err := message.Parse([]byte("From: a@example.com\r\nSubject: s\r\nContent-Type: text/plain\r\n\r\nFirst line.\r\nSecond line.\r\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c *composer
+	qutetest.Run(t, func() {
+		w.composeDraft(w.engines[w.order[0]], m, engine.Saved{Folder: "Drafts", UID: 1})
+		for c = range composers {
+		}
+	})
+	t.Cleanup(func() { closeUnchanged(c) })
+	bodyLoaded(t, c)
+	if _, text := bodyOf(t, c); !strings.Contains(text, "First line.\nSecond line.") {
+		t.Errorf("text = %q", text)
 	}
 }

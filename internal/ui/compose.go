@@ -119,6 +119,11 @@ func (w *Window) newComposer(e *engine.Engine) *composer {
 	form.AddRowText("Cc:", c.cc)
 	form.AddRowText("Bcc:", c.bcc)
 	form.AddRowText("Subject:", c.subject)
+	// What the user types in a field is a change, as what is written in
+	// the body is; what the program puts there is not.
+	for _, field := range []*qtwidgets.QLineEdit{c.to, c.cc, c.bcc, c.subject} {
+		field.OnTextEdited(func(string) { c.body.changed() })
+	}
 	c.subject.OnTextChanged(func(text string) {
 		if text == "" {
 			text = "(no subject)"
@@ -272,6 +277,12 @@ func (c *composer) send() {
 	if c.sending {
 		return
 	}
+	// The window cannot close while a draft is saved, which it would once
+	// sent, and the draft saved is to be trashed once it is.
+	if c.savingDraft {
+		c.StatusBar().ShowMessageFull("The draft is being saved; send it once it has been.", 5000)
+		return
+	}
 	c.sending = true
 	c.SetEnabled(false)
 	stop := func(err error) {
@@ -344,6 +355,9 @@ func (c *composer) saveDraft(done func()) {
 		return
 	}
 	c.savingDraft = true
+	// What is changed from now on is not in the draft, though what the
+	// body holds is asked for later.
+	at := c.body.changes
 	c.StatusBar().ShowMessage("Saving the draft…")
 	failed := func(err error) {
 		c.savingDraft = false
@@ -360,13 +374,14 @@ func (c *composer) saveDraft(done func()) {
 			failed(err)
 			return
 		}
-		c.saveBuilt(raw, done)
+		c.saveBuilt(raw, at, done)
 	})
 }
 
-// saveBuilt puts the message, as it has been built, in the drafts folder,
-// and then calls done if it is not nil.
-func (c *composer) saveBuilt(raw []byte, done func()) {
+// saveBuilt puts the message, as it has been built when the count of its
+// changes was at, in the drafts folder, and then calls done if it is not
+// nil.
+func (c *composer) saveBuilt(raw []byte, at int, done func()) {
 	c.engine().SaveDraft(raw, func(saved engine.Saved, err error) {
 		c.savingDraft = false
 		c.StatusBar().ClearMessage()
@@ -374,7 +389,7 @@ func (c *composer) saveBuilt(raw []byte, done func()) {
 			c.warn("Save Draft", err)
 			return
 		}
-		c.body.modified = false
+		c.body.savedAt(at)
 		c.saved = append(c.saved, saved)
 		c.StatusBar().ShowMessageFull("The draft was saved to "+saved.Folder+".", 5000)
 		if done != nil {
@@ -390,7 +405,7 @@ func (c *composer) mayClose() bool {
 	if c.sending || c.savingDraft {
 		return false
 	}
-	if !c.sent && c.body.modified {
+	if !c.sent && c.body.modified() {
 		switch askSave(c, "Close", "The message has not been sent. Save it as a draft?") {
 		case qtwidgets.QMessageBoxSave:
 			c.saveDraft(func() { c.Close() })
@@ -452,7 +467,7 @@ func (c *composer) addAttachment(a message.Attachment) {
 	c.attachments = append(c.attachments, a)
 	c.attachList.AddItemText(fmt.Sprintf("%s (%s)", a.Filename, size(len(a.Data))))
 	c.attachList.SetVisible(true)
-	c.body.modified = true
+	c.body.changed()
 }
 
 // removeAttachment removes the attachment that is selected.
@@ -464,7 +479,7 @@ func (c *composer) removeAttachment() {
 	c.attachments = append(c.attachments[:row], c.attachments[row+1:]...)
 	c.attachList.TakeItem(row).Delete()
 	c.attachList.SetVisible(len(c.attachments) > 0)
-	c.body.modified = true
+	c.body.changed()
 }
 
 func (c *composer) warn(title string, err error) {
@@ -545,7 +560,7 @@ func (w *Window) forwardMessage() {
 	for _, a := range m.Files() {
 		c.addAttachment(a)
 	}
-	c.body.modified = false
+	c.body.unmodified()
 	c.Show()
 	c.to.SetFocus()
 }
@@ -566,18 +581,22 @@ func (w *Window) composeDraft(e *engine.Engine, m *message.Message, at engine.Sa
 		c.references = m.References
 		c.inReplyTo = m.References[len(m.References)-1]
 	}
-	if c.html && m.HTML != "" {
+	switch {
+	case !c.html:
+		c.body.setText(m.Body(), 0)
+	case m.HTML != "":
 		c.addImages(m)
 		c.addWebImages(m)
 		c.body.setHTML(m.HTML)
-	} else {
-		c.body.setText(m.Body(), 0)
+	default:
+		// A draft written as text keeps its lines in a body of HTML.
+		c.body.setHTML(message.TextToHTML(m.Body()))
 	}
 	for _, a := range m.Files() {
 		c.addAttachment(a)
 	}
 	c.saved = append(c.saved, at)
-	c.body.modified = false
+	c.body.unmodified()
 	c.Show()
 }
 

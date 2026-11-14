@@ -6,6 +6,8 @@ import (
 
 	"github.com/nomad-software/qute/qtcore"
 	"github.com/nomad-software/qute/qtwidgets"
+
+	"github.com/nomad-software/apemail/internal/message"
 )
 
 // addressCompleter offers the contacts of the address book for the address
@@ -62,23 +64,14 @@ func (a *addressCompleter) insert(chosen string) {
 // starts and ends in a list of them, which commas or semicolons separate
 // outside quotes, as ParseAddresses reads it.
 func addressAt(text string, cursor int) (start, end int) {
-	quoted, escaped := false, false
-	for i := 0; i < len(text); i++ {
-		switch ch := text[i]; {
-		case escaped:
-			escaped = false
-		case quoted && ch == '\\':
-			escaped = true
-		case ch == '"':
-			quoted = !quoted
-		case !quoted && (ch == ',' || ch == ';'):
-			if i >= cursor {
-				return start, i
-			}
-			start = i + 1
+	spans := message.AddressSpans(text)
+	for _, span := range spans {
+		if span[1] >= cursor {
+			return span[0], span[1]
 		}
 	}
-	return start, len(text)
+	last := spans[len(spans)-1]
+	return last[0], last[1]
 }
 
 // completeAddress returns the list of addresses with the one the byte offset

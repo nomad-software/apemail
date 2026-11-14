@@ -195,3 +195,66 @@ func TestFoldersListedAgainKeepSelection(t *testing.T) {
 		}
 	})
 }
+
+// TestArchiveAcrossYearsShowsOnlyNext checks that archiving messages sent in
+// different years, which go a year at a time, does not show those left
+// selected in between, which would mark them read and ask for their return
+// receipts: only the one after them is shown, once they have all gone.
+func TestArchiveAcrossYearsShowsOnlyNext(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Archive")
+	s.AppendDated(t, "INBOX", "Kept", time.Date(2024, 1, 2, 12, 0, 0, 0, time.UTC))
+	s.AppendDated(t, "INBOX", "Older", time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC))
+	s.AppendDated(t, "INBOX", "Newer", time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC))
+	w := newTestWindow(t, s)
+	wait(t, "the inbox", func() bool { return len(w.list.rows) == 3 && w.folder == "INBOX" })
+
+	var shown []string
+	qutetest.Run(t, func() {
+		clickRow(w.list, 0)
+		addRow(w.list, 1)
+		selected := w.list.selected
+		w.list.selected = func() {
+			for _, uid := range w.list.selectedUIDs() {
+				if s, ok := w.list.summary(uid); ok {
+					shown = append(shown, s.Subject)
+				}
+			}
+			selected()
+		}
+	})
+	wait(t, "two selected", func() bool { return len(w.list.selectedUIDs()) == 2 })
+	qute.PostSync(w.archiveMessages)
+	if got := shownAfter(t, w, "Kept"); got != "Kept" {
+		t.Errorf("shown %q after archiving", got)
+	}
+	if got := onUI(func() []string { return shown }); !slices.Equal(got, []string{"Kept"}) {
+		t.Errorf("selected while archiving: %q", got)
+	}
+	for _, folder := range []string{"Archive/2025", "Archive/2026"} {
+		if msgs := s.Messages(t, folder); len(msgs) != 1 || slices.Contains(msgs[0].Flags, imap.FlagSeen) {
+			t.Errorf("%s = %+v", folder, msgs)
+		}
+	}
+}
+
+// TestArchiveDisabledInArchive checks that Archive cannot be chosen for mail
+// in the archive, or a folder within it, where it would do nothing, and can
+// elsewhere.
+func TestArchiveDisabledInArchive(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Archive", "Archive/2006")
+	threeMessages(t, s, "INBOX")
+	threeMessages(t, s, "Archive/2006")
+	w := newTestWindow(t, s)
+	wait(t, "the inbox", func() bool { return len(w.list.rows) == 3 && w.folder == "INBOX" })
+	selectRow(t, w, 0)
+	if !onUI(w.archive.IsEnabled) {
+		t.Error("Archive cannot be chosen in the inbox")
+	}
+
+	qutetest.Run(t, func() { w.folders.selectFolder(w.order[0], "Archive/2006") })
+	wait(t, "the archive", func() bool { return w.folder == "Archive/2006" && len(w.list.rows) == 3 })
+	selectRow(t, w, 0)
+	if onUI(w.archive.IsEnabled) {
+		t.Error("Archive can be chosen in the archive")
+	}
+}

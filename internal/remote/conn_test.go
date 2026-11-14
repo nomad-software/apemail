@@ -91,6 +91,70 @@ func TestCheck(t *testing.T) {
 	}
 }
 
+// TestLoginDisabled checks that a server which forbids the LOGIN command
+// (LOGINDISABLED) is logged in to if it offers another way that takes a
+// password (PLAIN, which the server of the tests always offers), rather than
+// refused.
+func TestLoginDisabled(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapLoginDisabled, imap.Cap("AUTH=PLAIN")))
+	c, err := remote.Dial(s.Account(), remote.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+}
+
+// recv returns what arrives on the channel, failing the test if nothing does
+// in time.
+func recv[T any](t *testing.T, ch <-chan T) T {
+	t.Helper()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(wait):
+		t.Fatal("waiting for the server")
+		panic("unreachable")
+	}
+}
+
+// TestNoAnswer checks that a server which stops answering, as one whose
+// network has gone without saying so, is not waited on for ever: Check finds
+// the connection gone, and Close closes it without the logout answered.
+func TestNoAnswer(t *testing.T) {
+	t.Cleanup(remote.SetWaits(100 * time.Millisecond))
+	s := remotetest.Start(t, remotetest.Caps())
+
+	c := dial(t, s, true)
+	held, _ := s.Hold(t, "NOOP")
+	start := time.Now()
+	if err := c.Check(); err == nil {
+		t.Error("a server that did not answer was found to be working")
+	}
+	recv(t, held)
+	if time.Since(start) > wait {
+		t.Errorf("Check waited %v", time.Since(start))
+	}
+	select {
+	case <-c.Closed():
+	case <-time.After(wait):
+		t.Error("the connection was left open")
+	}
+
+	c = dial(t, s, true)
+	held, _ = s.Hold(t, "LOGOUT")
+	closed := make(chan struct{})
+	go func() {
+		c.Close()
+		close(closed)
+	}()
+	recv(t, held)
+	select {
+	case <-closed:
+	case <-time.After(wait):
+		t.Fatal("Close waited for a logout the server did not answer")
+	}
+}
+
 // TestAbort checks that a connection is closed at once, with what waits on
 // it let go, and that nothing was changed in doing so.
 func TestAbort(t *testing.T) {

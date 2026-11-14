@@ -39,8 +39,9 @@ type bodyEditor struct {
 	doc     string
 	loaded  bool
 	pending []string
-	// modified says what is written has changed since it was set or saved.
-	modified bool
+	// changes counts the changes made to what is written, and saved is the
+	// count when what was last saved, or set, was taken (modified).
+	changes, saved int
 	// answers wait for what the body holds (content), by the number each
 	// is asked by; asked is the number last given.
 	answers map[int]func(html, text string)
@@ -223,7 +224,8 @@ func (e *bodyEditor) show(body string, offset int) {
 		style += ` body { white-space: pre-wrap; font-family: monospace }`
 	}
 	e.doc = "<html><head>" + pageHead() + "<style>" + style + "</style></head><body " + editable + ">" + body + "</body></html>"
-	e.loaded, e.pending, e.modified = false, nil, false
+	e.loaded, e.pending = false, nil
+	e.unmodified()
 	e.load("edit")
 	e.call("start", offset)
 }
@@ -270,7 +272,7 @@ func (e *bodyEditor) received(msg string) {
 	}
 	switch m.Kind {
 	case "input":
-		e.modified = true
+		e.changed()
 	case "state":
 		if e.onState != nil {
 			e.onState(editState{Bold: m.Bold, Italic: m.Italic, Underline: m.Underline, Bullets: m.Bullets, Numbers: m.Numbers})
@@ -373,4 +375,26 @@ func (e *bodyEditor) fetchImages() {
 			e.call("retry", slices.Collect(maps.Keys(got)))
 		})
 	}()
+}
+
+// changed counts a change to what is written: in the body, its fields or its
+// attachments.
+func (e *bodyEditor) changed() {
+	e.changes++
+}
+
+// modified says what is written has changed since it was set or saved.
+func (e *bodyEditor) modified() bool {
+	return e.changes != e.saved
+}
+
+// unmodified takes what is written now as saved.
+func (e *bodyEditor) unmodified() {
+	e.saved = e.changes
+}
+
+// savedAt takes what was written when the count of changes was at as saved,
+// so that what was changed since, as while a draft was being saved, is not.
+func (e *bodyEditor) savedAt(at int) {
+	e.saved = at
 }

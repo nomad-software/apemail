@@ -149,8 +149,10 @@ it you have.
   any part of a name or address finds a contact.
 - Attach files, and save drafts to the server to finish later. Double-click a
   draft to carry on with it; the drafts it replaces go to the trash. Closing
-  a window without saving what was written since leaves the draft as it was
-  last saved.
+  a window asks what to do with what was written, in the fields as in the
+  body, since it was last saved (what is typed while a draft is being saved
+  is not in it), and without saving leaves the draft as it was last saved.
+  A message is sent once its draft has finished saving.
 - Mail that cannot be sent because the server cannot be reached waits in an
   outbox and goes when it can, as do drafts saved without a connection, and
   the copy of sent mail that could not be put in the sent folder.
@@ -159,7 +161,8 @@ it you have.
 
 - **Archive** moves messages to the archive folder, into a folder for the
   year each was sent in (`Archive/2026`), as other clients do, or a folder
-  for each month, or just the archive, as the account says.
+  for each month, or just the archive, as the account says. Mail already in
+  the archive cannot be archived again.
 - **Delete** moves messages to the trash. In the trash, it deletes them for
   good, after asking.
 - After deleting or archiving, the next message is selected and shown, so
@@ -178,8 +181,9 @@ it you have.
   server, among your own or within another.
 - **Delete Folder** (the folder's menu in the side bar) deletes a folder from
   the server, with the folders within it and all their mail, after showing
-  how many messages each holds and asking. The inbox and the account's
-  sent, drafts, trash and archive folders cannot be deleted.
+  how many messages each holds and asking. The inbox, the account's
+  sent, drafts, trash and archive folders, and any folder that holds one,
+  cannot be deleted.
 
 **Address book**
 
@@ -201,7 +205,9 @@ it you have.
   providers (the ISPDB), the server that handles the domain's mail, and the
   SRV records of the domain.
 - Connection security: none, STARTTLS or SSL/TLS. Logging in: a normal
-  password, an encrypted password (CRAM-MD5) or a TLS client certificate.
+  password, an encrypted password (CRAM-MD5) or a TLS client certificate
+  (which needs STARTTLS or SSL/TLS, as it is given when the connection is
+  encrypted).
 - **Test Connection** for the incoming and outgoing servers, and **Read
   Folders from Server** to choose the folders from.
 - Check the inbox for mail when ApeMail starts.
@@ -269,7 +275,8 @@ Go makes it natural to do many things at once, and ApeMail does:
 - **Sorting uses every core.** For a large folder, what each row is sorted by
   is worked out on every processor at once.
 - **Reading a large folder's index holds nothing up.** It is read from disk
-  without stopping the account's other work.
+  without stopping the account's other work, whether the folder is opened,
+  checked when ApeMail starts, or synchronised with the others.
 - **Nothing is lost when an account stops**, as it does when its settings
   are applied or the program closes: what it was doing is finished first,
   and what you asked of it that had not started is answered as if the
@@ -279,7 +286,10 @@ Go makes it natural to do many things at once, and ApeMail does:
   one rather than failing, and the inbox is checked for what arrived while
   it was gone. The connection that does what you ask is tried first if it
   has not been used for a minute, as servers close one left idle, so that
-  moving or deleting a message after a while away does not fail.
+  moving or deleting a message after a while away does not fail. A server
+  that stops answering, as when the network goes without saying so, is
+  waited on for seconds, not the many minutes the network can take to
+  notice, so neither that check nor closing ApeMail hangs.
 
 ### The local copy
 
@@ -505,7 +515,10 @@ clears the socket away. Under Wayland the new copy hands on the desktop's
 activation token, without which the window would only ask for attention.
 
 The settings are kept where the system keeps the configuration of programs:
-`~/.config/apemail/settings.json` (or under `$XDG_CONFIG_HOME`).
+`~/.config/apemail/settings.json` (or under `$XDG_CONFIG_HOME`). If they
+cannot be read, as after a mistake made editing them by hand, ApeMail says
+so, starts with the defaults, and keeps the file as `settings.json.bad`
+rather than saving over it.
 
 They hold the paths of the keys, where the accounts are kept, the
 code font the source of a message is shown in and the theme (the User
@@ -561,7 +574,8 @@ ApeMail treats your mailbox as yours, not its own:
 - Checking for mail only ever reads: folders are opened read-only (IMAP
   `EXAMINE`), and messages are downloaded without being marked read.
 - Deleting moves mail to the trash. Only deleting from the trash removes mail
-  for good, and you are asked first.
+  for good, and you are asked first. A message deleted while its folder is
+  still being fetched stays gone when the fetch ends.
 - A message the filter hides cannot be selected, so nothing done to a selection,
   Select All and Delete among them, touches it, and Delete in the filter's field
   only edits what is typed.

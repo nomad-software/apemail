@@ -149,3 +149,25 @@ func TestSentCopyKeptAfterClose(t *testing.T) {
 		t.Errorf("pending = %+v", pending)
 	}
 }
+
+// TestIndexReadUnlocked checks that the index of a folder is read from the
+// local copy without e.mu held, by what flags or removes messages: that of a
+// large folder takes a while to read, and the UI's thread takes the lock
+// too, as for the list of folders, which would wait as long. TestSyncReads
+// IndexUnlocked checks syncing and archiving.
+func TestIndexReadUnlocked(t *testing.T) {
+	e, _ := newQuiet(t)
+	CheckIndexReads(t)
+
+	// Each is asked of a folder whose index has not been read.
+	e.numbered("one", 0)
+	e.setFlag("two", 0, []uint32{1}, `\Seen`, true)
+	e.removed("three", 0, []uint32{1})
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, folder := range []string{"one", "two", "three"} {
+		if _, ok := e.indexes[folder]; !ok {
+			t.Errorf("the index of %s was not read", folder)
+		}
+	}
+}

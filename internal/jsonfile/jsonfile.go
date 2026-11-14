@@ -132,8 +132,8 @@ func Convert(path string, from, to *crypt.Keys) error {
 	return write(path, converted)
 }
 
-// write replaces the file at path atomically. The file can be read and
-// written by the user alone.
+// write replaces the file at path atomically, and durably. The file can be
+// read and written by the user alone.
 func write(path string, data []byte) error {
 	// A temporary file is made with just those permissions.
 	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
@@ -143,6 +143,13 @@ func write(path string, data []byte) error {
 	defer os.Remove(tmp.Name())
 
 	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	// What is written is on the disk before it takes the old file's place,
+	// so that a power cut leaves the one or the other, not an empty file:
+	// an account, or mail in the outbox, would be lost.
+	if err := tmp.Sync(); err != nil {
 		tmp.Close()
 		return err
 	}

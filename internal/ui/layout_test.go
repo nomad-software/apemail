@@ -29,7 +29,7 @@ func TestLayoutIsKept(t *testing.T) {
 		w.list.setColumnWidths(180, 130)
 		w.Close()
 	})
-	config := settings.Load(w.files.Settings)
+	config, _ := settings.Load(w.files.Settings)
 	if config.Width != 900 || config.Height != 640 || config.SidebarWidth != 310 || config.ListHeight != 220 ||
 		config.CorrespondentWidth != 180 || config.DateWidth != 130 {
 		t.Fatalf("saved = %+v", config)
@@ -88,7 +88,7 @@ func TestMoveAccounts(t *testing.T) {
 	if _, err := os.Stat(from); !os.IsNotExist(err) {
 		t.Errorf("the old folder is still there: %v", err)
 	}
-	if config := settings.Load(w.files.Settings); config.DataDir != to {
+	if config, _ := settings.Load(w.files.Settings); config.DataDir != to {
 		t.Errorf("saved folder = %q", config.DataDir)
 	}
 	accounts, err := account.List(to, w.keys)
@@ -140,7 +140,7 @@ func TestPlainVersion(t *testing.T) {
 		"v1.15.1-0.20261027184954-00c19a9187bb+dirty": "v1.15.0",
 		"v2.0.0-rc.1": "v2.0.0",
 		"v1.2.3-rc.1.0.20261027184954-00c19a9187bb": "v1.2.3",
-		"v0.0.0-20261027184954-00c19a9187bb":        "v0.0.0",
+		"v0.0.0-20261027184954-00c19a9187bb":        "dev",
 	} {
 		if got := plainVersion(version); got != want {
 			t.Errorf("plainVersion(%q) = %q, want %q", version, got, want)
@@ -382,7 +382,7 @@ func TestColumnBorders(t *testing.T) {
 		}
 		w.Close()
 	})
-	if config := settings.Load(w.files.Settings); config.CorrespondentWidth != dragged[0] || config.DateWidth != dragged[1] {
+	if config, _ := settings.Load(w.files.Settings); config.CorrespondentWidth != dragged[0] || config.DateWidth != dragged[1] {
 		t.Errorf("saved %d, %d; dragged to %d, %d", config.CorrespondentWidth, config.DateWidth, dragged[0], dragged[1])
 	}
 }

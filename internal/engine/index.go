@@ -13,10 +13,14 @@ import (
 
 // index returns the index of the folder, reading it from the local copy the
 // first time. It must be called with e.mu held, and off the UI's thread.
+// Whoever takes e.mu to use it calls preload first, so that a large index is
+// not read with the lock held, which the UI's thread takes too; it is read
+// here only if the folder was forgotten in between.
 func (e *Engine) index(folder string) *store.Index {
 	if ix, ok := e.indexes[folder]; ok {
 		return ix
 	}
+	readLocked()
 	ix := e.readIndex(folder)
 	e.indexes[folder] = ix
 	return ix
@@ -31,6 +35,10 @@ func (e *Engine) readIndex(folder string) *store.Index {
 	}
 	return ix
 }
+
+// readLocked is told each time an index is read with e.mu held, for the
+// tests, which check that it never is.
+var readLocked = func() {}
 
 // preload reads the index of the folder from the local copy, if it has not
 // been, without holding up the engine while it does: that of a large folder

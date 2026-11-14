@@ -382,7 +382,7 @@ func TestAddressBookWindow(t *testing.T) {
 		if got := c.to.Text(); got != "Alan Turing <alan@example.com>" {
 			t.Errorf("to = %q", got)
 		}
-		c.body.modified = false
+		c.body.unmodified()
 		c.Close()
 
 		// It opens once, and closes with the main window.

@@ -3,6 +3,7 @@ package engine
 import (
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/nomad-software/apemail/internal/remote"
 	"github.com/nomad-software/apemail/internal/send"
@@ -54,6 +55,12 @@ func (e *Engine) TrashSaved(saved []Saved, done func(error)) {
 	e.do(func(c *remote.Conn) error {
 		if c == nil {
 			e.reply(done, errNoConn)
+			return nil
+		}
+		// Drafts kept only in the outbox have no UID, and nothing on the
+		// server to move: the trash is not made for them.
+		if !slices.ContainsFunc(saved, func(s Saved) bool { return s.UID != 0 }) {
+			e.reply(done, nil)
 			return nil
 		}
 		trash, err := e.ensureFolder(c, Trash)
@@ -207,8 +214,10 @@ func (e *Engine) flushPending(c *remote.Conn) error {
 				continue
 			}
 			e.status("")
+			// Mail sent that cannot be taken out of the outbox is sent
+			// again next time, which is said, rather than lost.
 			if err := e.store.RemovePending(p.ID); err != nil {
-				e.failed(err)
+				e.failed(fmt.Errorf("mail sent from the outbox is still in it, and will be sent again: %w", err))
 			}
 			// A receipt names no folder, and no copy of it is kept.
 			if p.Folder == "" && p.Use == "" {

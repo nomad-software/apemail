@@ -110,12 +110,15 @@ func (v *messageView) save(a message.Attachment) {
 // already there is never written over: the attachment is given a name of its
 // own, as name (2).pdf.
 func (v *messageView) saveFiles() {
+	// Those shown when Save All was pressed are saved, though another
+	// message is shown while the folder is chosen.
+	files := v.files
 	dir := chooseFolder(v, "Save All Attachments", downloads())
 	if dir == "" {
 		return
 	}
 	var failed []string
-	for _, a := range v.files {
+	for _, a := range files {
 		if err := saveNew(dir, fileName(a), a.Data); err != nil {
 			failed = append(failed, err.Error())
 		}

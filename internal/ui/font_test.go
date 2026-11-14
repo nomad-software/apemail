@@ -111,7 +111,7 @@ func TestSourceFont(t *testing.T) {
 		if later.Font().Family() != family || later.Font().PointSize() != 15 {
 			t.Errorf("new window = %q %d", later.Font().Family(), later.Font().PointSize())
 		}
-		if saved := settings.Load(w.files.Settings); saved.CodeFont != family || saved.CodeFontSize != 15 {
+		if saved, _ := settings.Load(w.files.Settings); saved.CodeFont != family || saved.CodeFontSize != 15 {
 			t.Errorf("saved %q %d", saved.CodeFont, saved.CodeFontSize)
 		}
 	})

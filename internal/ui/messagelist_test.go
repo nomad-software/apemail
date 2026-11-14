@@ -423,3 +423,20 @@ func TestRenumberedDeselects(t *testing.T) {
 		}
 	})
 }
+
+// TestShortAddresses checks that the list shows the names of the addresses,
+// split where each ends: not at a comma or semicolon within a quoted name.
+func TestShortAddresses(t *testing.T) {
+	for list, want := range map[string]string{
+		"":                               "",
+		"a@x":                            "a@x",
+		"Grace Hopper <g@x>, a@x":        "Grace Hopper, a@x",
+		`"Hopper, Grace" <g@x>, a@x`:     "Hopper, Grace, a@x",
+		`"Smith; John" <j@x>; Ann <a@x>`: "Smith; John, Ann",
+		"José Müller <j@x>":              "José Müller",
+	} {
+		if got := shortAddresses(list); got != want {
+			t.Errorf("shortAddresses(%q) = %q, want %q", list, got, want)
+		}
+	}
+}

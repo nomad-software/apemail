@@ -105,14 +105,19 @@ func (e *Engine) folderContents(c *remote.Conn, folder string) ([]remote.FolderS
 }
 
 // Deletable says why the folder cannot be deleted, if it cannot: the inbox,
-// and the folders the account uses, are kept.
+// the folders the account uses, and those that hold one, are kept.
 func (e *Engine) Deletable(folder string) error {
 	if remote.IsInbox(folder) {
 		return errors.New("the inbox cannot be deleted")
 	}
+	delim := e.delim(folder)
 	for _, use := range []Special{Sent, Drafts, Trash, Archive} {
-		if e.SpecialFolder(use) == folder {
+		special := e.SpecialFolder(use)
+		switch {
+		case special == folder:
 			return fmt.Errorf("%s is the account's %s folder, which is not deleted", folder, strings.ToLower(use.Name()))
+		case special != "" && delim != "" && strings.HasPrefix(special, folder+delim):
+			return fmt.Errorf("%s holds the account's %s folder, which is not deleted", folder, strings.ToLower(use.Name()))
 		}
 	}
 	return nil
@@ -186,8 +191,7 @@ func (e *Engine) forgetFolder(name string) {
 	e.folders = slices.DeleteFunc(e.folders, func(f store.Folder) bool { return f.Name == name })
 	delete(e.indexes, name)
 	delete(e.dirty, name)
-	delete(e.edited, name)
-	delete(e.flagEdits, name)
+	e.forgetEdits(name)
 	list := slices.Clone(e.folders)
 	e.post(func() { e.listener.FoldersChanged(e.acct.ID, list) })
 	e.mu.Unlock()

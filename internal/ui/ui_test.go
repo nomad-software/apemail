@@ -702,3 +702,44 @@ func rgb(c qtgui.QColor) uint {
 func colourOf(pixel uint) qtgui.QColor {
 	return qtgui.RGB(uint8(pixel>>16), uint8(pixel>>8), uint8(pixel))
 }
+
+// TestReceiptAskedOnceWhenChosenAgain checks that a message chosen, left and
+// chosen again before it has been downloaded is shown once, and its return
+// receipt asked for once: the first download is not shown, though the
+// message is selected when it arrives.
+func TestReceiptAskedOnceWhenChosenAgain(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Sent")
+	s.AppendRaw(t, "INBOX", askingReceipt)
+	s.Append(t, "INBOX", "other")
+	w := newTestWindow(t, s)
+	asked := answer(t, false)
+	wait(t, "the messages", func() bool { return len(w.list.rows) == 2 })
+	row := func(subject string) int {
+		for i, r := range w.list.rows {
+			if r.Subject == subject {
+				return i
+			}
+		}
+		t.Fatalf("no %s", subject)
+		return 0
+	}
+
+	held, release := s.Hold(t, "BODY.PEEK[]")
+	qutetest.Run(t, func() { clickRow(w.list, row("Did you get this?")) })
+	select {
+	case <-held:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the message was not downloaded")
+	}
+	qutetest.Run(t, func() {
+		clickRow(w.list, row("other"))
+		clickRow(w.list, row("Did you get this?"))
+	})
+	release()
+	wait(t, "the message", func() bool { return w.view.msg != nil && w.view.msg.Subject == "Did you get this?" })
+	wait(t, "the receipt flag", func() bool { return hasFlag(t, s, "INBOX", "$MDNSent") })
+	time.Sleep(200 * time.Millisecond)
+	if *asked != 1 {
+		t.Errorf("asked %d times", *asked)
+	}
+}

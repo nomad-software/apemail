@@ -28,10 +28,14 @@ func appVersion() string {
 // plainVersion returns the release a version recorded by Go is, or follows.
 // Between tags Go records a version made from the commit, whose patch is one
 // more than the tag before it, as v1.2.4-0.20261027184954-00c19a9187bb is
-// after v1.2.3.
+// after v1.2.3. A build that follows no tag, which Go numbers v0.0.0 and the
+// commit, is dev.
 func plainVersion(version string) string {
 	version, _, _ = strings.Cut(version, "+")
 	version, pre, _ := strings.Cut(version, "-")
+	if version == "v0.0.0" && pre != "" {
+		return "dev"
+	}
 	if !strings.HasPrefix(pre, "0.") {
 		return version
 	}

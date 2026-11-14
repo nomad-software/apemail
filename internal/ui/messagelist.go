@@ -13,6 +13,7 @@ import (
 	"github.com/nomad-software/qute/qtwidgets"
 
 	"github.com/nomad-software/apemail/internal/icons"
+	"github.com/nomad-software/apemail/internal/message"
 	"github.com/nomad-software/apemail/internal/store"
 )
 
@@ -282,36 +283,17 @@ func (m *listModel) Data(index *qtcore.QModelIndex, role int) *qtcore.QVariant {
 // those without names.
 func shortAddresses(list string) string {
 	var names []string
-	for _, a := range splitAddresses(list) {
-		a = strings.TrimSpace(a)
+	for _, span := range message.AddressSpans(list) {
+		a := strings.TrimSpace(list[span[0]:span[1]])
+		if a == "" {
+			continue
+		}
 		if i := strings.Index(a, " <"); i > 0 && strings.HasSuffix(a, ">") {
 			a = strings.Trim(a[:i], `"`)
 		}
 		names = append(names, a)
 	}
 	return strings.Join(names, ", ")
-}
-
-// splitAddresses splits a list of addresses at the commas that are not
-// within quotes.
-func splitAddresses(list string) []string {
-	var parts []string
-	quoted, start := false, 0
-	for i, r := range list {
-		switch r {
-		case '"':
-			quoted = !quoted
-		case ',':
-			if !quoted {
-				parts = append(parts, list[start:i])
-				start = i + 1
-			}
-		}
-	}
-	if rest := strings.TrimSpace(list[start:]); rest != "" {
-		parts = append(parts, rest)
-	}
-	return parts
 }
 
 // formatDate returns the date as the list shows it: the full date and time,
@@ -609,7 +591,10 @@ func (l *messageList) relist(change func()) {
 	}
 	// Once the messages selected have all gone, which can be a few at a
 	// time, as archiving moves them to a folder for each year, the one
-	// after them is selected in their place.
+	// after them is selected in their place. Until then, those left are
+	// not shown, as they are going too: showing one would mark it read,
+	// and ask for its return receipt.
+	going := l.next != 0 && reselected > 0
 	if len(selected) > 0 && reselected == 0 {
 		if i, ok := l.row[l.next]; ok {
 			l.setCurrentRow(i, qtcore.QItemSelectionModelClearAndSelect|qtcore.QItemSelectionModelRows)
@@ -621,7 +606,7 @@ func (l *messageList) relist(change func()) {
 	}
 	l.selected = blocked
 	// A message that was selected and is gone changes what is shown.
-	if reselected != len(selected) && l.selected != nil {
+	if reselected != len(selected) && l.selected != nil && !going {
 		l.selected()
 	}
 }

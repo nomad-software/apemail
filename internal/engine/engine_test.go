@@ -954,6 +954,52 @@ func TestArchiveByYear(t *testing.T) {
 	}
 }
 
+// TestSyncReadsIndexUnlocked checks that synchronising a folder whose index
+// has not been read, as the inbox when the program starts or every folder in
+// Synchronise All Folders, and archiving, read the index without the
+// engine's lock held, which the UI's thread waits on.
+func TestSyncReadsIndexUnlocked(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Work")
+	s.Append(t, "INBOX", "first")
+	s.Append(t, "Work", "second")
+	engine.CheckIndexReads(t)
+	e, l, _ := start(t, s)
+	wait(t, "the inbox", func() bool { ix := l.index("INBOX"); return ix != nil && len(ix.Messages) == 1 })
+	if err := result(t, func(done func(error)) { e.SyncAll(done) }); err != nil {
+		t.Fatal(err)
+	}
+	if err := result(t, func(done func(error)) {
+		e.Archive("INBOX", e.Validity("INBOX"), []uint32{l.index("INBOX").Messages[0].UID}, done)
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestArchiveIntoFolderMadeElsewhere checks that archiving into a folder for
+// the year that another client made after the folders were listed moves the
+// mail into it, which the server says is there already when it is made again.
+func TestArchiveIntoFolderMadeElsewhere(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Archive")
+	s.AppendDated(t, "INBOX", "new", time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC))
+	e, l, _ := started(t, s)
+	wait(t, "the inbox", func() bool { ix := l.index("INBOX"); return ix != nil && len(ix.Messages) == 1 })
+	if err := s.Client(t).Create("Archive/2026", nil).Wait(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := result(t, func(done func(error)) {
+		e.Archive("INBOX", e.Validity("INBOX"), []uint32{l.index("INBOX").Messages[0].UID}, done)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if msgs := s.Messages(t, "Archive/2026"); len(msgs) != 1 || msgs[0].Subject != "new" {
+		t.Errorf("2026 = %+v", msgs)
+	}
+	if msgs := s.Messages(t, "INBOX"); len(msgs) != 0 {
+		t.Errorf("inbox = %+v", msgs)
+	}
+}
+
 func TestArchiveFolder(t *testing.T) {
 	date := time.Date(2026, 3, 9, 12, 0, 0, 0, time.Local)
 	for _, c := range []struct {
@@ -1008,6 +1054,42 @@ func TestArchiveChosen(t *testing.T) {
 // a folder are first fetched is numbered as the server numbers it, so that
 // it can be opened before the sync ends: it was shown as numbered by nothing
 // (0), and opening it was refused as of a folder numbered anew.
+// TestTrashWhileFirstFetched checks that a message deleted while its folder
+// is first fetched, once it is shown, stays gone when the sync ends, though
+// the sync read it from the server before it went.
+func TestTrashWhileFirstFetched(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Work")
+	s.Append(t, "Work", "early")
+	s.Append(t, "Work", "kept")
+	e, l, _ := start(t, s)
+	wait(t, "the folders", func() bool { return listed(e, "Work") })
+
+	held, release := s.Hold(t, "ENVELOPE")
+	e.Open("Work")
+	recv(t, held)
+	time.Sleep(1100 * time.Millisecond)
+	heldEnd, releaseEnd := s.Hold(t, "BODYSTRUCTURE")
+	release()
+	recv(t, heldEnd)
+
+	wait(t, "the messages shown", func() bool { ix := l.index("Work"); return ix != nil && len(ix.Messages) == 2 })
+	ix := l.index("Work")
+	early := ix.Messages[0].UID
+	if err := result(t, func(done func(error)) { e.Trash("Work", ix.UIDValidity, []uint32{early}, done) }); err != nil {
+		t.Fatal(err)
+	}
+	releaseEnd()
+	// The index the sync ends with is the first to say which messages
+	// have attachments.
+	wait(t, "the sync to end", func() bool { ix := l.index("Work"); return ix != nil && ix.Attachments })
+	if got := subjects(l.index("Work")); got != "kept" {
+		t.Errorf("listed %q once the sync ended", got)
+	}
+	if msgs := s.Messages(t, "Work"); len(msgs) != 1 || msgs[0].Subject != "kept" {
+		t.Errorf("on the server: %+v", msgs)
+	}
+}
+
 func TestOpenWhileFirstFetched(t *testing.T) {
 	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Work")
 	s.Append(t, "Work", "early")

@@ -251,7 +251,7 @@ func TestThemeSetting(t *testing.T) {
 		if got := c.body.page.BackgroundColor(); got.Name() != "#1e1e1e" {
 			t.Errorf("compose page %s", got.Name())
 		}
-		if saved := settings.Load(w.files.Settings); saved.Theme != settings.ThemeDark {
+		if saved, _ := settings.Load(w.files.Settings); saved.Theme != settings.ThemeDark {
 			t.Errorf("saved %q", saved.Theme)
 		}
 		if f := newThemeField(w.config.Theme); currentData(f) != settings.ThemeDark {

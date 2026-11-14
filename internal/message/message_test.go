@@ -299,9 +299,12 @@ func TestFormatAddressQuotes(t *testing.T) {
 		{Name: `Grace "Amazing" Hopper`, Address: "grace@example.com"},
 		{Name: `Back\slash <x>`, Address: "grace@example.com"},
 		{Name: "Jörg", Address: "jorg@example.com"},
+		// A semicolon also separates addresses, but not within quotes.
+		{Name: "Smith; John", Address: "john@example.com"},
+		{Name: `Say "a; b", c`, Address: "john@example.com"},
 	} {
 		text := message.FormatAddress(a)
-		got, err := message.ParseAddresses(text + ", other@example.com")
+		got, err := message.ParseAddresses(text + "; other@example.com")
 		if err != nil {
 			t.Errorf("%q: %v", text, err)
 			continue
@@ -349,6 +352,49 @@ func TestParseUnknownEncoding(t *testing.T) {
 		if m.Subject != "Encoded" || !strings.Contains(m.Text, "The body.") {
 			t.Errorf("subject = %q, text = %q", m.Subject, m.Text)
 		}
+	}
+}
+
+// TestParsePartUnknownCharset checks that a part of a message in more than
+// one, in a character set not known, is shown as it is rather than left
+// out, and that one in a transfer encoding not known leaves the others.
+func TestParsePartUnknownCharset(t *testing.T) {
+	raw := "From: a@example.com\r\nSubject: s\r\nMIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=b\r\n\r\n" +
+		"--b\r\nContent-Type: text/plain; charset=x-unknown\r\n\r\nThe body.\r\n" +
+		"--b\r\nContent-Type: text/plain\r\nContent-Transfer-Encoding: x-weird\r\n\r\nUnread.\r\n" +
+		"--b\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=a.pdf\r\n\r\nPDF\r\n" +
+		"--b--\r\n"
+	m, err := message.Parse([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(m.Text, "The body.") {
+		t.Errorf("text = %q", m.Text)
+	}
+	if len(m.Attachments) != 1 || m.Attachments[0].Filename != "a.pdf" {
+		t.Errorf("attachments = %+v", m.Attachments)
+	}
+}
+
+// TestParseInlineTextFile checks that a file of text sent inline, after the
+// body, is an attachment, while a body split into parts is still one body.
+func TestParseInlineTextFile(t *testing.T) {
+	raw := "From: a@example.com\r\nSubject: s\r\nMIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=b\r\n\r\n" +
+		"--b\r\nContent-Type: text/plain\r\n\r\nThe body.\r\n" +
+		"--b\r\nContent-Type: text/plain; name=notes.txt\r\nContent-Disposition: inline; filename=notes.txt\r\n\r\nThe notes.\r\n" +
+		"--b\r\nContent-Type: text/plain\r\nContent-Disposition: inline\r\n\r\nMore of the body.\r\n" +
+		"--b--\r\n"
+	m, err := message.Parse([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(m.Text, "The body.") || !strings.Contains(m.Text, "More of the body.") || strings.Contains(m.Text, "notes") {
+		t.Errorf("text = %q", m.Text)
+	}
+	if len(m.Attachments) != 1 || m.Attachments[0].Filename != "notes.txt" || string(m.Attachments[0].Data) != "The notes." {
+		t.Errorf("attachments = %+v", m.Attachments)
 	}
 }
 

@@ -126,12 +126,14 @@ func newServerFields(s account.Server, ports map[account.Security]int, test func
 // set fills the fields in from the server.
 func (f *serverFields) set(s account.Server) {
 	f.host.SetText(s.Host)
-	f.port.SetValue(s.Port)
 	f.username.SetText(s.Username)
 	f.password.SetText(s.Password)
 	if i := f.security.FindData(qtcore.NewQVariantWithString(string(s.Security))); i >= 0 {
 		f.security.SetCurrentIndex(i)
 	}
+	// The port is set after the security, whose change gives a usual port
+	// the one usual for it, which would take the place of the one given.
+	f.port.SetValue(s.Port)
 	if i := f.auth.FindData(qtcore.NewQVariantWithString(string(s.Auth))); i >= 0 {
 		f.auth.SetCurrentIndex(i)
 	}

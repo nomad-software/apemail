@@ -1,6 +1,10 @@
 package engine
 
-import "time"
+import (
+	"runtime/debug"
+	"testing"
+	"time"
+)
 
 // SetWatchRetry has the watcher connect again after d, rather than after
 // seconds, until the test ends, when it is put back.
@@ -25,4 +29,12 @@ func SetOpIdle(d time.Duration) (restore func()) {
 	old := opIdle
 	opIdle = d
 	return func() { opIdle = old }
+}
+
+// CheckIndexReads fails the test if an index is read from the local copy
+// with the engine's lock held, until the test ends.
+func CheckIndexReads(t *testing.T) {
+	old := readLocked
+	readLocked = func() { t.Errorf("an index was read with the engine's lock held:\n%s", debug.Stack()) }
+	t.Cleanup(func() { readLocked = old })
 }

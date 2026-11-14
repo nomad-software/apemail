@@ -6,6 +6,8 @@ package settings
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -127,11 +129,21 @@ func Prepare(path string) error {
 }
 
 // Load reads the settings from the JSON file at path. Defaults are used if
-// the file is missing or unreadable, and for any value that is unusable.
-func Load(path string) Settings {
+// the file is missing or unreadable, and for any value that is unusable. A
+// file that cannot be read, as one with a mistake made editing it by hand,
+// is kept beside it as path.bad, rather than saved over when the program
+// closes, as it names the keys; the error says so.
+func Load(path string) (Settings, error) {
 	var s Settings
+	var failed error
 	if err := jsonfile.Load(path, &s); err != nil {
 		s = Settings{}
+		bad := path + ".bad"
+		if rerr := os.Rename(path, bad); rerr != nil {
+			failed = fmt.Errorf("the settings in %s could not be read, and the defaults are used: %w", path, errors.Join(err, rerr))
+		} else {
+			failed = fmt.Errorf("the settings in %s could not be read, and the defaults are used; the file is kept as %s: %w", path, bad, err)
+		}
 	}
 	if s.Width < minSize || s.Height < minSize {
 		s.Width, s.Height = defaultWidth, defaultHeight
@@ -150,7 +162,7 @@ func Load(path string) Settings {
 	if s.Expanded == nil {
 		s.Expanded = map[string]map[string]bool{}
 	}
-	return s
+	return s, failed
 }
 
 // Save writes the settings to the JSON file at path.

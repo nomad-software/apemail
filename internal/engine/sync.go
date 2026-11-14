@@ -84,7 +84,9 @@ func (e *Engine) syncWorker() {
 			}
 			continue
 		}
-		if !watching {
+		// The inbox is watched once it is listed: a sync of another
+		// folder, kept from before without it, comes first.
+		if _, ok := e.listedInbox(); ok && !watching {
 			watching = e.spawn(e.watcher)
 		}
 	}
@@ -114,10 +116,9 @@ func (e *Engine) listed(list []store.Folder) {
 			delete(e.dirty, name)
 		}
 	}
-	for name := range e.edited {
+	for name := range e.edits {
 		if gone(name) {
-			delete(e.edited, name)
-			delete(e.flagEdits, name)
+			e.forgetEdits(name)
 		}
 	}
 	e.post(func() { e.listener.FoldersChanged(e.acct.ID, list) })
@@ -179,9 +180,10 @@ func (e *Engine) syncFolder(conn *remote.Conn, folder string, say func(format st
 	}
 	defer lock.Unlock()
 	say("Checking %s…", folder)
+	e.preload(folder)
 	e.mu.Lock()
 	known := snapshot(e.index(folder))
-	edits := e.flagEdits[folder]
+	edits := e.edits[folder]
 	e.mu.Unlock()
 
 	// While a large folder is first fetched, what has arrived is shown
@@ -281,10 +283,12 @@ func (e *Engine) syncFolder(conn *remote.Conn, folder string, say func(format st
 		changed = true
 	}
 	e.failed(u.AttachmentsErr)
-	// What was set before this sync began, it has read from the server.
-	for uid, n := range e.edited[folder] {
-		if n <= edits {
-			delete(e.edited[folder], uid)
+	// What was done before this sync began, it has read from the server.
+	for _, done := range []map[uint32]uint64{e.edited[folder], e.taken[folder]} {
+		for uid, n := range done {
+			if n <= edits {
+				delete(done, uid)
+			}
 		}
 	}
 	if changed {
@@ -294,16 +298,41 @@ func (e *Engine) syncFolder(conn *remote.Conn, folder string, say func(format st
 }
 
 // editedSince says if the user has set a flag of the message in the folder
-// since the count of the edits of its flags was edits. It must be called
+// since the count of the edits of the folder was edits. It must be called
 // with mu held.
 func (e *Engine) editedSince(folder string, uid uint32, edits uint64) bool {
 	return e.edited[folder][uid] > edits
 }
 
+// edit counts a change the user has made to the messages of the folder,
+// and keeps the count in kept (edited or taken) for each message changed.
+// It must be called with mu held.
+func (e *Engine) edit(folder string, uids []uint32, kept map[string]map[uint32]uint64) {
+	e.edits[folder]++
+	if kept[folder] == nil {
+		kept[folder] = map[uint32]uint64{}
+	}
+	for _, uid := range uids {
+		kept[folder][uid] = e.edits[folder]
+	}
+}
+
+// forgetEdits forgets the changes counted in the folder, which has gone. It
+// must be called with mu held.
+func (e *Engine) forgetEdits(folder string) {
+	delete(e.edits, folder)
+	delete(e.edited, folder)
+	delete(e.taken, folder)
+}
+
 // put puts the summary of a message a sync read in the index, keeping the
 // flags it has if the user has set one since the count of the edits of the
-// folder's flags was edits. It must be called with mu held.
+// folder was edits, and leaving it out if the user has taken it away since.
+// It must be called with mu held.
 func (e *Engine) put(ix *store.Index, s store.Summary, edits uint64) {
+	if e.taken[ix.Folder][s.UID] > edits {
+		return
+	}
 	if i, ok := ix.Find(s.UID); ok && e.editedSince(ix.Folder, s.UID, edits) {
 		s.Flags = ix.Messages[i].Flags
 	}

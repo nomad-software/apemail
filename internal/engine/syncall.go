@@ -19,7 +19,8 @@ var ErrStopped = errors.New("the synchronising of every folder was stopped")
 // as it is often the largest and the least looked at. It runs on a
 // connection of its own, so that checking a folder meanwhile is not held up
 // behind it, and gives done nil when it has finished, ErrStopped if it was
-// stopped, or what went wrong. It does nothing if it is running already.
+// stopped, errClosed if the engine was closed meanwhile, or what went
+// wrong. It does nothing if it is running already.
 func (e *Engine) SyncAll(done func(error)) {
 	e.mu.Lock()
 	if e.allStop != nil {
@@ -40,6 +41,11 @@ func (e *Engine) SyncAll(done func(error)) {
 		case <-stop:
 			err = ErrStopped
 		default:
+			// Closing the engine drops the connection, or stops it
+			// between folders, which is not to be taken for finishing.
+			if e.stopped() {
+				err = errClosed
+			}
 		}
 		e.reply(done, err)
 	})
@@ -107,7 +113,7 @@ func (e *Engine) syncAll(stop chan struct{}) error {
 	order := e.syncOrder(list)
 	for i, folder := range order {
 		if e.stopped() {
-			return nil
+			return errClosed
 		}
 		say := func(format string, args ...any) {
 			e.say(allStatus, fmt.Sprintf("Every folder, %d of %d: ", i+1, len(order))+format, args...)

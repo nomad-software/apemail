@@ -2,6 +2,7 @@ package ui
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/nomad-software/qute/qtcore"
@@ -33,4 +34,29 @@ func TestActivate(t *testing.T) {
 			t.Error("hidden: not shown")
 		}
 	})
+}
+
+// TestSettingsUnreadable checks that settings that cannot be read, as with a
+// mistake made editing them by hand, are kept rather than saved over when
+// the window closes, as they name the keys, and that the window says so.
+func TestSettingsUnreadable(t *testing.T) {
+	path := t.TempDir() + "/settings.json"
+	broken := `{"publicKey": "~/.ssh/id.pub",}`
+	if err := os.WriteFile(path, []byte(broken), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	qutetest.Run(t, func() {
+		w := NewWindow(Files{Settings: path, Accounts: t.TempDir()})
+		if w.configErr == nil || !strings.Contains(w.configErr.Error(), path+".bad") {
+			t.Errorf("err = %v", w.configErr)
+		}
+		w.Close()
+		w.DeleteLater()
+	})
+	if kept, err := os.ReadFile(path + ".bad"); err != nil || string(kept) != broken {
+		t.Errorf("kept %q, %v", kept, err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("the settings were not saved anew: %v", err)
+	}
 }

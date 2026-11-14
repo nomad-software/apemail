@@ -66,6 +66,7 @@ func (w *Window) loadAddressBook() {
 func (w *Window) closeAddressBook() {
 	if w.bookDialog != nil {
 		w.bookDialog.Close()
+		w.bookDialog = nil
 	}
 	w.contacts.book = nil
 	w.addressBookChanged()

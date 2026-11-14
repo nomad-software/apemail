@@ -34,6 +34,7 @@ import (
 
 	"github.com/nomad-software/apemail/internal/account"
 	"github.com/nomad-software/apemail/internal/homedir"
+	"github.com/nomad-software/apemail/internal/message"
 	"github.com/nomad-software/apemail/internal/store"
 )
 
@@ -82,6 +83,11 @@ var wordDecoder = &mime.WordDecoder{CharsetReader: charset.Reader}
 func TLSConfig(s account.Server) (*tls.Config, error) {
 	config := &tls.Config{ServerName: s.Host, MinVersion: tls.VersionTLS12}
 	if s.Auth == account.AuthTLSCert {
+		// Without TLS there is no handshake to give the certificate in,
+		// and the server would be used without logging in.
+		if s.Security == account.SecurityNone {
+			return nil, errors.New("a client certificate is given only over SSL/TLS or STARTTLS")
+		}
 		if s.ClientCert == "" || s.ClientKey == "" {
 			return nil, errors.New("a client certificate and its key are needed")
 		}
@@ -136,13 +142,14 @@ func Dial(s account.Server, opts Options) (*Conn, error) {
 // login authenticates with the server as the account says to.
 func login(c *imapclient.Client, s account.Server) error {
 	caps := c.Caps()
-	if caps.Has(imap.CapLoginDisabled) && s.Auth != account.AuthTLSCert {
-		return errors.New("the server does not allow logging in over this connection; it may need SSL/TLS or STARTTLS")
-	}
-
 	var err error
 	switch s.Auth {
 	case account.AuthPassword:
+		// LOGINDISABLED forbids only the LOGIN command (RFC 3501): a server
+		// may still offer PLAIN, and CRAM-MD5 sends no password at all.
+		if caps.Has(imap.CapLoginDisabled) && !caps.Has(imap.Cap("AUTH=PLAIN")) {
+			return errors.New("the server does not allow logging in over this connection; it may need SSL/TLS or STARTTLS")
+		}
 		if caps.Has(imap.Cap("AUTH=PLAIN")) {
 			err = c.Authenticate(sasl.NewPlainClient("", s.Username, s.Password))
 		} else {
@@ -167,10 +174,35 @@ func login(c *imapclient.Client, s account.Server) error {
 	return nil
 }
 
-// Close logs out and closes the connection.
+// Close logs out and closes the connection. A server that does not answer
+// the logout within logoutWait is not waited for longer: the connection is
+// closed, as it may have gone without saying so, which TCP can take many
+// minutes to find, and closing the program would wait as long.
 func (c *Conn) Close() error {
-	c.c.Logout().Wait()
+	c.within(logoutWait, c.c.Logout().Wait)
 	return c.c.Close()
+}
+
+// How long a server is waited on for an answer to a logout, and to Check.
+var logoutWait, checkWait = 5 * time.Second, 15 * time.Second
+
+// within waits for the answer to a command, unless the server has not given
+// it within d, when the connection is closed, as it has gone, and an error
+// returned.
+func (c *Conn) within(d time.Duration, wait func() error) error {
+	answer := make(chan error, 1)
+	go func() { answer <- wait() }()
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case err := <-answer:
+		return err
+	case <-timer.C:
+		c.c.Close()
+		// Closing the connection ends the wait.
+		<-answer
+		return fmt.Errorf("the server did not answer within %v", d)
+	}
 }
 
 // Abort closes the connection without logging out, which unblocks what is
@@ -180,9 +212,10 @@ func (c *Conn) Abort() {
 }
 
 // Check asks the server to answer (NOOP), which changes nothing, and returns
-// an error if it does not: the connection has gone.
+// an error if it does not, or not within checkWait: the connection has gone,
+// and is closed.
 func (c *Conn) Check() error {
-	if err := c.c.Noop().Wait(); err != nil {
+	if err := c.within(checkWait, c.c.Noop().Wait); err != nil {
 		return fmt.Errorf("the connection to the server has gone: %w", err)
 	}
 	return nil
@@ -240,10 +273,10 @@ func IsInbox(name string) bool {
 }
 
 // examine opens the folder to be read from, which changes nothing in it.
+// It is opened again though it is open, so that what it holds, and how it
+// is numbered, is as the server has it now: another client may have made it
+// again since, which a server need not say (TestRenumberedWhileOpen).
 func (c *Conn) examine(folder string) (*imap.SelectData, error) {
-	if c.selected == folder && !c.readWrite {
-		return nil, nil
-	}
 	// CONDSTORE has the server say how many changes the folder has had,
 	// so that a sync can ask for those since the last.
 	options := &imap.SelectOptions{ReadOnly: true, CondStore: c.c.Caps().Has(imap.CapCondStore)}
@@ -335,8 +368,6 @@ type Update struct {
 // that a large folder costs little to keep up to date. Any other is asked
 // for the flags of every message.
 func (c *Conn) Sync(ix *store.Index, progress func(uidValidity uint32, s []store.Summary)) (*Update, error) {
-	// The folder is opened anew, so that what it holds is up to date.
-	c.selected = ""
 	data, err := c.examine(ix.Folder)
 	if err != nil {
 		return nil, err
@@ -599,8 +630,8 @@ func (c *Conn) summaries(uids imap.UIDSet) ([]store.Summary, error) {
 		if e := m.Envelope; e != nil {
 			s.Subject = e.Subject
 			s.MessageID = e.MessageID
-			s.From = FormatAddresses(e.From)
-			s.To = FormatAddresses(e.To)
+			s.From = formatAddresses(e.From)
+			s.To = formatAddresses(e.To)
 			if !e.Date.IsZero() {
 				s.Date = e.Date
 			}
@@ -610,16 +641,18 @@ func (c *Conn) summaries(uids imap.UIDSet) ([]store.Summary, error) {
 	return summaries, nil
 }
 
-// FormatAddresses returns the addresses as they are written in a header.
-func FormatAddresses(addrs []imap.Address) string {
-	var parts []string
+// formatAddresses returns the addresses of an envelope as a person would
+// write them (message.FormatAddresses), names that are not ASCII as they
+// are rather than encoded as a header has them.
+func formatAddresses(addrs []imap.Address) string {
+	var list []*mail.Address
 	for _, a := range addrs {
 		if a.IsGroupStart() || a.IsGroupEnd() {
 			continue
 		}
-		parts = append(parts, (&mail.Address{Name: a.Name, Address: a.Addr()}).String())
+		list = append(list, &mail.Address{Name: a.Name, Address: a.Addr()})
 	}
-	return strings.Join(parts, ", ")
+	return message.FormatAddresses(list)
 }
 
 // flagStrings returns the flags as strings.
@@ -636,9 +669,6 @@ func flagStrings(flags []imap.Flag) []string {
 // the index the UIDs are from; if the server has numbered the messages anew
 // since, nothing is fetched, as the UIDs could be of other messages.
 func (c *Conn) Fetch(folder string, uidValidity uint32, uids []uint32, got func(uid uint32, raw []byte) error) error {
-	// The folder is opened again though it is open, as it may have been
-	// made again since, and numbered anew (checkUIDs).
-	c.selected = ""
 	if _, err := c.examine(folder); err != nil {
 		return err
 	}
@@ -709,14 +739,23 @@ func renumbered(folder string) error {
 	return fmt.Errorf("the messages of %s have been numbered anew; it needs to be synchronised", folder)
 }
 
-// SetFlags adds the flags to the messages, or takes them away if add is
-// false. The flags can be \Seen, \Flagged or \Answered; \Deleted is only
-// set by Delete, which expunges what it marks.
-func (c *Conn) SetFlags(folder string, uidValidity uint32, uids []uint32, add bool, flags ...string) error {
+// notDeleted returns an error if the flags hold \Deleted, which only Delete
+// sets, as it expunges just what it marks.
+func notDeleted(flags []string) error {
 	for _, f := range flags {
 		if strings.EqualFold(f, string(imap.FlagDeleted)) {
 			return errors.New(`\Deleted is only set when deleting`)
 		}
+	}
+	return nil
+}
+
+// SetFlags adds the flags to the messages, or takes them away if add is
+// false. The flags can be \Seen, \Flagged or \Answered; \Deleted is only
+// set by Delete, which expunges what it marks.
+func (c *Conn) SetFlags(folder string, uidValidity uint32, uids []uint32, add bool, flags ...string) error {
+	if err := notDeleted(flags); err != nil {
+		return err
 	}
 	if err := c.checkUIDs(folder, uidValidity, uids); err != nil {
 		return err
@@ -746,7 +785,7 @@ func (c *Conn) canExpungeByUID() bool {
 // that either is not asked to move them at all, as it would expunge every
 // message marked as deleted in the folder, not just these.
 func (c *Conn) Move(folder string, uidValidity uint32, uids []uint32, to string) error {
-	if folder == to {
+	if folder == to || (IsInbox(folder) && IsInbox(to)) {
 		return errors.New("the messages are already in " + to)
 	}
 	if err := c.checkUIDs(folder, uidValidity, uids); err != nil {
@@ -910,6 +949,9 @@ func (c *Conn) Append(folder string, raw []byte, flags []string) (uid, uidValidi
 	if !c.writable {
 		return 0, 0, ErrReadOnly
 	}
+	if err := notDeleted(flags); err != nil {
+		return 0, 0, err
+	}
 	options := &imap.AppendOptions{Time: time.Now()}
 	for _, f := range flags {
 		options.Flags = append(options.Flags, imap.Flag(f))
@@ -939,7 +981,6 @@ func (c *Conn) CanIdle() bool {
 // the connection fails. The Unilateral handler of the connection is told of
 // what changes.
 func (c *Conn) Watch(folder string, stop <-chan struct{}) error {
-	c.selected = ""
 	if _, err := c.examine(folder); err != nil {
 		return err
 	}

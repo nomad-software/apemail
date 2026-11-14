@@ -50,7 +50,10 @@ type Window struct {
 
 	files  Files
 	config settings.Settings
-	keys   *crypt.Keys
+	// configErr says why the settings could not be read, which is warned of
+	// once the window is shown.
+	configErr error
+	keys      *crypt.Keys
 
 	// engines are those of the accounts, by ID, and order is the order the
 	// accounts are shown in.
@@ -76,6 +79,9 @@ type Window struct {
 	// itself is, as applying the settings.
 	statuses map[string]string
 	doing    string
+	// showing counts the messages asked to be shown, so that only the last
+	// asked for is.
+	showing int
 
 	// contacts is the address book, and bookDialog its window if it is
 	// open.
@@ -93,10 +99,10 @@ type Window struct {
 func NewWindow(files Files) *Window {
 	w := &Window{
 		files:    files,
-		config:   settings.Load(files.Settings),
 		engines:  map[string]*engine.Engine{},
 		statuses: map[string]string{},
 	}
+	w.config, w.configErr = settings.Load(files.Settings)
 	qtwidgets.NewQMainWindowWith(w, nil)
 	rememberSystemStyle()
 	if w.config.Theme != "" {
@@ -205,6 +211,9 @@ func (w *Window) Start() {
 	}
 	qute.Post(func() {
 		w.restoreLayout()
+		if w.configErr != nil {
+			warning(w, "Settings", w.configErr.Error())
+		}
 		w.openKeys()
 	})
 }
@@ -372,12 +381,13 @@ func (w *Window) updateActions() {
 	w.replyAll.SetEnabled(one)
 	w.forward.SetEnabled(one)
 	w.viewSource.SetEnabled(one)
-	w.archive.SetEnabled(some)
 	w.del.SetEnabled(some)
 	w.markRead.SetEnabled(some)
 	w.markUnread.SetEnabled(some)
 	e := w.currentEngine()
 	has := e != nil
+	// Mail in the archive is not archived again.
+	w.archive.SetEnabled(some && has && !e.InArchive(w.folder))
 	w.editAccount.SetEnabled(has)
 	w.removeAccount.SetEnabled(has)
 	w.updateCounts.SetEnabled(has)
@@ -721,9 +731,13 @@ func (w *Window) showMessage(uid uint32) {
 	}
 	id, folder, validity := w.account, w.folder, w.list.uidValidity
 	// What arrives after another message was chosen, or the folder
-	// numbered anew, is not shown.
+	// numbered anew, is not shown; nor is what was asked for before the
+	// message was chosen again, as it would be shown, and its receipt
+	// asked for, twice.
+	w.showing++
+	showing := w.showing
 	current := func() bool {
-		return id == w.account && folder == w.folder && validity == w.list.uidValidity && slices.Equal(w.list.selectedUIDs(), []uint32{uid})
+		return showing == w.showing && id == w.account && folder == w.folder && validity == w.list.uidValidity && slices.Equal(w.list.selectedUIDs(), []uint32{uid})
 	}
 	w.view.loading()
 	e.Message(folder, validity, uid, func(raw []byte, err error) {

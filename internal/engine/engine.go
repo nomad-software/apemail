@@ -65,12 +65,15 @@ type Engine struct {
 	// a folder is thrown away, so that an index is never saved into a
 	// folder after it was thrown away. It is taken before mu.
 	saveMu sync.Mutex
-	// flagEdits counts the flags the user has set in each folder, and
-	// edited is, for each message set, the count when it was, so that a
-	// sync that read the flags of a message from the server before they
-	// were set does not undo them.
-	flagEdits map[string]uint64
-	edited    map[string]map[uint32]uint64
+	// edits counts the changes the user has made to each folder: flags
+	// set and messages taken away. edited is, for each message whose flags
+	// were set, the count when they were, and taken, for each message
+	// taken away, the count when it was, so that a sync that read the
+	// message from the server before does not undo what was done: setting
+	// its flags back, or putting it back in the list.
+	edits  map[string]uint64
+	edited map[string]map[uint32]uint64
+	taken  map[string]map[uint32]uint64
 	// conns are the connections that are open, which closing the engine
 	// aborts.
 	conns map[*remote.Conn]bool
@@ -113,8 +116,9 @@ func New(acct account.Account, st *store.Store, listener Listener, post func(fun
 		indexes:     map[string]*store.Index{},
 		dirty:       map[string]bool{},
 		save:        make(chan struct{}, 1),
-		flagEdits:   map[string]uint64{},
+		edits:       map[string]uint64{},
 		edited:      map[string]map[uint32]uint64{},
+		taken:       map[string]map[uint32]uint64{},
 		conns:       map[*remote.Conn]bool{},
 		folderSyncs: map[string]*sync.Mutex{},
 		statuses:    map[statusPart]string{},
@@ -330,16 +334,18 @@ func (e *Engine) connect(writable bool, unilateral *imapclient.UnilateralDataHan
 	return c, nil
 }
 
-// disconnect closes a connection made by connect.
+// disconnect closes a connection made by connect. It is forgotten once it
+// is closed, not before, so that closing the engine meanwhile aborts the
+// logout rather than waiting for it.
 func (e *Engine) disconnect(c *remote.Conn) {
-	e.mu.Lock()
-	delete(e.conns, c)
-	e.mu.Unlock()
 	if e.stopped() {
 		c.Abort()
 	} else {
 		c.Close()
 	}
+	e.mu.Lock()
+	delete(e.conns, c)
+	e.mu.Unlock()
 }
 
 // do asks the op worker to do something with its connection, and reports if

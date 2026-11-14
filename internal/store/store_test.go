@@ -97,6 +97,35 @@ func TestIndex(t *testing.T) {
 	}
 }
 
+// TestIndexNamesDecoded checks that an index saved while summaries had names
+// that are not ASCII encoded as the header has them is read with them as
+// they are, as a sync that asks only for what changed would not write them
+// again.
+func TestIndexNamesDecoded(t *testing.T) {
+	s, _ := open(t)
+	ix := &store.Index{Folder: "INBOX"}
+	ix.Put(store.Summary{UID: 1,
+		From: "=?utf-8?q?Jos=C3=A9_M=C3=BCller?= <jose@example.com>",
+		To:   "=?utf-8?q?J=C3=B6rg?= <jorg@example.com>, <ann@example.com>"})
+	ix.Put(store.Summary{UID: 2, From: "Plain <p@example.com>", To: "a=?b <x@y>, broken"})
+	if err := s.SaveIndex(ix); err != nil {
+		t.Fatal(err)
+	}
+	read, err := s.Index("INBOX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range []store.Summary{
+		{From: "José Müller <jose@example.com>", To: "Jörg <jorg@example.com>, ann@example.com"},
+		// What has nothing encoded, or cannot be read, is left as it is.
+		{From: "Plain <p@example.com>", To: "a=?b <x@y>, broken"},
+	} {
+		if got := read.Messages[i]; got.From != want.From || got.To != want.To {
+			t.Errorf("message %d: From %q To %q, want %q and %q", i, got.From, got.To, want.From, want.To)
+		}
+	}
+}
+
 func TestMessages(t *testing.T) {
 	s, dir := open(t)
 	if _, err := s.Message("INBOX", 1); !errors.Is(err, fs.ErrNotExist) {
