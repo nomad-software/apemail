@@ -142,9 +142,7 @@ func (w *Window) newComposer(e *engine.Engine) *composer {
 	c.body.parts = c.image
 	c.body.loadImages = a.LoadRemoteImages
 	layout.AddWidget(c.body.web)
-	c.SetCentralWidget(central)
-
-	c.makeButtonBar()
+	c.makeButtonBar(central)
 	c.makeMenus()
 	composers[c] = true
 	return c
@@ -171,13 +169,10 @@ func identity(a account.Account) string {
 	return message.FormatAddress(&mail.Address{Name: a.Name, Address: a.Email})
 }
 
-// makeButtonBar makes the bar of large buttons of the window.
-func (c *composer) makeButtonBar() {
-	bar := qtwidgets.NewQToolBarWithTitle("Buttons", c)
+// makeButtonBar makes the bar of large buttons of the window, above content.
+func (c *composer) makeButtonBar(content qtwidgets.QWidgetLike) {
+	bar := newButtonBar(c.QMainWindow, content)
 	c.bar = bar
-	bar.SetMovable(false)
-	bar.SetToolButtonStyle(qtcore.ToolButtonTextUnderIcon)
-	bar.SetIconSize(qtcore.QSize{Width: 32, Height: 32})
 	add := func(text, shortcut string, ic *qtgui.QIcon, f func()) *qtgui.QAction {
 		a := qtgui.NewQActionWithText(text, c)
 		a.SetIcon(ic)
@@ -225,7 +220,6 @@ func (c *composer) makeButtonBar() {
 		}
 		c.formatting = []*qtgui.QAction{c.bold, c.italic, c.underline, c.bullets, c.numbers}
 	}
-	c.AddToolBarArea(qtcore.TopToolBarArea, bar)
 }
 
 // engine returns the engine of the account the message is from.

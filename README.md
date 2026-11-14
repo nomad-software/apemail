@@ -521,7 +521,7 @@ so, starts with the defaults, and keeps the file as `settings.json.bad`
 rather than saving over it.
 
 They hold the paths of the keys, where the accounts are kept, the
-code font the source of a message is shown in and the theme (the User
+theme and the code font the source of a message is shown in (the User
 interface tab of File > Settings; the system's unless one is chosen), the size and
 layout of the window (with the widths of the message list's columns, which
 every folder shares), the size of the window messages are written in, and

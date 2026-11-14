@@ -117,7 +117,6 @@ func NewWindow(files Files) *Window {
 
 	w.makeActions()
 	w.makeMenus()
-	w.makeButtonBar()
 
 	w.folders = newFolderTree(w.config.Expanded)
 	w.list = newMessageList()
@@ -156,7 +155,7 @@ func NewWindow(files Files) *Window {
 	w.split.AddWidget(w.right)
 	w.split.SetStretchFactor(1, 1)
 	w.split.SetChildrenCollapsible(false)
-	w.SetCentralWidget(w.split)
+	w.makeButtonBar(w.split)
 
 	// What the accounts are doing is on the left of the status bar, taking
 	// the width there is, and the grip to resize the window by is on the
@@ -355,13 +354,11 @@ func (w *Window) makeMenus() {
 	about.OnTriggered(func(bool) { showAbout(w) })
 }
 
-// makeButtonBar makes the bar of large buttons under the menus.
-func (w *Window) makeButtonBar() {
-	bar := qtwidgets.NewQToolBarWithTitle("Buttons", w)
+// makeButtonBar makes the bar of large buttons under the menus, above
+// content.
+func (w *Window) makeButtonBar(content qtwidgets.QWidgetLike) {
+	bar := newButtonBar(w.QMainWindow, content)
 	w.buttons = bar
-	bar.SetMovable(false)
-	bar.SetToolButtonStyle(qtcore.ToolButtonTextUnderIcon)
-	bar.SetIconSize(qtcore.QSize{Width: 32, Height: 32})
 	for _, a := range []*qtgui.QAction{w.getMail, w.write, nil, w.reply, w.replyAll, w.forward, nil, w.archive, nil, w.addressBook, nil, w.del} {
 		if a == nil {
 			bar.AddSeparator()
@@ -369,7 +366,6 @@ func (w *Window) makeButtonBar() {
 		}
 		bar.AddAction(a)
 	}
-	w.AddToolBarArea(qtcore.TopToolBarArea, bar)
 }
 
 // updateActions enables the actions that can be used on what is selected.

@@ -141,16 +141,16 @@ func TestSettingsTabs(t *testing.T) {
 		if !slices.Equal(titles, []string{"General", "User interface"}) {
 			t.Errorf("tabs = %q", titles)
 		}
-		// The code font and the theme are on the second, and nothing
-		// else is.
-		var fonts []string
+		// The theme and then the code font are on the second, and
+		// nothing else is.
+		var groups []string
 		for _, child := range tabs.Widget(1).Children() {
 			if child.MetaObject().ClassName() == "QGroupBox" {
-				fonts = append(fonts, qtwidgets.QGroupBoxCast(child).Title())
+				groups = append(groups, qtwidgets.QGroupBoxCast(child).Title())
 			}
 		}
-		if !slices.Equal(fonts, []string{"Fonts", "Theme"}) {
-			t.Errorf("groups of User interface = %q", fonts)
+		if !slices.Equal(groups, []string{"Theme", "Fonts"}) {
+			t.Errorf("groups of User interface = %q", groups)
 		}
 	})
 }

@@ -90,14 +90,14 @@ func newSettingsDialog(parent qtwidgets.QWidgetLike, current settings.Settings, 
 	general.AddStretch()
 
 	look := page("User interface")
-	fonts := group(look, "Fonts", "The code font is the one the source of a message is shown in. "+
-		"Any font can be chosen; a monospaced one keeps the source in columns.")
-	code := newFontField(current)
-	fonts.AddRowTextLayout("Code font:", code.QHBoxLayout)
 	themeGroup := group(look, "Theme", "Follow the system looks as the desktop's theme does, and changes with it. "+
 		"Messages are shown and written in the colours of the theme too, where they give none of their own.")
 	theme := newThemeField(current.Theme)
 	themeGroup.AddRowText("Theme:", theme)
+	fonts := group(look, "Fonts", "The code font is the one the source of a message is shown in. "+
+		"Any font can be chosen; a monospaced one keeps the source in columns.")
+	code := newFontField(current)
+	fonts.AddRowTextLayout("Code font:", code.QHBoxLayout)
 	look.AddStretch()
 
 	buttons := qtwidgets.NewQDialogButtonBoxWithButtonsOriented(qtwidgets.QDialogButtonBoxOk|qtwidgets.QDialogButtonBoxCancel, qtcore.Horizontal, nil)
