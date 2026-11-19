@@ -727,6 +727,60 @@ func TestSyncAll(t *testing.T) {
 	}
 }
 
+// TestSyncAllReconnects checks that synchronising every folder goes on when
+// its connection is dropped part way, as by a server that restarts, or by
+// the client on a structure it cannot read: the folder it was at is tried
+// once more on another connection, and the rest are synchronised.
+func TestSyncAllReconnects(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus), "Projects", "Trash")
+	s.Append(t, "Projects", "plans")
+	s.Append(t, "Trash", "old")
+	e, l, _ := start(t, s, noCheck)
+
+	// The inbox is empty, so the first headers asked for are the
+	// projects'.
+	held, release := s.Hold(t, "ENVELOPE")
+	done := make(chan error, 1)
+	e.SyncAll(func(err error) { done <- err })
+	select {
+	case <-held:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the projects were not reached")
+	}
+	s.Restart(t)
+	release()
+	if err := recv(t, done); err != nil {
+		t.Fatal(err)
+	}
+	if subjects(l.index("Projects")) != "plans" || subjects(l.index("Trash")) != "old" {
+		t.Errorf("projects %q, trash %q", subjects(l.index("Projects")), subjects(l.index("Trash")))
+	}
+}
+
+// TestSyncsNotDropped checks that a folder asked to be synchronised while
+// the sync worker is busy is synchronised once it is free, however many
+// other syncs were asked for meanwhile.
+func TestSyncsNotDropped(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus), "Big", "Work", "Other")
+	s.Append(t, "Big", "large")
+	s.Append(t, "Other", "wanted")
+	e, l, _ := start(t, s, noCheck)
+
+	held, release := s.Hold(t, "ENVELOPE")
+	e.Refresh("Big")
+	select {
+	case <-held:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the big folder was not reached")
+	}
+	for range 100 {
+		e.Refresh("Work")
+	}
+	e.Refresh("Other")
+	release()
+	wait(t, "the other folder", func() bool { return subjects(l.index("Other")) == "wanted" })
+}
+
 // TestStopSyncAll checks that synchronising every folder does not hold up
 // checking a folder meanwhile, is not started twice, and stops at once when
 // it is stopped, leaving the folder it was at as it was.

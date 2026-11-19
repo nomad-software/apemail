@@ -154,8 +154,13 @@ it you have.
   is not in it), and without saving leaves the draft as it was last saved.
   A message is sent once its draft has finished saving.
 - Mail that cannot be sent because the server cannot be reached waits in an
-  outbox and goes when it can, as do drafts saved without a connection, and
-  the copy of sent mail that could not be put in the sent folder.
+  outbox and goes when it can, as do drafts saved without a connection (a
+  draft kept there is saved: the window closes without asking again, and
+  only the latest of a message goes to the server), and the copy of sent
+  mail that could not be put in the sent folder.
+- Drafts, and the message a reply answers, stay with the account they are
+  in: changing From after saving a draft leaves the earlier draft to go to
+  that account's trash, not another's.
 
 **Organising**
 
@@ -222,7 +227,9 @@ it you have.
   messages, so that each opens at once: the inbox first and the trash last.
   The first time, for a large mailbox, it can take a while; it shows how far
   it has got, Get Mail goes on working meanwhile, and the same item stops
-  it. Later it is quick, as only what has changed is asked for.
+  it. A connection dropped part way is made again, and the folder it was at
+  tried once more. Later it is quick, as only what has changed is asked
+  for.
 
 ## Performance
 

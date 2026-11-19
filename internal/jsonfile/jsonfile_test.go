@@ -226,3 +226,54 @@ func TestRaw(t *testing.T) {
 		t.Errorf("%d files are left", len(entries))
 	}
 }
+
+// TestFailedSaveKeepsFile checks that a save that fails, whether as the
+// value cannot be written as JSON or as the file cannot be made, leaves the
+// file there was as it was, and no temporary file beside it.
+func TestFailedSaveKeepsFile(t *testing.T) {
+	keys := openKeys(t, "id")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "doc.json")
+	if err := SaveWith(path, document{Name: "kept"}, keys); err != nil {
+		t.Fatal(err)
+	}
+
+	unwritable := map[string]any{"name": make(chan int)}
+	if err := SaveWith(path, unwritable, keys); err == nil {
+		t.Error("a value JSON cannot hold was saved")
+	}
+	if err := SaveCompressed(path, unwritable, keys); err == nil {
+		t.Error("a value JSON cannot hold was saved compressed")
+	}
+	if err := SaveRaw(filepath.Join(dir, "none", "1.eml"), []byte("x"), keys); err == nil {
+		t.Error("a file was saved in a folder that is not there")
+	}
+
+	var got document
+	if err := LoadWith(path, &got, keys); err != nil || got.Name != "kept" {
+		t.Errorf("read %+v, err = %v", got, err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Errorf("%d files are left", len(entries))
+	}
+}
+
+// TestCorruptCompressed checks that a compressed file that has been cut
+// short is an error, not an empty value taken for what it held.
+func TestCorruptCompressed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "index.json")
+	if err := SaveCompressed(path, document{Name: "index"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data[:len(data)/2], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var got document
+	if err := LoadWith(path, &got, nil); err == nil {
+		t.Errorf("read %+v from a file cut short", got)
+	}
+}

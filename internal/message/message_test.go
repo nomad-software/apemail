@@ -250,6 +250,24 @@ func TestHTMLToText(t *testing.T) {
 	}
 }
 
+// TestHTMLToTextComments checks that a comment is left out whole, though it
+// holds a '>' or tags, as Outlook's conditional comments do, rather than
+// ending at its first '>' and leaving the rest of the text taken for the
+// style it holds.
+func TestHTMLToTextComments(t *testing.T) {
+	for html, want := range map[string]string{
+		"<p>a</p><!-- <style> --><p>b</p>":                              "a\n\nb",
+		"One<!-- 1 > 0 -->two":                                          "Onetwo",
+		"<!--[if mso]><style>p{}</style><![endif]--><p>Hello</p>":       "Hello",
+		"<p>Kept</p><!-- not ended <p>gone</p>":                         "Kept",
+		"<p>First</p><!-- one --><p>Second</p><!-- two --><p>Third</p>": "First\n\nSecond\n\nThird",
+	} {
+		if got := message.HTMLToText(html); got != want {
+			t.Errorf("the text of %q = %q, want %q", html, got, want)
+		}
+	}
+}
+
 // TestHTMLToTextOddTags checks that markup that is not well made, as a tag
 // with nothing in it or a name on a line of its own, is read rather than
 // stopping the program.
@@ -286,6 +304,26 @@ func TestFlowed(t *testing.T) {
 		t.Fatal(err)
 	}
 	if want := "First part.\nSecond part."; strings.TrimSpace(m.Text) != want {
+		t.Errorf("text = %q, want %q", m.Text, want)
+	}
+}
+
+// TestFlowedQuotes checks that the lines of a quote wrapped as flowed text
+// are joined without the quote marks of the lines after the first, and that
+// lines quoted to other depths, or not quoted, are not joined to them.
+func TestFlowedQuotes(t *testing.T) {
+	raw := "Content-Type: text/plain; format=flowed\r\n\r\n" +
+		"> This is a long \r\n> quoted line.\r\n" +
+		">> Deeper \r\n> shallower \r\nReply \r\nhere.\r\n" +
+		">\r\n> >From stuffed\r\n"
+	m, err := message.Parse([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "> This is a long quoted line.\n" +
+		">> Deeper \n> shallower \nReply here.\n" +
+		">\n> >From stuffed\n"
+	if m.Text != want {
 		t.Errorf("text = %q, want %q", m.Text, want)
 	}
 }

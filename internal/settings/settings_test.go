@@ -228,3 +228,27 @@ func TestPlaces(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+// TestMoveDirBetweenFileSystemsFails checks that a copy between file systems
+// that fails part way leaves the original as it was, and takes away what was
+// copied, so that the mail is in one place, whole.
+func TestMoveDirBetweenFileSystemsFails(t *testing.T) {
+	old := rename
+	rename = func(string, string) error { return &os.LinkError{Op: "rename", Err: syscall.EXDEV} }
+	t.Cleanup(func() { rename = old })
+
+	from := filepath.Join(t.TempDir(), "accounts")
+	tree(t, from, sample)
+	// What is neither a file nor a folder cannot be copied.
+	if err := os.Symlink("abc.json", filepath.Join(from, "zz-link")); err != nil {
+		t.Fatal(err)
+	}
+	to := filepath.Join(t.TempDir(), "new")
+	if err := MoveDir(from, to); err == nil {
+		t.Fatal("the move did not fail")
+	}
+	has(t, from, sample)
+	if _, err := os.Stat(to); !os.IsNotExist(err) {
+		t.Errorf("what was copied is still there: %v", err)
+	}
+}

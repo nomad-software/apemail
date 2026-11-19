@@ -84,24 +84,17 @@ func (e *Engine) StopSyncAll() {
 // syncAll synchronises every folder, until stop is closed.
 func (e *Engine) syncAll(stop chan struct{}) error {
 	e.say(allStatus, "Connecting to synchronise every folder…")
-	conn, err := e.connect(false, nil)
+	conn, err := e.connectAll(stop)
 	if err != nil {
 		return err
 	}
-	defer e.disconnect(conn)
-	e.mu.Lock()
-	select {
-	case <-stop:
-		e.mu.Unlock()
-		return ErrStopped
-	default:
-	}
-	e.allConn = conn
-	e.mu.Unlock()
 	defer func() {
 		e.mu.Lock()
 		e.allConn = nil
 		e.mu.Unlock()
+		if conn != nil {
+			e.disconnect(conn)
+		}
 	}()
 
 	e.say(allStatus, "Listing the folders…")
@@ -118,11 +111,45 @@ func (e *Engine) syncAll(stop chan struct{}) error {
 		say := func(format string, args ...any) {
 			e.say(allStatus, fmt.Sprintf("Every folder, %d of %d: ", i+1, len(order))+format, args...)
 		}
-		if err := e.syncFolder(conn, folder, say); err != nil {
+		err := e.syncFolder(conn, folder, say)
+		if err != nil && isConnErr(err) && !e.stopped() {
+			// The connection can have gone part way: dropped by the
+			// server, or ended by the client on a structure it could not
+			// read (remote.Conn.attachments), which leaves the sync of
+			// that folder standing, and fails the next. The folder is
+			// tried once more on another connection, unless the user
+			// stopped it, which also drops the connection.
+			e.disconnect(conn)
+			conn = nil
+			if conn, err = e.connectAll(stop); err == nil {
+				err = e.syncFolder(conn, folder, say)
+			}
+		}
+		if err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// connectAll connects for SyncAll, which StopSyncAll drops, unless stop has
+// been closed.
+func (e *Engine) connectAll(stop chan struct{}) (*remote.Conn, error) {
+	conn, err := e.connect(false, nil)
+	if err != nil {
+		return nil, err
+	}
+	e.mu.Lock()
+	select {
+	case <-stop:
+		e.mu.Unlock()
+		e.disconnect(conn)
+		return nil, ErrStopped
+	default:
+	}
+	e.allConn = conn
+	e.mu.Unlock()
+	return conn, nil
 }
 
 // syncOrder returns the names of the folders that hold messages, in the

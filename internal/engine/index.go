@@ -84,13 +84,12 @@ func (e *Engine) changed(ix *store.Index) {
 // is saved once: the index of a large folder takes a while to write.
 const saveDelay = 2 * time.Second
 
-// saver saves the indexes that have changed, a while after they do, and
-// those that are left when the engine is closed.
+// saver saves the indexes that have changed, a while after they do, and at
+// once when the engine is closed; Close saves what is left after.
 func (e *Engine) saver() {
 	for {
 		select {
 		case <-e.stop:
-			e.saveIndexes()
 			return
 		case <-e.save:
 		}

@@ -133,7 +133,7 @@ func embedImages(body, dir string) (string, []Attachment, error) {
 
 // localPath returns the path of the file an image's source names, if it is
 // a file on this computer: a file: URL, or a path, relative to dir if it is
-// not absolute.
+// not absolute. An image elsewhere is left as it is.
 func localPath(src, dir string) (string, bool) {
 	u, err := url.Parse(src)
 	if err != nil {
@@ -143,6 +143,12 @@ func localPath(src, dir string) (string, bool) {
 	case "file":
 		return u.Path, u.Path != ""
 	case "":
+		// An address with a host and no scheme (//cdn.example.com/logo.png)
+		// is on the web, as the page it is on; one that is empty names
+		// nothing.
+		if u.Host != "" || strings.TrimSpace(src) == "" {
+			return "", false
+		}
 		path := homedir.Expand(src)
 		if p, err := url.PathUnescape(path); err == nil {
 			path = p

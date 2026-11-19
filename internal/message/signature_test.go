@@ -63,6 +63,7 @@ func TestHTMLFileSignature(t *testing.T) {
 <body class="x"><p><b>Ada</b> Lovelace</p>
 <img src="images/logo.png" alt="logo"> <img alt='badge' src='file://`+elsewhere+`'>
 <img src="https://example.com/remote.png"> <img src="data:image/png;base64,AAAA"> <img src="cid:already@there">
+<img src="//cdn.example.com/logo.png"> <img src="">
 </body></html>`)
 
 	sig, err := message.LoadSignature("", path)
@@ -94,7 +95,7 @@ func TestHTMLFileSignature(t *testing.T) {
 		}
 	}
 	// The others are left as they are.
-	for _, want := range []string{"https://example.com/remote.png", "data:image/png;base64,AAAA", "cid:already@there"} {
+	for _, want := range []string{"https://example.com/remote.png", "data:image/png;base64,AAAA", "cid:already@there", `"//cdn.example.com/logo.png"`, `src=""`} {
 		if !strings.Contains(sig.HTML, want) {
 			t.Errorf("no %s in %q", want, sig.HTML)
 		}

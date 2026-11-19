@@ -91,7 +91,12 @@ type Engine struct {
 	statusMu sync.Mutex
 	statuses map[statusPart]string
 
-	syncs chan string
+	// syncs are the folders the sync worker is to synchronise (or
+	// listFolders), which syncReady says there are. They are added with mu
+	// held, and taken all at once, so that each is synchronised once
+	// however often it was asked for, and none asked for is dropped.
+	syncs     map[string]bool
+	syncReady chan struct{}
 	// ops are what the user has asked of the op worker and it has yet to
 	// do, which opReady says there are. They are added with mu held, and
 	// none once the engine is closed, so that every one added is done.
@@ -122,7 +127,8 @@ func New(acct account.Account, st *store.Store, listener Listener, post func(fun
 		conns:       map[*remote.Conn]bool{},
 		folderSyncs: map[string]*sync.Mutex{},
 		statuses:    map[statusPart]string{},
-		syncs:       make(chan string, 64),
+		syncs:       map[string]bool{},
+		syncReady:   make(chan struct{}, 1),
 		opReady:     make(chan struct{}, 1),
 		stop:        make(chan struct{}),
 	}
@@ -169,6 +175,9 @@ func (e *Engine) Close() {
 	}
 	e.mu.Unlock()
 	e.wg.Wait()
+	// What is left is saved once nothing is left to change it: a sync
+	// or an operation can end after the saver has, and change an index.
+	e.saveIndexes()
 }
 
 // stopped reports if the engine has been closed.
@@ -284,10 +293,13 @@ func (e *Engine) requestSync(folder string) {
 	if e.stopped() {
 		return
 	}
+	e.mu.Lock()
+	e.syncs[folder] = true
+	e.mu.Unlock()
 	select {
-	case e.syncs <- folder:
+	case e.syncReady <- struct{}{}:
 	default:
-		// The queue is full of syncs already, which will do.
+		// The worker has been told already, and takes them all.
 	}
 }
 

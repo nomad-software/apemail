@@ -171,3 +171,23 @@ func TestIndexReadUnlocked(t *testing.T) {
 		}
 	}
 }
+
+// TestSavedOnceAllHaveEnded checks that an index changed after the saver has
+// ended, by a sync or an operation that ends while the engine closes, is
+// saved before Close returns.
+func TestSavedOnceAllHaveEnded(t *testing.T) {
+	e, st := newQuiet(t)
+	e.spawn(func() {
+		<-e.stop
+		// The saver has ended by now.
+		time.Sleep(50 * time.Millisecond)
+		e.mu.Lock()
+		e.indexes["INBOX"] = &store.Index{Folder: "INBOX", UIDValidity: 7}
+		e.dirty["INBOX"] = true
+		e.mu.Unlock()
+	})
+	e.Close()
+	if ix, err := st.Index("INBOX"); err != nil || ix.UIDValidity != 7 {
+		t.Errorf("index = %+v, %v", ix, err)
+	}
+}

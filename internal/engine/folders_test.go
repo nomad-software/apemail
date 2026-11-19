@@ -1,6 +1,7 @@
 package engine_test
 
 import (
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -353,5 +354,53 @@ func TestTrashSaved(t *testing.T) {
 	}
 	if msgs := s.Messages(t, "Drafts"); len(msgs) != 1 || msgs[0].Subject != "latest" {
 		t.Errorf("drafts = %+v", msgs)
+	}
+}
+
+// TestDraftsKeptOffline checks that a draft saved while the server cannot be
+// reached is said to be kept (ErrDraftKept), with its ID in the outbox, and
+// that one a later draft replaced is taken out of the outbox, without a
+// connection, so that only the latest is put in the drafts folder once the
+// server can be reached.
+func TestDraftsKeptOffline(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Drafts")
+	st := openStore(t)
+	offline, _ := startOn(t, st, account.Server{Host: "127.0.0.1", Port: 1, Security: account.SecurityNone, Auth: account.AuthPassword}, noCheck)
+
+	type answer struct {
+		saved engine.Saved
+		err   error
+	}
+	save := func(subject string) engine.Saved {
+		t.Helper()
+		got := make(chan answer, 1)
+		offline.SaveDraft([]byte("Subject: "+subject+"\r\n\r\nx\r\n"), func(s engine.Saved, err error) { got <- answer{s, err} })
+		a := recv(t, got)
+		if !errors.Is(a.err, engine.ErrDraftKept) || a.saved.Pending == "" || a.saved.UID != 0 {
+			t.Fatalf("saved = %+v, err = %v", a.saved, a.err)
+		}
+		return a.saved
+	}
+	old := save("old")
+	latest := save("latest")
+	if old.Pending == latest.Pending {
+		t.Fatal("two drafts have the same ID in the outbox")
+	}
+	if err := result(t, func(done func(error)) { offline.TrashSaved([]engine.Saved{old}, done) }); err != nil {
+		t.Fatal(err)
+	}
+	if pending, _ := st.Pending(); len(pending) != 1 || pending[0].ID != latest.Pending {
+		t.Fatalf("pending = %+v", pending)
+	}
+	offline.Close()
+
+	online, _ := startOn(t, st, s.Account(), noCheck)
+	online.Refresh("")
+	wait(t, "the draft to be put on the server", func() bool { return len(s.Messages(t, "Drafts")) > 0 })
+	if msgs := s.Messages(t, "Drafts"); len(msgs) != 1 || msgs[0].Subject != "latest" {
+		t.Errorf("drafts = %+v", msgs)
+	}
+	if slices.Contains(serverFolders(t, s), "Trash") {
+		t.Error("a trash was made for a draft never put on the server")
 	}
 }

@@ -27,22 +27,18 @@ func (e *Engine) syncWorker() {
 	watching := false
 
 	for {
-		var folder string
 		select {
 		case <-e.stop:
 			return
-		case folder = <-e.syncs:
+		case <-e.syncReady:
 		}
 		// Requests that have piled up are done together, once each.
-		wanted := map[string]bool{folder: true}
-	drain:
-		for {
-			select {
-			case f := <-e.syncs:
-				wanted[f] = true
-			default:
-				break drain
-			}
+		e.mu.Lock()
+		wanted := e.syncs
+		e.syncs = map[string]bool{}
+		e.mu.Unlock()
+		if len(wanted) == 0 {
+			continue
 		}
 
 		reused := conn != nil

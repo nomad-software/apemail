@@ -99,6 +99,37 @@ func TestMoveAccounts(t *testing.T) {
 	wait(t, "the inbox", func() bool { return len(w.list.rows) == 1 })
 }
 
+// TestNothingWhileApplying checks that while the accounts are being moved,
+// no account is saved or started in the folder being moved, the settings
+// are not changed again, and the window does not close, each of which is
+// told; and that all can be once the move is done.
+func TestNothingWhileApplying(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove))
+	w := newTestWindow(t, s)
+	wait(t, "the account", func() bool { return len(w.engines) == 1 })
+	from := onUI(w.accountsDir)
+	to := filepath.Join(t.TempDir(), "elsewhere")
+	forgetWarnings()
+	qutetest.Run(t, func() {
+		changed := w.config
+		changed.DataDir = to
+		w.applySettings(changed, nil, from, to, true)
+		// The move ends on a later turn of the event loop, at the soonest.
+		w.editAccountDialog(account.New(), true)
+		w.editSettings()
+		if w.Close() {
+			t.Error("the window closed while the accounts were being moved")
+		}
+	})
+	if got := strings.Count(warnings(), "still being applied"); got != 3 {
+		t.Errorf("told %d times%s", got, warnings())
+	}
+	wait(t, "the account to start again", func() bool { return len(w.engines) == 1 && onUI(w.accountsDir) == to })
+	if onUI(func() bool { return w.applying }) {
+		t.Error("still applying")
+	}
+}
+
 // TestSettingsFit checks that the settings dialog is tall enough for its
 // notes, which wrap onto more lines in a larger font.
 func TestSettingsFit(t *testing.T) {

@@ -112,6 +112,9 @@ func (w *Window) editCurrentAccount() {
 // editAccountDialog shows the settings of an account, and saves and restarts
 // it if they are changed.
 func (w *Window) editAccountDialog(a account.Account, isNew bool) {
+	if w.stillApplying() {
+		return
+	}
 	if w.keys == nil {
 		information(w, "Keys Needed", needKeys)
 		return
@@ -125,6 +128,10 @@ func (w *Window) editAccountDialog(a account.Account, isNew bool) {
 		}
 	}
 	newAccountDialog(w, a, isNew, folders, func(changed account.Account) {
+		// The settings may have been changed while the dialog was open.
+		if w.stillApplying() {
+			return
+		}
 		if err := account.Save(w.accountsDir(), changed, w.keys); err != nil {
 			w.warn("Account", fmt.Errorf("the account could not be saved: %w", err))
 			return
@@ -178,7 +185,13 @@ func (w *Window) accountsDir() string {
 
 // editSettings shows the settings, and puts what is changed into effect.
 func (w *Window) editSettings() {
+	if w.stillApplying() {
+		return
+	}
 	newSettingsDialog(w, w.config, w.files.Accounts, func(changed settings.Settings) {
+		if w.stillApplying() {
+			return
+		}
 		w.applyInterface(changed)
 		keysChanged := changed.PublicKey != w.config.PublicKey || changed.PrivateKey != w.config.PrivateKey || w.keys == nil
 		from, to := w.accountsDir(), changed.AccountsDir(w.files.Accounts)
@@ -228,6 +241,7 @@ func (w *Window) applyInterface(changed settings.Settings) {
 // after. keys is nil if they have not changed.
 func (w *Window) applySettings(changed settings.Settings, keys *crypt.Keys, from, to string, move bool) {
 	old := w.keys
+	w.applying = true
 	w.stopAccounts()
 	w.closeAddressBook()
 	w.setDoing("Applying the settings…")
@@ -251,6 +265,7 @@ func (w *Window) applySettings(changed settings.Settings, keys *crypt.Keys, from
 			}
 		}
 		qute.Post(func() {
+			w.applying = false
 			w.setDoing("")
 			if keys != nil {
 				w.keys = keys
@@ -269,6 +284,16 @@ func (w *Window) applySettings(changed settings.Settings, keys *crypt.Keys, from
 			}
 		})
 	}()
+}
+
+// stillApplying tells the user, and reports, if the settings are still being
+// put into effect, while which the accounts and the settings are left as
+// they are, as their files are being moved or encrypted again.
+func (w *Window) stillApplying() bool {
+	if w.applying {
+		information(w, "Settings", "The settings are still being applied. Try again once they have been.")
+	}
+	return w.applying
 }
 
 // stopAccounts stops the work of every account and clears what is shown of

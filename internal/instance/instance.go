@@ -45,6 +45,10 @@ var (
 	readWait   = time.Second
 )
 
+// acceptRetry is how long Serve waits after a connection could not be
+// accepted before it tries again.
+const acceptRetry = 100 * time.Millisecond
+
 // maxToken is the most of a token that is read.
 const maxToken = 4096
 
@@ -128,8 +132,16 @@ func (i *Instance) Serve(activate func(token string)) {
 		defer i.wg.Done()
 		for {
 			conn, err := i.listener.Accept()
-			if err != nil {
+			if errors.Is(err, net.ErrClosed) {
 				return
+			}
+			if err != nil {
+				// A failure of one, as for want of file descriptors,
+				// is not the end of listening: a copy started later
+				// would hand over to no one, and the window not be
+				// raised.
+				time.Sleep(acceptRetry)
+				continue
 			}
 			i.mu.Lock()
 			if i.closed {

@@ -41,8 +41,9 @@ type Message struct {
 	Date      time.Time
 	MessageID string
 	// References are the IDs of the messages this one follows, oldest
-	// first.
+	// first, and InReplyTo the ID of the one it replies to, if it does.
 	References []string
+	InReplyTo  string
 
 	From    []*mail.Address
 	ReplyTo []*mail.Address
@@ -81,8 +82,12 @@ func Parse(raw []byte) (*Message, error) {
 	m.Date, _ = h.Date()
 	m.MessageID, _ = h.MessageID()
 	m.References, _ = h.MsgIDList("References")
+	inReplyTo, _ := h.MsgIDList("In-Reply-To")
+	if len(inReplyTo) > 0 {
+		m.InReplyTo = inReplyTo[0]
+	}
 	if len(m.References) == 0 {
-		m.References, _ = h.MsgIDList("In-Reply-To")
+		m.References = inReplyTo
 	}
 	m.From = addressList(h, "From")
 	m.ReplyTo = addressList(h, "Reply-To")
@@ -224,29 +229,56 @@ func unixLines(text string) string {
 
 // flowed joins the lines of text that is format=flowed (RFC 3676), which
 // end in a space where the sender's mailer wrapped them. Its lines end in LF.
+// A quoted line begins with its depth in '>', which is taken off before the
+// lines are joined and put back once in front of what they make: only lines
+// quoted as deeply are joined (section 4.5), and a wrapped quote would
+// otherwise keep the '>' of each line it was wrapped onto.
 func flowed(text string, params map[string]string) string {
 	if !strings.EqualFold(params["format"], "flowed") {
 		return text
 	}
 	delsp := strings.EqualFold(params["delsp"], "yes")
 	lines := strings.Split(text, "\n")
-	var out strings.Builder
-	for i, line := range lines {
-		// A space that was added in front of a line is not part of it.
-		line = strings.TrimPrefix(line, " ")
-		if line != "-- " && strings.HasSuffix(line, " ") && i < len(lines)-1 {
-			if delsp {
-				line = line[:len(line)-1]
-			}
-			out.WriteString(line)
-			continue
-		}
-		out.WriteString(line)
-		if i < len(lines)-1 {
-			out.WriteByte('\n')
+	out := make([]string, 0, len(lines))
+	var joined strings.Builder
+	joining, joinDepth := false, 0
+	end := func() {
+		if joining {
+			out = append(out, quoted(joinDepth, joined.String()))
+			joined.Reset()
+			joining = false
 		}
 	}
-	return out.String()
+	for i, line := range lines {
+		depth := len(line) - len(strings.TrimLeft(line, ">"))
+		// A space that was added in front of a line is not part of it.
+		line = strings.TrimPrefix(line[depth:], " ")
+		if joining && depth != joinDepth {
+			end()
+		}
+		soft := line != "-- " && strings.HasSuffix(line, " ") && i < len(lines)-1
+		if soft && delsp {
+			line = line[:len(line)-1]
+		}
+		joined.WriteString(line)
+		joining, joinDepth = true, depth
+		if !soft {
+			end()
+		}
+	}
+	end()
+	return strings.Join(out, "\n")
+}
+
+// quoted returns a line of text quoted depth deep, as mail quotes it.
+func quoted(depth int, line string) string {
+	if depth == 0 {
+		return line
+	}
+	if line == "" {
+		return strings.Repeat(">", depth)
+	}
+	return strings.Repeat(">", depth) + " " + line
 }
 
 // Body returns the body as plain text: the text version, or the HTML
@@ -339,9 +371,31 @@ func FormatAddress(a *mail.Address) string {
 	return name + " <" + a.Address + ">"
 }
 
+// withoutComments returns HTML with its comments taken out, which end at
+// "-->", not at the first '>' within them, and may hold tags, as Outlook's
+// conditional comments do (<!--[if mso]><style>...</style><![endif]-->). One
+// that is not ended runs to the end, as a browser takes it.
+func withoutComments(s string) string {
+	var out strings.Builder
+	for {
+		start := strings.Index(s, "<!--")
+		if start < 0 {
+			out.WriteString(s)
+			return out.String()
+		}
+		out.WriteString(s[:start])
+		end := strings.Index(s[start+4:], "-->")
+		if end < 0 {
+			return out.String()
+		}
+		s = s[start+4+end+3:]
+	}
+}
+
 // HTMLToText returns roughly the text of HTML, for quoting a message that has
 // no text version.
 func HTMLToText(s string) string {
+	s = withoutComments(s)
 	var out strings.Builder
 	inTag, inSkip := false, ""
 	var tag strings.Builder

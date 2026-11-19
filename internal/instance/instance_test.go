@@ -239,3 +239,40 @@ func holdLock(t *testing.T, dir string) *os.File {
 	}
 	return f
 }
+
+// failingOnce is a listener whose first Accept fails, as when the program
+// has run out of file descriptors.
+type failingOnce struct {
+	net.Listener
+	failed bool
+}
+
+func (l *failingOnce) Accept() (net.Conn, error) {
+	if !l.failed {
+		l.failed = true
+		return nil, syscall.EMFILE
+	}
+	return l.Listener.Accept()
+}
+
+// TestAcceptFailsOnce checks that a connection that could not be accepted
+// does not end the listening, so that a copy started later still has the
+// window raised.
+func TestAcceptFailsOnce(t *testing.T) {
+	dir := tempDir(t)
+	i, err := Claim(dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	i.listener = &failingOnce{Listener: i.listener}
+	tokens := make(chan string, 10)
+	i.Serve(func(token string) { tokens <- token })
+	t.Cleanup(func() { i.Close() })
+
+	if _, err := Claim(dir, "token"); !errors.Is(err, ErrRunning) {
+		t.Fatalf("second claim = %v", err)
+	}
+	if got := recv(t, tokens); got != "token" {
+		t.Errorf("token = %q", got)
+	}
+}

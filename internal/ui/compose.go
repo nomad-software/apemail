@@ -69,17 +69,25 @@ type composer struct {
 	// as answered.
 	inReplyTo  string
 	references []string
-	replied    engine.Saved
+	replied    stored
 
 	// saved are the drafts of this message in the drafts folder: those
 	// saved from this window, and the one it was opened from.
-	saved []engine.Saved
+	saved []stored
 	// sent says the message has been sent, or put in the outbox.
 	sent bool
 	// sending says it is being sent, while which the window is not used,
 	// and savingDraft that a draft of it is being saved. The window does
 	// not close while either is, as what they end with is shown in it.
 	sending, savingDraft bool
+}
+
+// stored is where a message is in an account: one replied to, or a draft.
+// What the window does to it later is done in that account, whichever From
+// says by then, as the same place in another account is another message.
+type stored struct {
+	account string
+	engine.Saved
 }
 
 // composers are the windows of the messages being written.
@@ -141,7 +149,9 @@ func (w *Window) newComposer(e *engine.Engine) *composer {
 	c.body = newBodyEditor(c, c.html)
 	c.body.parts = c.image
 	c.body.loadImages = a.LoadRemoteImages
-	layout.AddWidget(c.body.web)
+	// The body takes all the height to spare, so that the fields stay
+	// together above it rather than being spread down the window.
+	layout.AddWidgetFull(c.body.web, 1, 0)
 	c.makeButtonBar(central)
 	c.makeMenus()
 	composers[c] = true
@@ -234,7 +244,11 @@ func (c *composer) draft(got func(*message.Draft, error)) {
 		got(nil, errors.New("the account to send from has gone"))
 		return
 	}
-	c.body.content(func(html, text string) {
+	c.body.content(func(html, text string, err error) {
+		if err != nil {
+			got(nil, err)
+			return
+		}
 		// The account may have gone meanwhile.
 		e := c.engine()
 		if e == nil {
@@ -330,8 +344,10 @@ func (c *composer) sendBuilt(d *message.Draft, raw []byte, rcpts []string) {
 			return
 		}
 		c.sent = true
-		if c.replied.UID != 0 {
-			e.SetFlag(c.replied.Folder, c.replied.UIDValidity, []uint32{c.replied.UID}, `\Answered`, true, c.w.showError)
+		if r := c.replied; r.UID != 0 {
+			if e := c.w.engines[r.account]; e != nil {
+				e.SetFlag(r.Folder, r.UIDValidity, []uint32{r.UID}, `\Answered`, true, c.w.showError)
+			}
 		}
 		// Whoever a reply went to is put in the address book, unless
 		// they are there already.
@@ -376,16 +392,24 @@ func (c *composer) saveDraft(done func()) {
 // changes was at, in the drafts folder, and then calls done if it is not
 // nil.
 func (c *composer) saveBuilt(raw []byte, at int, done func()) {
-	c.engine().SaveDraft(raw, func(saved engine.Saved, err error) {
+	e := c.engine()
+	e.SaveDraft(raw, func(saved engine.Saved, err error) {
 		c.savingDraft = false
 		c.StatusBar().ClearMessage()
-		if err != nil {
+		// A draft kept in the outbox is saved, to be put on the server
+		// when it can be, so that closing does not ask about it again.
+		kept := errors.Is(err, engine.ErrDraftKept)
+		if err != nil && !kept {
 			c.warn("Save Draft", err)
 			return
 		}
 		c.body.savedAt(at)
-		c.saved = append(c.saved, saved)
-		c.StatusBar().ShowMessageFull("The draft was saved to "+saved.Folder+".", 5000)
+		c.saved = append(c.saved, stored{e.Account().ID, saved})
+		if kept {
+			c.StatusBar().ShowMessageFull("The server could not be reached, so the draft will be saved when it can be.", 5000)
+		} else {
+			c.StatusBar().ShowMessageFull("The draft was saved to "+saved.Folder+".", 5000)
+		}
 		if done != nil {
 			done()
 		}
@@ -415,16 +439,16 @@ func (c *composer) mayClose() bool {
 	if !c.sent && len(obsolete) > 0 {
 		obsolete = obsolete[:len(obsolete)-1]
 	}
-	var deletable []engine.Saved
-	for _, s := range obsolete {
-		if s.UID != 0 {
-			deletable = append(deletable, s)
-		}
-	}
 	// Drafts that a later one, or the message sent, replaces go to the
 	// trash, as other clients do; nothing is lost, so the user is not asked.
-	if e := c.engine(); e != nil && len(deletable) > 0 {
-		e.TrashSaved(deletable, c.w.showError)
+	byAccount := map[string][]engine.Saved{}
+	for _, s := range obsolete {
+		byAccount[s.account] = append(byAccount[s.account], s.Saved)
+	}
+	for id, saved := range byAccount {
+		if e := c.w.engines[id]; e != nil {
+			e.TrashSaved(saved, c.w.showError)
+		}
 	}
 	return true
 }
@@ -523,7 +547,7 @@ func (w *Window) replyTo(all bool) {
 	c.cc.SetText(cc)
 	c.subject.SetText(message.ReplySubject(m.Subject))
 	c.inReplyTo, c.references = m.ReplyReferences()
-	c.replied = engine.Saved{Folder: w.view.folder, UID: w.view.uid, UIDValidity: w.view.validity}
+	c.replied = stored{a.ID, engine.Saved{Folder: w.view.folder, UID: w.view.uid, UIDValidity: w.view.validity}}
 	c.addImages(m)
 	c.addWebImages(m)
 	c.setBody(a, m.Attribution()+"\n"+message.QuoteText(m.Body()), m.QuoteHTML())
@@ -571,10 +595,9 @@ func (w *Window) composeDraft(e *engine.Engine, m *message.Message, at engine.Sa
 	}
 	c.subject.SetText(m.Subject)
 	c.receipt.SetChecked(len(m.ReceiptTo) > 0)
-	if len(m.References) > 0 {
-		c.references = m.References
-		c.inReplyTo = m.References[len(m.References)-1]
-	}
+	// A draft replies to what it says it does, which is not always the last
+	// it follows: a message replied to that had no ID is not among those.
+	c.references, c.inReplyTo = m.References, m.InReplyTo
 	switch {
 	case !c.html:
 		c.body.setText(m.Body(), 0)
@@ -589,7 +612,7 @@ func (w *Window) composeDraft(e *engine.Engine, m *message.Message, at engine.Sa
 	for _, a := range m.Files() {
 		c.addAttachment(a)
 	}
-	c.saved = append(c.saved, at)
+	c.saved = append(c.saved, stored{e.Account().ID, at})
 	c.body.unmodified()
 	c.Show()
 }

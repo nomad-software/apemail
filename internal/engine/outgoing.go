@@ -11,27 +11,37 @@ import (
 )
 
 // Saved is where a message was put in a folder, so that it can be found
-// again.
+// again: or, for a draft that could not be put there, the outbox's ID of it
+// (Pending), which is put there later.
 type Saved struct {
 	Folder      string
 	UID         uint32
 	UIDValidity uint32
+	Pending     string
 }
+
+// ErrDraftKept is SaveDraft's answer when the server cannot be reached: the
+// draft is kept in the outbox, to be put in the drafts folder on the next
+// Get Mail, so it is saved, though not yet on the server.
+var ErrDraftKept = errors.New("the server could not be reached, so the draft will be saved when it can be")
 
 // draftFlags are the flags of a draft that is saved.
 var draftFlags = []string{`\Draft`, `\Seen`}
 
 // SaveDraft puts the draft in the drafts folder, which is made if there is
-// none. If there is no connection it is kept to be put there later, and
-// saved is given no UID.
+// none. If there is no connection it is kept to be put there later, which
+// the error says (ErrDraftKept), and saved has its ID in the outbox.
 func (e *Engine) SaveDraft(raw []byte, done func(saved Saved, err error)) {
 	e.do(func(c *remote.Conn) error {
 		if c == nil {
-			_, err := e.store.AddPending(store.Pending{Kind: store.PendingAppend, Use: useNames[Drafts], Flags: draftFlags, Raw: raw})
+			p, err := e.store.AddPending(store.Pending{Kind: store.PendingAppend, Use: useNames[Drafts], Flags: draftFlags, Raw: raw})
+			saved := Saved{Pending: p.ID}
 			if err == nil {
-				err = errors.New("the server could not be reached, so the draft will be saved when it can be")
+				err = ErrDraftKept
+			} else {
+				saved = Saved{}
 			}
-			e.post(func() { done(Saved{}, err) })
+			e.post(func() { done(saved, err) })
 			return nil
 		}
 		folder, err := e.ensureFolder(c, Drafts)
@@ -50,22 +60,32 @@ func (e *Engine) SaveDraft(raw []byte, done func(saved Saved, err error)) {
 // TrashSaved moves messages that were saved, as drafts that have been
 // replaced, to the trash, which is made if there is none. The user is not
 // asked, as nothing is lost. Those whose folder has been numbered anew since
-// are left alone.
+// are left alone. Drafts kept in the outbox, never put on the server, are
+// taken out of it, so that they are not put there later: what replaced them
+// holds all they did. One put there meanwhile, by Get Mail, is left there.
 func (e *Engine) TrashSaved(saved []Saved, done func(error)) {
 	e.do(func(c *remote.Conn) error {
-		if c == nil {
-			e.reply(done, errNoConn)
-			return nil
+		var failed []error
+		for _, s := range saved {
+			if s.Pending != "" {
+				if err := e.store.RemovePending(s.Pending); err != nil {
+					failed = append(failed, err)
+				}
+			}
 		}
 		// Drafts kept only in the outbox have no UID, and nothing on the
 		// server to move: the trash is not made for them.
 		if !slices.ContainsFunc(saved, func(s Saved) bool { return s.UID != 0 }) {
-			e.reply(done, nil)
+			e.reply(done, errors.Join(failed...))
+			return nil
+		}
+		if c == nil {
+			e.reply(done, errors.Join(append(failed, errNoConn)...))
 			return nil
 		}
 		trash, err := e.ensureFolder(c, Trash)
 		if err != nil {
-			e.reply(done, err)
+			e.reply(done, errors.Join(append(failed, err)...))
 			return err
 		}
 		byFolder := map[Saved][]uint32{}
@@ -76,7 +96,6 @@ func (e *Engine) TrashSaved(saved []Saved, done func(error)) {
 			key := Saved{Folder: s.Folder, UIDValidity: s.UIDValidity}
 			byFolder[key] = append(byFolder[key], s.UID)
 		}
-		var failed []error
 		for key, uids := range byFolder {
 			if err := c.Move(key.Folder, key.UIDValidity, uids, trash); err != nil {
 				failed = append(failed, err)

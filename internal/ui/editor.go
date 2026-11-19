@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"maps"
@@ -43,9 +44,11 @@ type bodyEditor struct {
 	// count when what was last saved, or set, was taken (modified).
 	changes, saved int
 	// answers wait for what the body holds (content), by the number each
-	// is asked by; asked is the number last given.
-	answers map[int]func(html, text string)
+	// is asked by; asked is the number last given. ended is set once the
+	// process that draws the body has ended, after which nothing answers.
+	answers map[int]func(html, text string, err error)
 	asked   int
+	ended   bool
 	// onState is told the format at the cursor when it changes.
 	onState func(editState)
 	// parts returns the pictures put in the message, which it shows as
@@ -153,7 +156,7 @@ const editorScript = `(() => {
 // newBodyEditor makes the body of a message written as HTML, or as plain
 // text, which the parent owns.
 func newBodyEditor(parent qtwidgets.QWidgetLike, asHTML bool) *bodyEditor {
-	e := &bodyEditor{html: asHTML, answers: map[int]func(string, string){}, webImages: map[string][]byte{}, tried: map[string]bool{}}
+	e := &bodyEditor{html: asHTML, answers: map[int]func(string, string, error){}, webImages: map[string][]byte{}, tried: map[string]bool{}}
 	e.ctx, e.stop = context.WithCancel(context.Background())
 	e.webPage = newWebPage(e, parent, !asHTML)
 	parent.AsQWidget().OnDestroyed(func(*qtcore.QObject) { e.stop() })
@@ -175,6 +178,9 @@ func newBodyEditor(parent qtwidgets.QWidgetLike, asHTML bool) *bodyEditor {
 		return mainFrame && address == e.pageURL("edit") && typ != qtwebenginecore.QWebEnginePageNavigationTypeLinkClicked &&
 			typ != qtwebenginecore.QWebEnginePageNavigationTypeFormSubmitted
 	}
+	e.page.OnRenderProcessTerminated(func(qtwebenginecore.QWebEnginePageRenderProcessTerminationStatus, int) {
+		e.rendererEnded()
+	})
 	e.page.OnLoadFinished(func(bool) {
 		if e.gone || shownBy(encoded(e.page.Url())) != webHost(e) {
 			return
@@ -246,9 +252,18 @@ func (e *bodyEditor) call(name string, args ...any) {
 	e.page.RunJavaScriptFull(s, uint(qtwebenginecore.QWebEngineScriptApplicationWorld), nil)
 }
 
+// errBodyEnded is what is answered for the body once the process that drew
+// it has ended.
+var errBodyEnded = errors.New("what is written can no longer be read, as the process that showed it ended; close the window, and write it again")
+
 // content calls got with what the body holds, as HTML (as a page, if it is
-// written as HTML) and as plain text, once the body has said.
-func (e *bodyEditor) content(got func(html, text string)) {
+// written as HTML) and as plain text, once the body has said, or with an
+// error if it never can.
+func (e *bodyEditor) content(got func(html, text string, err error)) {
+	if e.ended {
+		got("", "", errBodyEnded)
+		return
+	}
 	e.asked++
 	e.answers[e.asked] = got
 	e.call("content", e.asked)
@@ -284,10 +299,28 @@ func (e *bodyEditor) received(msg string) {
 		}
 		delete(e.answers, m.ID)
 		if !e.html {
-			got("", m.Text)
+			got("", m.Text, nil)
 			return
 		}
-		got(`<html><head><meta charset="utf-8"></head><body>`+m.HTML+"</body></html>", m.Text)
+		got(`<html><head><meta charset="utf-8"></head><body>`+m.HTML+"</body></html>", m.Text, nil)
+	}
+}
+
+// rendererEnded fails what waits for the body to say what it holds, once
+// the process that draws it (Chromium's renderer, which can crash, or be
+// killed for want of memory) has ended, as the answer will never come, and
+// a window sending or saving would wait for ever, and never close. The body
+// is not loaded again, as that would show what it was first set to, which
+// saved as a draft would replace a later one.
+func (e *bodyEditor) rendererEnded() {
+	if e.gone || e.ended {
+		return
+	}
+	e.ended = true
+	answers := e.answers
+	e.answers = map[int]func(string, string, error){}
+	for _, got := range answers {
+		got("", "", errBodyEnded)
 	}
 }
 

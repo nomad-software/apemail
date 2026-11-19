@@ -79,6 +79,11 @@ type Window struct {
 	// itself is, as applying the settings.
 	statuses map[string]string
 	doing    string
+	// applying is set while new settings are put into effect away from
+	// the UI's thread, the files being moved or encrypted again, until
+	// which the accounts are neither saved nor started, nor the settings
+	// changed again, nor the window closed.
+	applying bool
 	// showing counts the messages asked to be shown, so that only the last
 	// asked for is.
 	showing int
@@ -188,7 +193,7 @@ func NewWindow(files Files) *Window {
 // CloseEvent closes the window, and with it the windows messages are
 // written in, unless the user would keep one of those open.
 func (w *Window) CloseEvent(event *qtgui.QCloseEvent) {
-	if !w.closeComposers() {
+	if w.stillApplying() || !w.closeComposers() {
 		event.Ignore()
 		return
 	}

@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -167,6 +168,55 @@ func TestReplacedDraftsGoToTrash(t *testing.T) {
 	}
 }
 
+// TestDraftsStayWithAccount checks that a draft saved from one account, and
+// replaced by one saved once From is changed to another, goes to the trash
+// of the account it was saved in, and that the other account's draft, which
+// may have the same UID in a folder of the same name, is left alone.
+func TestDraftsStayWithAccount(t *testing.T) {
+	first := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Drafts", "Trash")
+	second := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Drafts", "Trash")
+	w := newTestWindow(t, first)
+	wait(t, "the account", func() bool { return len(w.engines) == 1 })
+	qutetest.Run(t, func() {
+		b := account.New()
+		b.Name, b.Email = "Bob", "bob@example.org"
+		b.Incoming = second.Account()
+		w.startAccount(b)
+	})
+	asked := answer(t, false)
+
+	var c *composer
+	qutetest.Run(t, func() {
+		w.composeNew("carol@example.com", "Plans")
+		for c = range composers {
+		}
+		c.from.SetCurrentIndex(0)
+		c.saveDraft(nil)
+	})
+	wait(t, "the first draft", func() bool { return len(c.saved) == 1 })
+	typeInBody(t, c, "Changed")
+	qutetest.Run(t, func() {
+		c.from.SetCurrentIndex(1)
+		c.saveDraft(nil)
+	})
+	wait(t, "the second draft", func() bool { return len(c.saved) == 2 })
+
+	qutetest.Run(t, func() { c.Close() })
+	eventually(t, "the first draft in its trash", func() bool { return len(first.Messages(t, "Trash")) == 1 })
+	if msgs := first.Messages(t, "Drafts"); len(msgs) != 0 {
+		t.Errorf("first drafts = %+v", msgs)
+	}
+	if msgs := second.Messages(t, "Drafts"); len(msgs) != 1 {
+		t.Errorf("second drafts = %+v", msgs)
+	}
+	if msgs := second.Messages(t, "Trash"); len(msgs) != 0 {
+		t.Errorf("second trash = %+v", msgs)
+	}
+	if *asked != 0 {
+		t.Errorf("asked %d times", *asked)
+	}
+}
+
 // TestDiscardKeepsSavedDraft checks that closing a window without saving
 // what was written since the draft was saved leaves that draft where it is:
 // nothing replaced it. Saying to keep writing closes nothing.
@@ -250,6 +300,66 @@ func TestSaveOnClose(t *testing.T) {
 	}
 }
 
+// TestSaveOnCloseOffline checks that a draft saved as the window closes,
+// while the server cannot be reached, is taken as saved, kept to be put on
+// the server later: the window closes, and is not left asking again.
+func TestSaveOnCloseOffline(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Drafts")
+	w := newTestWindow(t, s, func(a *account.Account) {
+		a.Incoming = account.Server{Host: "127.0.0.1", Port: 1, Security: account.SecurityNone, Auth: account.AuthPassword}
+		a.CheckOnStart = false
+	})
+	wait(t, "the account", func() bool { return len(w.engines) == 1 })
+	var c *composer
+	qutetest.Run(t, func() {
+		w.composeNew("bob@example.com", "Plans")
+		for c = range composers {
+		}
+	})
+	bodyLoaded(t, c)
+	typeInBody(t, c, "Something")
+	asked := answerSave(t, qtwidgets.QMessageBoxSave)
+	qutetest.Run(t, func() { c.Close() })
+	wait(t, "the window closed", func() bool { return !composers[c] })
+	if *asked != 1 {
+		t.Errorf("asked %d times", *asked)
+	}
+}
+
+// TestBodyRendererEnded checks that a message being sent, when the process
+// that draws its body ends before the body has said what it holds, is not
+// waited for for ever, which would keep the window, and the program, from
+// closing: the window is told, and can be used and closed again.
+func TestBodyRendererEnded(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Sent")
+	w := newTestWindow(t, s)
+	wait(t, "the account", func() bool { return len(w.engines) == 1 })
+	c := openComposer(t, w)
+	pid := onUI(func() int { return int(c.body.page.RenderProcessPid()) })
+	if pid <= 0 {
+		t.Skip("the body is drawn in this process")
+	}
+	// The renderer is stopped, so that the body is asked what it holds and
+	// does not answer, and then killed.
+	if err := syscall.Kill(pid, syscall.SIGSTOP); err != nil {
+		t.Fatal(err)
+	}
+	qutetest.Run(t, func() { c.send() })
+	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	wait(t, "the send to fail", func() bool { return !c.sending })
+	if !strings.Contains(warnings(), "can no longer be read") {
+		t.Errorf("warnings = %q", warnings())
+	}
+	if !onUI(c.IsEnabled) {
+		t.Error("the window was left disabled")
+	}
+	// Saving fails at once too, rather than waiting.
+	qutetest.Run(t, func() { c.saveDraft(nil) })
+	wait(t, "the save to fail", func() bool { return !c.savingDraft })
+}
+
 // TestComposeSizeIsKept checks that a window to write a message in opens the
 // size the last one was left.
 func TestComposeSizeIsKept(t *testing.T) {
@@ -314,7 +424,7 @@ func bodyLoaded(t *testing.T, c *composer) {
 func bodyOf(t *testing.T, c *composer) (html, text string) {
 	t.Helper()
 	done := false
-	qutetest.Run(t, func() { c.body.content(func(h, x string) { html, text, done = h, x, true }) })
+	qutetest.Run(t, func() { c.body.content(func(h, x string, _ error) { html, text, done = h, x, true }) })
 	wait(t, "the body to say what it holds", func() bool { return done })
 	return html, text
 }
@@ -1263,5 +1373,57 @@ func TestTextDraftInHTML(t *testing.T) {
 	bodyLoaded(t, c)
 	if _, text := bodyOf(t, c); !strings.Contains(text, "First line.\nSecond line.") {
 		t.Errorf("text = %q", text)
+	}
+}
+
+// TestBodyBelowFields checks that the body of a window to write a message in
+// starts just below the subject, taking all the height to spare, rather than
+// the fields being spread down the window above it.
+func TestBodyBelowFields(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove))
+	w := newTestWindow(t, s)
+	wait(t, "the account", func() bool { return len(w.engines) == 1 })
+	c := openComposer(t, w)
+	qutetest.Run(t, func() {
+		c.Show()
+		c.Resize(800, 700)
+	})
+	qutetest.Run(t, func() {
+		subject := c.subject.MapTo(c, qtcore.QPoint{}).Y + c.subject.Height()
+		body := c.body.web.MapTo(c, qtcore.QPoint{}).Y
+		if gap := body - subject; gap > 20 {
+			t.Errorf("the body starts %d pixels below the subject", gap)
+		}
+	})
+}
+
+// TestDraftRepliesAsSaid checks that a draft continued replies to the
+// message its In-Reply-To names, and to none if it names none, rather than
+// to the last message it follows: one replied to that had no ID of its own
+// is not among those, and the last is the one before it.
+func TestDraftRepliesAsSaid(t *testing.T) {
+	s := remotetest.Start(t, remotetest.Caps(imap.CapUIDPlus, imap.CapMove), "Drafts")
+	w := newTestWindow(t, s)
+	wait(t, "the account", func() bool { return len(w.engines) == 1 })
+	for raw, want := range map[string]string{
+		"References: <first@example.com> <second@example.com>\r\nIn-Reply-To: <second@example.com>\r\n": "second@example.com",
+		"References: <first@example.com>\r\n": "",
+	} {
+		m, err := message.Parse([]byte("From: a@example.com\r\nSubject: s\r\n" + raw + "Content-Type: text/plain\r\n\r\nx\r\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var c *composer
+		qutetest.Run(t, func() {
+			w.composeDraft(w.engines[w.order[0]], m, engine.Saved{Folder: "Drafts", UID: 1})
+			for c = range composers {
+			}
+		})
+		bodyLoaded(t, c)
+		if c.inReplyTo != want || len(c.references) != len(m.References) {
+			t.Errorf("%q: replies to %q, following %q", raw, c.inReplyTo, c.references)
+		}
+		closeUnchanged(c)
+		wait(t, "the window closed", func() bool { return !composers[c] })
 	}
 }
