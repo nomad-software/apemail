@@ -82,6 +82,10 @@ jobs:
             Qt6Widgets Qt6Svg Qt6WebEngineWidgets
 
       - uses: actions/checkout@v4
+        with:
+          # Every commit and tag, so that the script can find the tag the
+          # build is or follows, for the about box.
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:

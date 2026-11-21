@@ -1,10 +1,6 @@
 package ui
 
 import (
-	"runtime/debug"
-	"strconv"
-	"strings"
-
 	"github.com/nomad-software/qute/qtcore"
 	"github.com/nomad-software/qute/qtwidgets"
 )
@@ -16,35 +12,20 @@ const aboutWidth = 640
 // aboutIconSize is the size of the program's icon in the about box.
 const aboutIconSize = 96
 
-// appVersion returns the version of the program, which Go records from git
-// when it is built, as plain major.minor.patch.
-func appVersion() string {
-	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
-		return plainVersion(info.Main.Version)
-	}
-	return "dev"
-}
+// version is the release the program is built from: the tag its commit is,
+// or follows, set from git by the Makefile and the AppImage's script
+// (-ldflags -X). Go records no version of its own that would do: under a
+// module path without /v2 it ignores every tag from v2 on, and numbers the
+// build after the last v1 tag.
+var version string
 
-// plainVersion returns the release a version recorded by Go is, or follows.
-// Between tags Go records a version made from the commit, whose patch is one
-// more than the tag before it, as v1.2.4-0.20261027184954-00c19a9187bb is
-// after v1.2.3. A build that follows no tag, which Go numbers v0.0.0 and the
-// commit, is dev.
-func plainVersion(version string) string {
-	version, _, _ = strings.Cut(version, "+")
-	version, pre, _ := strings.Cut(version, "-")
-	if version == "v0.0.0" && pre != "" {
+// appVersion returns the version the about box shows, or dev for a build
+// that was not given one.
+func appVersion() string {
+	if version == "" {
 		return "dev"
 	}
-	if !strings.HasPrefix(pre, "0.") {
-		return version
-	}
-	i := strings.LastIndex(version, ".") + 1
-	patch, err := strconv.Atoi(version[i:])
-	if err != nil || patch == 0 {
-		return version
-	}
-	return version[:i] + strconv.Itoa(patch-1)
+	return version
 }
 
 // aboutText returns what the about box says of the program.
